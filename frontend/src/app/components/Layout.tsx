@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom';
 import {
   LayoutDashboard,
+  GraduationCap,
   Swords,
   FlaskConical,
   PenLine,
@@ -41,6 +42,18 @@ export const navItems: NavItem[] = [
       { key: 'industry', label: '行业热点' },
       { key: 'social', label: '社会热点' },
       { key: 'policy', label: '国家政策' },
+    ],
+  },
+  {
+    path: '/course',
+    icon: GraduationCap,
+    label: '课程学习',
+    children: [
+      { key: 'entry', label: '课程入口' },
+      { key: 'path', label: '学习路径' },
+      { key: 'workbench', label: '资源工作台' },
+      { key: 'tutor', label: '辅导对话' },
+      { key: 'assess', label: '效果评估' },
     ],
   },
   {

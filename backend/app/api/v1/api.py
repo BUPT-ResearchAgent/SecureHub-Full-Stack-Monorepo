@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 
-from app.api.v1.endpoints import health, placeholder, research, system, ctftime, policy
+from app.api.v1.endpoints import courses, ctftime, health, placeholder, policy, profile, research, streaming, system
 
 api_router = APIRouter()
 api_router.include_router(health.router, tags=["health"])
@@ -24,4 +24,16 @@ api_router.include_router(
     policy.router,
     prefix="/policy",
     tags=["policy"],
+)
+api_router.include_router(
+    profile.router,
+    tags=["profile"],
+)
+api_router.include_router(
+    courses.router,
+    tags=["courses"],
+)
+api_router.include_router(
+    streaming.router,
+    tags=["streaming"],
 )

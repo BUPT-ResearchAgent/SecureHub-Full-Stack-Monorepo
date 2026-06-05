@@ -3,6 +3,7 @@ import type {
   CanvasBlock,
   DocumentSection,
   PptSlide,
+  PptLayoutType,
   TopicIdea,
   WritingEvidence,
   WritingTemplate,
@@ -17,6 +18,10 @@ function delay<T>(value: T, ms = 800): Promise<T> {
 
 function now(): string {
   return new Date().toISOString();
+}
+
+function resourceSlideLayout(index: number): PptLayoutType {
+  return index % 3 === 0 ? 'section' : index % 3 === 1 ? 'comparison' : 'summary';
 }
 
 export function generateTopicIdeas(prompt: string, tags: string[], evidenceIds: string[]): Promise<TopicIdea[]> {
@@ -244,7 +249,7 @@ export function generatePptOutline(sections: DocumentSection[], topic: TopicIdea
       ],
       speakerNotes: `讲解 ${section.title} 时，先给出评审关注点，再说明方案如何支撑当前选题。`,
       relatedSectionIds: [section.id],
-      layoutType: index % 3 === 0 ? 'section' : index % 3 === 1 ? 'comparison' : 'summary',
+      layoutType: resourceSlideLayout(index),
     })),
   ];
   return delay(slides, 820);

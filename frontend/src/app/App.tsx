@@ -11,6 +11,7 @@ import { Forum } from '@/app/pages/Forum';
 import { Careers } from '@/app/pages/Careers';
 import { Tasks } from '@/app/pages/Tasks';
 import { Profile } from '@/app/pages/Profile';
+import { CourseStudy } from '@/app/pages/CourseStudy';
 
 export default function App() {
   return (
@@ -20,6 +21,7 @@ export default function App() {
         <Route element={<Layout />}>
           <Route path="/workspace" element={<Workspace />} />
           <Route path="/practice" element={<Practice />} />
+          <Route path="/course" element={<CourseStudy />} />
           <Route path="/research" element={<Research />} />
           <Route path="/writing" element={<Writing />} />
           <Route path="/chat" element={<Chat />} />

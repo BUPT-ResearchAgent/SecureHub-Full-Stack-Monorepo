@@ -9,6 +9,7 @@ import type {
   LearningMilestone,
   ResumeReview,
   RoleAnalysis,
+  GapPriority,
   SkillGapItem,
   UserSkill,
 } from './types';
@@ -56,7 +57,7 @@ export function computeSkillGaps(workbench: CareerWorkbench, job: JobPosting | u
     .map((skill) => {
       const required = requiredLevelForSkill(skill, job);
       const gap = Math.max(0, required - skill.level);
-      const priority = gap >= 34 ? 'high' : gap >= 18 ? 'medium' : 'low';
+      const priority: GapPriority = gap >= 34 ? 'high' : gap >= 18 ? 'medium' : 'low';
       const suggestion =
         priority === 'high'
           ? `优先补齐 ${skill.name}，建议用项目或复现实验形成可展示产出。`

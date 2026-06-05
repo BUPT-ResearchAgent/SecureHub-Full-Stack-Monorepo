@@ -1,3 +1,6 @@
+import type { SSEHandlers } from './sse';
+import { streamTask } from './sse';
+
 const DEFAULT_API_BASE_URL = 'http://127.0.0.1:8000';
 
 export const API_BASE_URL =
@@ -41,4 +44,8 @@ export async function apiPost<T, B = unknown>(
   }
 
   return response.json() as Promise<T>;
+}
+
+export function apiStream(path: string, handlers: SSEHandlers): () => void {
+  return streamTask(`${API_BASE_URL}${path}`, handlers);
 }

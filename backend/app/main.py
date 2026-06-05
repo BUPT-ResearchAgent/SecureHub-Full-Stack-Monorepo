@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.router import api_router
 from app.core.config import get_settings
+from app.core.lifespan import lifespan
 from app.core.logging import configure_logging
 
 settings = get_settings()
@@ -12,6 +13,7 @@ app = FastAPI(
     title=settings.APP_NAME,
     version="0.1.0",
     debug=settings.DEBUG,
+    lifespan=lifespan,
 )
 
 app.add_middleware(

@@ -22,7 +22,7 @@ export const JOB_DIRECTIONS = [
 export const CAREER_CITIES = ['北京', '上海', '深圳', '杭州', '广州', '成都', '南京'] as const;
 
 export type JobDirection = (typeof JOB_DIRECTIONS)[number];
-export type CareerCity = (typeof CAREER_CITIES)[number];
+export type CareerCity = (typeof CAREER_CITIES)[number] | '长沙';
 
 export interface CareerWorkbench {
   id: string;

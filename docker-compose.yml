@@ -1,12 +1,41 @@
 services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: securehub
+      POSTGRES_PASSWORD: securehub
+      POSTGRES_DB: securehub
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U securehub"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
   frontend:
     image: node:22-alpine
     working_dir: /app/frontend
+    env_file:
+      - path: .env
+        required: false
     volumes:
       - ./frontend:/app/frontend
     command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
     ports:
-      - "5173:5173"
+      - "${FRONTEND_PORT:-5173}:5173"
     environment:
       VITE_API_BASE_URL: "http://127.0.0.1:8000"
     depends_on:
@@ -15,11 +44,14 @@ services:
   backend:
     image: python:3.12-slim
     working_dir: /app/backend
+    env_file:
+      - path: .env
+        required: false
     volumes:
       - ./backend:/app/backend
-    command: sh -c "pip install uv && uv sync && uv run uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
+    command: sh -c "pip install uv && uv sync && uv run alembic upgrade head && uv run uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
     ports:
-      - "8000:8000"
+      - "${BACKEND_PORT:-8000}:8000"
     environment:
       APP_NAME: "securehub-backend"
       APP_ENV: "development"
@@ -28,3 +60,13 @@ services:
       API_V1_PREFIX: "/api/v1"
       FRONTEND_ORIGINS: '["http://localhost:5173","http://127.0.0.1:5173"]'
       DEBUG: "true"
+      DATABASE_URL: "postgresql+asyncpg://securehub:securehub@postgres:5432/securehub"
+      REDIS_URL: "redis://redis:6379/0"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+volumes:
+  pgdata:

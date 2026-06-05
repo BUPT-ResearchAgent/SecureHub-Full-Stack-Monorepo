@@ -5,6 +5,8 @@ import type {
   ChatMessagePayload,
   StructuredAnswerCard,
 } from './types';
+import type { SSEHandlers } from '@/lib/sse';
+import { apiStream } from '@/lib/api';
 import { assistantActions, createDemoId } from './utils';
 
 function delay(ms: number): Promise<void> {
@@ -339,7 +341,7 @@ export async function generateMockAnswer(
     throw new Error('mock 生成失败，请点击重试。');
   }
 
-  const templates: Record<ChatAgentId, (q: string, m: ChatMessage[]) => ChatMessagePayload> = {
+  const templates: Record<ChatAgentId, (q: string, m: ChatMessage[]) => Omit<ChatMessagePayload, 'actions'>> = {
     topic: topicTemplate,
     research: researchTemplate,
     contest: contestTemplate,
@@ -354,4 +356,8 @@ export async function generateMockAnswer(
     ...payload,
     actions: assistantActions,
   };
+}
+
+export function streamChatAnswer(taskId: string, handlers: SSEHandlers): () => void {
+  return apiStream(`/api/v1/tasks/${taskId}/stream`, handlers);
 }
