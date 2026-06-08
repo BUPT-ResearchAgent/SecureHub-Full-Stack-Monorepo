@@ -26,8 +26,8 @@ Same code, two stories. The `/course` module is the A3 showcase; the other 9 mod
    `policy_interpreter` · `hot_analyst` · `job_analyst` · `competition_advisor` · `career_planner` · `topic_explorer` · `doc_archivist` · `task_orchestrator` · `outcome_evaluator`
    New A3 capabilities arrive as **new skills under existing agents**, not as new agents.
 2. **Cross-cutting infra is not an agent.** `rag/`, `knowledge/loaders/`, `runtime/router.py`, `runtime/guardrails/` are middleware. Do not list them as agents.
-3. **One `documents` + one `chunks` table for every domain.** Filter by `domain` column. Never create `course_chunks`, `fund_chunks`, etc.
-4. **`user_profiles` is the single source of truth** for the learner profile. Feature modules read/write this table; they do not maintain their own profile tables.
+3. **One unified knowledge asset layer for every domain.** All domains share `documents` + `document_assets` + `chunks` + `knowledge_nodes` + `knowledge_edges`, filtered by `domain`. Never create `course_chunks`, `fund_chunks`, `policy_chunks`, etc. Files (PDF / Markdown / cover / page image / OCR / generated PPT / audio / video) live behind `storage_objects.object_key`; the DB stores only metadata + hash + MIME + size + status.
+4. **Learner profile has one source of truth plus evaluable capability rows.** `user_profiles` stores the merged persona (JSONB `dimensions` + embedding); `user_capabilities` stores radar-chart dimensions and assessment-updatable scores. Feature modules must not create their own profile tables; updates flow through `outcome_evaluator.update_capability` → `user_capabilities` → `career_planner.update_persona` → `user_profiles`.
 5. **Every new endpoint / service / repository file starts with a status comment**: `# Status: real` | `# Status: mock` | `# Status: partial-real`. No exceptions.
 6. **Generative skills must call `rag.retrieve()` before composing the prompt.** Bypassing RAG to call the LLM directly is forbidden — it kills the anti-hallucination story.
 7. **Every skill ends with `await ctx.log_run(...)`** writing to `agent_runs`. The trace visualization depends on it. CI greps for this.
@@ -62,7 +62,9 @@ backend/app/
   llm/             # xfyun.py · deepseek.py · embedding.py
   rag/             # chunker · retriever (BM25 + vector + RRF) · reranker · evidence_builder
   knowledge/       # loaders/ for each domain
-  db/              # models/ (12 tables) + migrations/
+  db/              # models/ grouped by {identity,knowledge,learning,agent,resource,storage}/ + migrations/ + seeds/
+  repositories/    # grouped by {identity,knowledge,learning,agent,resource,storage}/  — DB read/write only
+  services/        # grouped by {knowledge,learning,agent,resource,storage}/  — business orchestration
   streaming/       # SSE events + writer
   api/v1/endpoints/  # FastAPI routes
 frontend/src/app/
@@ -139,11 +141,37 @@ A skill that bypasses any of these three is a rule §2.6 violation and must be r
 
 ---
 
-## 8. Database — the 12 tables (no others)
+## 8. Database — data-layer v2
 
-`documents` · `chunks` · `knowledge_points` · `kp_prerequisites` · `quiz_items` · `users` · `user_profiles` · `learning_events` · `agents` · `agent_skills` · `agent_runs` · `courses`
+The old "12 tables only" rule is retired. The new rule is **no domain-specific knowledge tables**, not "no additional tables". Any extension table must reuse the unified asset / resource / storage / capability tables defined here.
 
-Full DDL and SQLAlchemy mappings live in `.codex/AGENTS.md §9`. Migration filenames follow `YYYYMMDD_HHMM_<verb>_<noun>.py`. The first migration must run `CREATE EXTENSION IF NOT EXISTS vector;`.
+### P0 required tables (17)
+
+`users` · `user_profiles` · `user_capabilities` ·
+`documents` · `document_assets` · `chunks` · `knowledge_nodes` · `knowledge_edges` · `courses` ·
+`learning_events` · `quiz_items` · `quiz_attempts` ·
+`agents` · `agent_skills` · `agent_runs` ·
+`generated_resources` · `storage_objects`
+
+### P1 / P2 extension tables (4)
+
+`learning_paths` · `learning_tasks` · `agent_messages` · `resource_versions`
+
+### Hard database rules
+
+- All domains share `documents` / `document_assets` / `chunks` / `knowledge_nodes` / `knowledge_edges`; filter by `domain`.
+- PDF, Markdown, cover images, page images, OCR text, generated PPT / audio / video files are **assets**, not main-table blobs. Reference them via `document_assets.object_key` (source materials) or `storage_objects.object_key` (generated artefacts).
+- `generated_resources` is the **single** table for course docs, PPT, mindmaps, quiz sets, hands-on labs, video storyboards, reading lists, and assessment reports.
+- `chunks.embedding` may be `NULL` during ingestion; lifecycle is tracked by `embedding_status = pending | ready | failed`.
+- `documents.raw_text` may be `NULL` (full text lives in `document_assets`); lifecycle is tracked by `documents.status = pending | ready | failed`.
+- The first migration must run `CREATE EXTENSION IF NOT EXISTS vector;`. HNSW vector index is preferred for `chunks.embedding`; IVFFlat is an acceptable fallback when local pgvector < 0.5.0.
+- GIN indexes are required on `documents.metadata` and `chunks.metadata` for JSONB filtering.
+- Migration filenames follow `YYYYMMDD_HHMM_<verb>_<noun>.py`. Full DDL and SQLAlchemy mappings live in `.codex/AGENTS.md §9`.
+
+### Authority order for data-layer rules
+
+When the three docs conflict on schema, use:
+`.codex/AGENTS.md §9 (Data-layer v2 schema)` > this `CLAUDE.md §8` > `../CompetitionTheme/A3赛题规划.md §5`.
 
 ---
 

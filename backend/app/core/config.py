@@ -24,7 +24,12 @@ class Settings(BaseSettings):
         ]
     )
     DEBUG: bool = True
-    DATABASE_URL: str = "postgresql+asyncpg://securehub:securehub@localhost:5432/securehub"
+    # SQLite by default so ``alembic upgrade head`` works without a Postgres
+    # container; production / docker-compose overrides via env to
+    # ``postgresql+asyncpg://...``. PG-only column types (Vector / JSONB /
+    # ARRAY / UUID) degrade automatically through compilers registered in
+    # ``app/db/migrations/env.py``.
+    DATABASE_URL: str = "sqlite+aiosqlite:///./securehub_dev.db"
     REDIS_URL: str = "redis://localhost:6379/0"
     LLM_PROVIDER: str = "xfyun"
     XFYUN_APP_ID: str = ""

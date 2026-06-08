@@ -49,6 +49,16 @@ def stable_id(name: str) -> str:
 
 
 def upgrade() -> None:
+    # v1 seed relies on pgvector ``Vector(64)`` and JSONB / ARRAY bind params.
+    # On SQLite (the local dev / CI fallback) those types compile to BLOB / JSON
+    # / JSON but the bind-param serialisation paths differ. The v2 migration
+    # ``20260611_0960_seed_agents_skills`` does the same seed in a
+    # dialect-agnostic way (and supersedes this content via upsert), so on
+    # non-PostgreSQL dialects we leave the rows to that migration.
+    bind = op.get_bind()
+    if bind.dialect.name != "postgresql":
+        return
+
     agent_rows = [
         {
             "id": stable_id(f"agent:{name}"),
