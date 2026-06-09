@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useReducer } from 'react';
 
-import { createDefaultDashboard, WORKSPACE_STORAGE_KEY } from './mockData';
+import { useAuth } from '@/app/features/auth/store';
+import type { AuthUser } from '@/app/features/auth/types';
+import { createDefaultDashboard, getWorkspaceStorageKey } from './mockData';
 import type {
   ActionStatus,
   AutosaveStatus,
@@ -303,11 +305,70 @@ function normalizeDashboard(parsed: Partial<WorkspaceDashboard>, defaults: Works
   };
 }
 
-function loadInitialDashboard(): WorkspaceDashboard {
+function createEmptyDashboard(user: AuthUser | null): WorkspaceDashboard {
   const defaults = createDefaultDashboard();
+  const now = new Date().toISOString();
+  const today = todayIso();
+  const displayName = user?.display_name || '新用户';
+  return {
+    ...defaults,
+    id: `workspace-${user?.id || 'anonymous'}`,
+    ownerUserId: user?.id || 'anonymous',
+    userName: displayName,
+    today,
+    dailyBrief: {
+      id: 'brief-empty',
+      date: today,
+      summary: `${displayName}，当前账号暂无个人任务和生成资产。建议先进入 /course 完成 Web 安全课程学习闭环。`,
+      keyTasks: [],
+      urgentDeadlines: [],
+      recommendedActions: ['进入 Web 安全课程学习', '完善个人画像', '生成第一份学习资源'],
+      risks: [],
+      dataWarnings: [],
+    },
+    tasks: [],
+    deadlines: [],
+    recommendedActions: [],
+    recentAssets: [],
+    dataSources: [],
+    insights: [],
+    policies: [],
+    completedTaskIds: [],
+    ignoredDeadlineIds: [],
+    handledDeadlineIds: [],
+    dismissedActionIds: [],
+    postponedActionIds: [],
+    favoriteAssetIds: [],
+    favoriteInsightIds: [],
+    favoritePolicyIds: [],
+    pinnedItemIds: [],
+    lastBriefOpenedAt: undefined,
+    autosaveStatus: 'saved',
+    savedAt: now,
+    updatedAt: now,
+  };
+}
+
+function createInitialDashboard(user: AuthUser | null, isDemoUser: boolean): WorkspaceDashboard {
+  const defaults = isDemoUser ? createDefaultDashboard() : createEmptyDashboard(user);
+  if (!user) return defaults;
+  return {
+    ...defaults,
+    id: isDemoUser ? defaults.id : `workspace-${user.id}`,
+    ownerUserId: user.id,
+    userName: user.display_name,
+  };
+}
+
+function loadInitialDashboard(
+  storageKey: string,
+  user: AuthUser | null,
+  isDemoUser: boolean,
+): WorkspaceDashboard {
+  const defaults = createInitialDashboard(user, isDemoUser);
   if (typeof window === 'undefined') return defaults;
   try {
-    const raw = window.localStorage.getItem(WORKSPACE_STORAGE_KEY);
+    const raw = window.localStorage.getItem(storageKey);
     if (!raw) return defaults;
     return normalizeDashboard(JSON.parse(raw) as Partial<WorkspaceDashboard>, defaults);
   } catch {
@@ -315,18 +376,38 @@ function loadInitialDashboard(): WorkspaceDashboard {
   }
 }
 
-function persistDashboard(dashboard: WorkspaceDashboard, savedAt: string): void {
+function persistDashboard(storageKey: string, dashboard: WorkspaceDashboard, savedAt: string): void {
   const snapshot: WorkspaceDashboard = {
     ...dashboard,
     autosaveStatus: 'saved',
     savedAt,
     updatedAt: savedAt,
   };
-  window.localStorage.setItem(WORKSPACE_STORAGE_KEY, JSON.stringify(snapshot));
+  window.localStorage.setItem(storageKey, JSON.stringify(snapshot));
 }
 
 export function useWorkspaceDashboard() {
-  const [dashboard, dispatch] = useReducer(reducer, undefined, loadInitialDashboard);
+  const { user, isDemoUser } = useAuth();
+  const storageKey = getWorkspaceStorageKey(user?.id);
+  const [dashboard, dispatch] = useReducer(
+    reducer,
+    undefined,
+    () => loadInitialDashboard(storageKey, user, isDemoUser),
+  );
+
+  useEffect(() => {
+    dispatch({
+      type: 'replaceDashboard',
+      dashboard: loadInitialDashboard(storageKey, user, isDemoUser),
+    });
+  }, [isDemoUser, storageKey, user]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !user) return;
+    if (dashboard.ownerUserId !== user.id) return;
+    if (window.localStorage.getItem(storageKey)) return;
+    persistDashboard(storageKey, dashboard, new Date().toISOString());
+  }, [dashboard, storageKey, user]);
 
   useEffect(() => {
     if (dashboard.autosaveStatus !== 'unsaved') return undefined;
@@ -335,7 +416,7 @@ export function useWorkspaceDashboard() {
       window.setTimeout(() => {
         try {
           const savedAt = new Date().toISOString();
-          persistDashboard(dashboard, savedAt);
+          persistDashboard(storageKey, dashboard, savedAt);
           dispatch({ type: 'setAutosaveStatus', status: 'saved', savedAt });
         } catch {
           dispatch({ type: 'setAutosaveStatus', status: 'error' });
@@ -343,26 +424,26 @@ export function useWorkspaceDashboard() {
       }, 150);
     }, 750);
     return () => window.clearTimeout(timer);
-  }, [dashboard]);
+  }, [dashboard, storageKey]);
 
   const saveNow = useCallback(() => {
     dispatch({ type: 'setAutosaveStatus', status: 'saving' });
     try {
       const savedAt = new Date().toISOString();
-      persistDashboard(dashboard, savedAt);
+      persistDashboard(storageKey, dashboard, savedAt);
       dispatch({ type: 'setAutosaveStatus', status: 'saved', savedAt });
       return true;
     } catch {
       dispatch({ type: 'setAutosaveStatus', status: 'error' });
       return false;
     }
-  }, [dashboard]);
+  }, [dashboard, storageKey]);
 
   const resetDemo = useCallback(() => {
-    const next = createDefaultDashboard();
-    window.localStorage.setItem(WORKSPACE_STORAGE_KEY, JSON.stringify(next));
+    const next = createInitialDashboard(user, isDemoUser);
+    window.localStorage.setItem(storageKey, JSON.stringify(next));
     dispatch({ type: 'replaceDashboard', dashboard: next });
-  }, []);
+  }, [isDemoUser, storageKey, user]);
 
   return { dashboard, dispatch, saveNow, resetDemo };
 }

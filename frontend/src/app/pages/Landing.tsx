@@ -20,9 +20,11 @@ import {
   Trophy,
 } from 'lucide-react';
 import { DataTag } from '@/app/components/DataTag';
+import { useAuth } from '@/app/features/auth/store';
 
 export function Landing() {
   const navigate = useNavigate();
+  const { isAuthenticated } = useAuth();
   const [expandedFaq, setExpandedFaq] = useState<number | null>(null);
   const heroRef = useRef<HTMLDivElement>(null);
 
@@ -39,6 +41,10 @@ export function Landing() {
     if (element) {
       element.scrollIntoView({ behavior: 'smooth' });
     }
+  };
+
+  const enterWorkspace = () => {
+    navigate(isAuthenticated ? '/workspace' : '/login?redirect=/workspace');
   };
 
   return (
@@ -94,7 +100,7 @@ export function Landing() {
               查看演示
             </button>
             <button
-              onClick={() => navigate('/home')}
+              onClick={enterWorkspace}
               className="px-4 py-2 text-sm font-medium text-white bg-brand-blue-600 hover:bg-brand-blue-700 rounded-lg transition-colors flex items-center gap-2"
             >
               进入工作台
@@ -136,7 +142,7 @@ export function Landing() {
                 className="flex items-center gap-4"
               >
                 <button
-                  onClick={() => navigate('/home')}
+                  onClick={enterWorkspace}
                   className="px-6 py-3 text-base font-medium text-white bg-brand-blue-600 hover:bg-brand-blue-700 rounded-lg transition-colors flex items-center gap-2 shadow-lg shadow-brand-blue-600/20"
                 >
                   进入工作台
@@ -695,7 +701,7 @@ export function Landing() {
           </p>
           <div className="flex items-center justify-center gap-4">
             <button
-              onClick={() => navigate('/home')}
+              onClick={enterWorkspace}
               className="px-8 py-4 text-lg font-medium text-brand-blue-600 bg-white hover:bg-gray-50 rounded-lg transition-colors shadow-lg"
             >
               进入工作台

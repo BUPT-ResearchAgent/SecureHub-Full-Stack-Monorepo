@@ -71,11 +71,72 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm build
 
+  rules:
+    # Ironclad-rule enforcement. See CLAUDE.md §2 (quick reference) and
+    # .codex/AGENTS.md §3 (authoritative source). Adding a rule here is the
+    # only way to graduate it from "PR template honor system" to "CI blocker".
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: "§2.5 — every endpoint/service/repository file declares Status"
+        run: |
+          set -euo pipefail
+          missing=$(find backend/app/api/v1/endpoints backend/app/services backend/app/repositories \
+                    -type f -name '*.py' ! -name '__init__.py' \
+                    -exec grep -L '^# Status:' {} + || true)
+          if [ -n "$missing" ]; then
+            echo "::error::Rule §2.5 violated — these files lack a '# Status: real|mock|partial-real' header:"
+            echo "$missing"
+            exit 1
+          fi
+
+      - name: "§2.7 — every skill calls ctx.log_run"
+        run: |
+          set -euo pipefail
+          missing=$(find backend/app/agents -path '*/skills/*.py' ! -name '__init__.py' \
+                    -exec grep -L 'ctx\.log_run' {} + || true)
+          if [ -n "$missing" ]; then
+            echo "::error::Rule §2.7 violated — these skill files never call ctx.log_run:"
+            echo "$missing"
+            exit 1
+          fi
+
+      - name: "§2.6 — generative skills call rag.retrieve before LLM"
+        run: |
+          set -euo pipefail
+          # Heuristic: any skill that calls an LLM client (llm.xfyun/deepseek/spark)
+          # must also call rag.retrieve in the same file. Skip files that do neither
+          # (non-generative skills) and files that only do retrieve (e.g. summarizers).
+          violators=""
+          while IFS= read -r f; do
+            if grep -qE 'llm\.(xfyun|deepseek|spark|generate|stream)' "$f"; then
+              if ! grep -qE 'rag\.retrieve|retriever\.retrieve' "$f"; then
+                violators="$violators$f\n"
+              fi
+            fi
+          done < <(find backend/app/agents -path '*/skills/*.py' ! -name '__init__.py')
+          if [ -n "$violators" ]; then
+            echo "::error::Rule §2.6 violated — these skills call an LLM without rag.retrieve():"
+            printf "$violators"
+            exit 1
+          fi
+
+      - name: "§2.3 — no per-domain chunk/document tables in migrations"
+        run: |
+          set -euo pipefail
+          if grep -rEn 'CREATE TABLE[[:space:]]+(course_chunks|fund_chunks|policy_chunks|job_chunks|paper_chunks|[a-z_]+_documents)\b' \
+               backend/app/db/migrations 2>/dev/null; then
+            echo "::error::Rule §2.3 violated — domains must share the single documents/chunks tables."
+            exit 1
+          fi
+
   docker:
     runs-on: ubuntu-latest
     needs:
       - backend
       - frontend
+      - rules
     steps:
       - uses: actions/checkout@v4
       - run: docker compose config

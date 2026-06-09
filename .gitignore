@@ -13,6 +13,14 @@ __pycache__/
 .python-version
 .eggs/
 *.egg-info/
+securehub_dev.db
+backend/securehub_dev.db
+*.sqlite
+*.sqlite3
+*.db
+*.db-shm
+*.db-wal
+dumps/
 
 # Test and tool caches
 .pytest_cache/

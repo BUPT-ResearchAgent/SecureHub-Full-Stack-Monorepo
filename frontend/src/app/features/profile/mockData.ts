@@ -11,7 +11,12 @@ import type {
   UserProfile,
 } from './types';
 
-export const PROFILE_STORAGE_KEY = 'profile-workspace-demo';
+export const PROFILE_STORAGE_KEY_PREFIX = 'profile-workspace-demo';
+export const PROFILE_STORAGE_KEY = PROFILE_STORAGE_KEY_PREFIX;
+
+export function getProfileStorageKey(userId?: string | null) {
+  return `${PROFILE_STORAGE_KEY_PREFIX}:${userId || 'anonymous'}`;
+}
 
 const nowIso = () => new Date().toISOString();
 

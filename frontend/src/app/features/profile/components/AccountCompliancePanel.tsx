@@ -2,7 +2,8 @@ import { Download, LogOut, ShieldCheck, ShieldOff, Trash2 } from 'lucide-react';
 import { useState, type Dispatch, type ReactNode } from 'react';
 import { toast } from 'sonner';
 import { Card, Tag } from '@/app/components/PageShell';
-import { PROFILE_STORAGE_KEY } from '../mockData';
+import { useAuth } from '@/app/features/auth/store';
+import { getProfileStorageKey } from '../mockData';
 import type { ProfileAction } from '../store';
 import type { AccountDialogConfig, ProfileWorkspace } from '../types';
 import { downloadJsonFile, formatDateTime } from '../utils';
@@ -61,6 +62,7 @@ export function AccountCompliancePanel({
   workspace: ProfileWorkspace;
   dispatch: Dispatch<ProfileAction>;
 }) {
+  const { user } = useAuth();
   const [dialog, setDialog] = useState<AccountDialogConfig | null>(null);
 
   const confirmDialog = () => {
@@ -77,7 +79,7 @@ export function AccountCompliancePanel({
       toast.success('数据导出已生成');
     }
     if (dialog.action === 'clear-cache') {
-      window.localStorage.removeItem(PROFILE_STORAGE_KEY);
+      window.localStorage.removeItem(getProfileStorageKey(user?.id));
       dispatch({ type: 'clearLocalCache' });
       toast.success('本地缓存已清除，演示数据已恢复默认');
     }

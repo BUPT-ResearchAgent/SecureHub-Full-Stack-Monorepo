@@ -1,23 +1,15 @@
 # Status: [planned]
 
-from uuid import UUID
+"""Compatibility shim — v1 ``knowledge_points`` was renamed to ``knowledge_nodes``
+in data-layer v2. ``KnowledgePoint`` is now an alias for :class:`KnowledgeNode`,
+so existing imports keep working but new code should reference
+``KnowledgeNode`` directly.
+"""
 
-from sqlalchemy import ForeignKey, Integer, String, Text, UniqueConstraint
-from sqlalchemy.dialects.postgresql import UUID as PG_UUID
-from sqlalchemy.orm import Mapped, mapped_column
+from app.db.models.knowledge.knowledge_node import KnowledgeNode
 
-from app.db.base import Base, UUIDPrimaryKeyMixin
+# Class-level alias keeps ``KnowledgePoint(...)`` callable, while ``__tablename__``
+# resolves to ``knowledge_nodes`` (the v2 table).
+KnowledgePoint = KnowledgeNode
 
-
-class KnowledgePoint(UUIDPrimaryKeyMixin, Base):
-    __tablename__ = "knowledge_points"
-    __table_args__ = (UniqueConstraint("course_id", "name", name="uq_knowledge_points_course_name"),)
-
-    course_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("courses.id", ondelete="CASCADE"),
-        nullable=False,
-    )
-    name: Mapped[str] = mapped_column(String(255), nullable=False)
-    description: Mapped[str | None] = mapped_column(Text)
-    level: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+__all__ = ["KnowledgePoint", "KnowledgeNode"]

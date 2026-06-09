@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom';
+import { toast } from 'sonner';
 import {
   LayoutDashboard,
   GraduationCap,
@@ -16,9 +17,20 @@ import {
   Menu,
   Bell,
   Database,
+  LogOut,
+  ShieldCheck,
 } from 'lucide-react';
 import { EvidenceDrawer } from './EvidenceDrawer';
 import { GlobalSearch } from './GlobalSearch';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/app/components/ui/dropdown-menu';
+import { useAuth } from '@/app/features/auth/store';
 
 export type NavChild = { key: string; label: string };
 export type NavItem = {
@@ -176,6 +188,7 @@ export const navItems: NavItem[] = [
 export function Layout() {
   const navigate = useNavigate();
   const location = useLocation();
+  const { user, logout } = useAuth();
   const [evidenceOpen, setEvidenceOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
   const [expanded, setExpanded] = useState<string[]>(() => {
@@ -185,6 +198,15 @@ export function Layout() {
 
   const toggle = (path: string) =>
     setExpanded((e) => (e.includes(path) ? [] : [path]));
+
+  const displayName = user?.display_name || '用户';
+  const avatarText = displayName.trim().slice(0, 1) || '用';
+
+  const handleLogout = async () => {
+    await logout();
+    toast.success('已退出登录');
+    navigate('/login', { replace: true });
+  };
 
   return (
     <div className="flex h-screen bg-slate-50 overflow-hidden">
@@ -311,12 +333,39 @@ export function Layout() {
               <Bell className="w-4 h-4 text-slate-600" />
               <span className="absolute top-1.5 right-1.5 w-1.5 h-1.5 bg-red-500 rounded-full" />
             </button>
-            <button className="flex items-center gap-2 px-2 py-1.5 hover:bg-slate-100 rounded-lg">
-              <div className="w-7 h-7 bg-brand-blue-600 text-white rounded-full flex items-center justify-center text-xs font-semibold">
-                陈
-              </div>
-              <span className="text-sm text-slate-700">陈同学</span>
-            </button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button className="flex max-w-[180px] items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-slate-100">
+                  <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-brand-blue-600 text-xs font-semibold text-white">
+                    {avatarText}
+                  </div>
+                  <span className="truncate text-sm text-slate-700">{displayName}</span>
+                  <ChevronDown className="h-4 w-4 shrink-0 text-slate-400" />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-56">
+                <DropdownMenuLabel>
+                  <div className="space-y-1">
+                    <p className="truncate text-sm font-medium text-slate-900">{displayName}</p>
+                    <p className="truncate text-xs font-normal text-slate-500">{user?.email}</p>
+                  </div>
+                </DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={() => navigate('/profile?tab=persona')}>
+                  <UserCircle className="h-4 w-4" />
+                  个人中心
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => navigate('/profile?tab=account')}>
+                  <ShieldCheck className="h-4 w-4" />
+                  账户与合规
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={handleLogout} className="text-red-600 focus:text-red-600">
+                  <LogOut className="h-4 w-4" />
+                  退出登录
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         </header>
 

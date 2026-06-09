@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useReducer } from 'react';
-import { createDefaultProfileWorkspace, PROFILE_STORAGE_KEY } from './mockData';
+import { useAuth } from '@/app/features/auth/store';
+import type { AuthUser } from '@/app/features/auth/types';
+import { createDefaultProfileWorkspace, getProfileStorageKey } from './mockData';
 import type {
   AssetFilters,
   AssetVersion,
@@ -52,6 +54,110 @@ export const defaultAssetFilters: AssetFilters = {
   includeArchived: false,
   sort: 'updated',
 };
+
+function createEmptyProfileWorkspace(user: AuthUser | null): ProfileWorkspace {
+  const defaults = createDefaultProfileWorkspace();
+  const now = new Date().toISOString();
+  const displayName = user?.display_name || '新用户';
+  const email = user?.email || '';
+  return {
+    ...defaults,
+    id: `profile-workspace-${user?.id || 'anonymous'}`,
+    user: {
+      ...defaults.user,
+      id: user?.id || 'anonymous',
+      displayName,
+      avatarText: displayName.trim().slice(0, 1) || '用',
+      email,
+      school: '',
+      college: '',
+      major: '',
+      grade: '',
+      enrollmentYear: new Date().getFullYear(),
+      identity: '学生',
+      bio: '',
+      goals: '',
+      weeklyHours: '',
+      targetDirections: [],
+      tags: [],
+      updatedAt: now,
+    },
+    persona: {
+      directionPreference: '待完善',
+      careerGoal: '待完善',
+      researchGoal: '待完善',
+      competitionGoal: '待完善',
+      personaSources: [],
+      weights: { writing: 0, research: 0, practice: 0, careers: 0, tasks: 0, forum: 0 },
+      lastGeneratedAt: now,
+      suggestion: '当前账号暂无画像来源。建议先进入课程学习或编辑个人资料。',
+    },
+    capabilities: defaults.capabilities.map((item) => ({
+      ...item,
+      score: 0,
+      evidence: '当前账号暂无评估证据。',
+      trend: 'flat',
+    })),
+    assets: [],
+    submitChecklists: [],
+    notificationSettings: defaults.notificationSettings.map((setting) => ({ ...setting })),
+    accountSecurity: {
+      email,
+      verified: false,
+      membership: '基础账号',
+      twoFactorEnabled: false,
+      devices: [],
+      sessions: [
+        {
+          id: 'session-current',
+          deviceName: '当前浏览器',
+          ip: 'local',
+          location: '本地',
+          lastActiveAt: now,
+          current: true,
+          active: true,
+        },
+      ],
+      loginHistory: [{ id: 'login-current', time: now, location: '本地', device: '当前浏览器', status: '成功' }],
+    },
+    complianceSettings: {
+      dataScope: '仅用于当前账号的本地演示状态与认证闭环。',
+      aiContentNoticeAccepted: false,
+      exportRequests: [],
+      deletionRequested: false,
+      authorizationRecords: [],
+    },
+    favoriteAssetIds: [],
+    archivedAssetIds: [],
+    deletedAssetIds: [],
+    selectedAssetId: undefined,
+    selectedChecklistId: '',
+    autosaveStatus: 'saved',
+    savedAt: now,
+    updatedAt: now,
+  };
+}
+
+function createInitialProfileWorkspace(user: AuthUser | null, isDemoUser: boolean): ProfileWorkspace {
+  const defaults = isDemoUser ? createDefaultProfileWorkspace() : createEmptyProfileWorkspace(user);
+  if (!user) return defaults;
+  return {
+    ...defaults,
+    id: isDemoUser ? defaults.id : `profile-workspace-${user.id}`,
+    user: {
+      ...defaults.user,
+      id: user.id,
+      displayName: user.display_name,
+      avatarText: user.display_name.trim().slice(0, 1) || '用',
+      email: user.email,
+      updatedAt: new Date().toISOString(),
+    },
+    accountSecurity: {
+      ...defaults.accountSecurity,
+      email: user.email,
+    },
+  };
+}
 
 function markDirty(workspace: ProfileWorkspace): ProfileWorkspace {
   return {
@@ -341,11 +447,10 @@ function reducer(workspace: ProfileWorkspace, action: ProfileAction): ProfileWor
       });
     }
     case 'clearLocalCache': {
-      const next = createDefaultProfileWorkspace();
       return markDirty({
-        ...next,
+        ...workspace,
         complianceSettings: {
-          ...next.complianceSettings,
+          ...workspace.complianceSettings,
           cacheClearedAt: new Date().toISOString(),
         },
       });
@@ -384,11 +489,15 @@ function reducer(workspace: ProfileWorkspace, action: ProfileAction): ProfileWor
   }
 }
 
-function loadWorkspace(): ProfileWorkspace {
-  const defaults = createDefaultProfileWorkspace();
+function loadWorkspace(
+  storageKey: string,
+  user: AuthUser | null,
+  isDemoUser: boolean,
+): ProfileWorkspace {
+  const defaults = createInitialProfileWorkspace(user, isDemoUser);
   if (typeof window === 'undefined') return defaults;
   try {
-    const raw = window.localStorage.getItem(PROFILE_STORAGE_KEY);
+    const raw = window.localStorage.getItem(storageKey);
     if (!raw) return defaults;
     const parsed = JSON.parse(raw) as Partial<ProfileWorkspace>;
     return normalizeWorkspace({
@@ -428,17 +537,20 @@ function loadWorkspace(): ProfileWorkspace {
   }
 }
 
-function persistWorkspace(workspace: ProfileWorkspace, savedAt: string): void {
+function persistWorkspace(storageKey: string, workspace: ProfileWorkspace, savedAt: string): void {
   const snapshot: ProfileWorkspace = {
     ...normalizeWorkspace(workspace),
     autosaveStatus: 'saved',
     savedAt,
     updatedAt: savedAt,
   };
-  window.localStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(snapshot));
+  window.localStorage.setItem(storageKey, JSON.stringify(snapshot));
 }
 
-export function createMockAsset(type: ProfileAsset['type'] = 'document'): ProfileAsset {
+export function createMockAsset(
+  type: ProfileAsset['type'] = 'document',
+  ownerName = '当前用户',
+): ProfileAsset {
   const now = new Date().toISOString();
   const titleMap: Record<ProfileAsset['type'], string> = {
     document: '新上传文档资产',
@@ -481,12 +593,32 @@ export function createMockAsset(type: ProfileAsset['type'] = 'document'): Profil
     updatedAt: now,
     metadata: type === 'code'
       ? { language: 'Markdown', repo: 'https://example.com/demo-repo', contributions: '演示绑定' }
-      : { sizeText: '1.2 MB', owner: '陈同学' },
+      : { sizeText: '1.2 MB', owner: ownerName },
   };
 }
 
 export function useProfileWorkspace() {
-  const [workspace, dispatch] = useReducer(reducer, undefined, loadWorkspace);
+  const { user, isDemoUser } = useAuth();
+  const storageKey = getProfileStorageKey(user?.id);
+  const [workspace, dispatch] = useReducer(
+    reducer,
+    undefined,
+    () => loadWorkspace(storageKey, user, isDemoUser),
+  );
+
+  useEffect(() => {
+    dispatch({
+      type: 'replaceWorkspace',
+      workspace: loadWorkspace(storageKey, user, isDemoUser),
+    });
+  }, [isDemoUser, storageKey, user]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !user) return;
+    if (workspace.user.id !== user.id) return;
+    if (window.localStorage.getItem(storageKey)) return;
+    persistWorkspace(storageKey, workspace, new Date().toISOString());
+  }, [storageKey, user, workspace]);
 
   useEffect(() => {
     if (workspace.autosaveStatus !== 'unsaved') return undefined;
@@ -495,7 +627,7 @@ export function useProfileWorkspace() {
       window.setTimeout(() => {
         try {
           const savedAt = new Date().toISOString();
-          persistWorkspace(workspace, savedAt);
+          persistWorkspace(storageKey, workspace, savedAt);
           dispatch({ type: 'setAutosaveStatus', status: 'saved', savedAt });
         } catch {
           dispatch({ type: 'setAutosaveStatus', status: 'error' });
@@ -503,26 +635,26 @@ export function useProfileWorkspace() {
       }, 180);
     }, 650);
     return () => window.clearTimeout(timer);
-  }, [workspace]);
+  }, [storageKey, workspace]);
 
   const saveNow = useCallback(() => {
     dispatch({ type: 'setAutosaveStatus', status: 'saving' });
     try {
       const savedAt = new Date().toISOString();
-      persistWorkspace(workspace, savedAt);
+      persistWorkspace(storageKey, workspace, savedAt);
       dispatch({ type: 'setAutosaveStatus', status: 'saved', savedAt });
       return true;
     } catch {
       dispatch({ type: 'setAutosaveStatus', status: 'error' });
       return false;
     }
-  }, [workspace]);
+  }, [storageKey, workspace]);
 
   const resetDemo = useCallback(() => {
-    const next = createDefaultProfileWorkspace();
-    window.localStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(next));
+    const next = createInitialProfileWorkspace(user, isDemoUser);
+    window.localStorage.setItem(storageKey, JSON.stringify(next));
     dispatch({ type: 'replaceWorkspace', workspace: next });
-  }, []);
+  }, [isDemoUser, storageKey, user]);
 
   return { workspace, dispatch, saveNow, resetDemo };
 }
