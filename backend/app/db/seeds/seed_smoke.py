@@ -13,6 +13,7 @@ from uuid import NAMESPACE_URL, UUID, uuid5
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth.security import hash_password
 from app.db.models.agent.agent import Agent
 from app.db.models.agent.agent_skill import AgentSkill
 from app.db.models.identity.user import User
@@ -23,6 +24,8 @@ from app.db.models.knowledge.course import Course
 from app.db.models.knowledge.document import Document
 from app.db.models.knowledge.knowledge_edge import KnowledgeEdge
 from app.db.models.knowledge.knowledge_node import KnowledgeNode
+from app.db.seeds._constants import DEMO_USER_PASSWORD
+from app.db.seeds.seed_demo_user import run as seed_demo_user
 
 USER_DEMO_ID = UUID("00000000-0000-0000-0000-000000000001")
 COURSE_ID = UUID("00000000-0000-0000-0000-000000000101")
@@ -101,12 +104,16 @@ async def _seed_user(session: AsyncSession) -> None:
                 id=USER_DEMO_ID,
                 email="demo_student_zhang@securehub.local",
                 display_name="demo_student_zhang",
-                hashed_password=None,
+                hashed_password=hash_password(DEMO_USER_PASSWORD),
                 is_active=True,
             )
         )
         stats.inserted += 1
     else:
+        if not existing.hashed_password:
+            existing.hashed_password = hash_password(DEMO_USER_PASSWORD)
+            existing.is_active = True
+            await session.flush()
         stats.skipped += 1
     _print_stats("users", stats)
 
@@ -450,6 +457,7 @@ async def _seed_capabilities(session: AsyncSession) -> None:
 
 async def seed_smoke(session: AsyncSession) -> None:
     """幂等：如已存在则跳过。"""
+    await seed_demo_user(session)
     await _seed_user(session)
     course = await _seed_course(session)
     await session.flush()

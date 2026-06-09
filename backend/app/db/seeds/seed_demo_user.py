@@ -28,7 +28,9 @@ async def _seed(session: AsyncSession) -> None:
 
     user = await users.get_by_id(DEMO_USER_ID)
     if user is None:
-        await users.create(
+        user = await users.get_by_email(DEMO_USER_EMAIL)
+    if user is None:
+        user = await users.create(
             user_id=DEMO_USER_ID,
             email=DEMO_USER_EMAIL,
             display_name=DEMO_USER_NAME,
@@ -42,11 +44,11 @@ async def _seed(session: AsyncSession) -> None:
         user.is_active = True
         await session.flush()
 
-    await profiles.upsert(user_id=DEMO_USER_ID, dimensions=DEMO_USER_DIMENSIONS)
+    await profiles.upsert(user_id=user.id, dimensions=DEMO_USER_DIMENSIONS)
 
     for dimension, score, confidence in DEMO_USER_CAPABILITIES:
         await caps.upsert_score(
-            user_id=DEMO_USER_ID,
+            user_id=user.id,
             dimension=dimension,
             score=score,
             confidence=confidence,

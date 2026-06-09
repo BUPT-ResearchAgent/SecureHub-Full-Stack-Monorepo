@@ -7,12 +7,15 @@ from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID as PG_UUID
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.ext.compiler import compiles
 
+from app.auth.security import verify_password
 from app.db import models  # noqa: F401
 from app.db.base import Base
 from app.db.models.agent.agent import Agent
+from app.db.models.identity.user import User
 from app.db.models.identity.user_capability import UserCapability
 from app.db.models.knowledge.chunk import Chunk
 from app.db.models.knowledge.knowledge_node import KnowledgeNode
+from app.db.seeds._constants import DEMO_USER_EMAIL, DEMO_USER_PASSWORD
 from app.db.seeds.seed_smoke import USER_DEMO_ID, seed_smoke
 
 
@@ -57,6 +60,10 @@ async def test_seed_smoke_is_idempotent_and_has_core_counts() -> None:
         ).scalars().all()
         nodes = (await session.execute(select(KnowledgeNode))).scalars().all()
         chunks = (await session.execute(select(Chunk))).scalars().all()
+        demo_user = (
+            await session.execute(select(User).where(User.email == DEMO_USER_EMAIL))
+        ).scalar_one_or_none()
+        smoke_user = await session.get(User, USER_DEMO_ID)
 
     await engine.dispose()
 
@@ -64,3 +71,7 @@ async def test_seed_smoke_is_idempotent_and_has_core_counts() -> None:
     assert len(capabilities) == 6
     assert len(nodes) == 3
     assert len(chunks) == 10
+    assert demo_user is not None
+    assert verify_password(DEMO_USER_PASSWORD, demo_user.hashed_password)
+    assert smoke_user is not None
+    assert verify_password(DEMO_USER_PASSWORD, smoke_user.hashed_password)
