@@ -3,8 +3,8 @@ import { NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom';
 import { toast } from 'sonner';
 import {
   LayoutDashboard,
-  GraduationCap,
   Swords,
+  GraduationCap,
   FlaskConical,
   PenLine,
   MessagesSquare,
@@ -20,7 +20,7 @@ import {
   LogOut,
   ShieldCheck,
 } from 'lucide-react';
-import { EvidenceDrawer } from './EvidenceDrawer';
+import { EvidenceDrawer, EvidenceProvider, useEvidence } from './EvidenceDrawer';
 import { GlobalSearch } from './GlobalSearch';
 import {
   DropdownMenu,
@@ -57,18 +57,6 @@ export const navItems: NavItem[] = [
     ],
   },
   {
-    path: '/course',
-    icon: GraduationCap,
-    label: '课程学习',
-    children: [
-      { key: 'entry', label: '课程入口' },
-      { key: 'path', label: '学习路径' },
-      { key: 'workbench', label: '资源工作台' },
-      { key: 'tutor', label: '辅导对话' },
-      { key: 'assess', label: '效果评估' },
-    ],
-  },
-  {
     path: '/practice',
     icon: Swords,
     label: '实战进阶',
@@ -79,7 +67,19 @@ export const navItems: NavItem[] = [
       { key: 'hvv', label: '护网行动' },
       { key: 'range', label: '靶场演练' },
       { key: 'cases', label: '实战案例' },
-      { key: 'ddl', label: '竞赛DDL' },
+      { key: 'ddl', label: '竞赛截止' },
+    ],
+  },
+  {
+    path: '/course',
+    icon: GraduationCap,
+    label: '课程学习',
+    children: [
+      { key: 'entry', label: '课程入口' },
+      { key: 'path', label: '学习路径' },
+      { key: 'workbench', label: '资源工作台' },
+      { key: 'tutor', label: '辅导对话' },
+      { key: 'assess', label: '效果评估' },
     ],
   },
   {
@@ -186,10 +186,18 @@ export const navItems: NavItem[] = [
 ];
 
 export function Layout() {
+  return (
+    <EvidenceProvider>
+      <LayoutFrame />
+    </EvidenceProvider>
+  );
+}
+
+function LayoutFrame() {
   const navigate = useNavigate();
   const location = useLocation();
   const { user, logout } = useAuth();
-  const [evidenceOpen, setEvidenceOpen] = useState(false);
+  const evidence = useEvidence();
   const [collapsed, setCollapsed] = useState(false);
   const [expanded, setExpanded] = useState<string[]>(() => {
     const active = navItems.find((n) => location.pathname.startsWith(n.path));
@@ -323,7 +331,7 @@ export function Layout() {
 
           <div className="flex items-center gap-2">
             <button
-              onClick={() => setEvidenceOpen(!evidenceOpen)}
+              onClick={evidence.toggle}
               className="flex items-center gap-2 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-100 rounded-lg transition-colors"
             >
               <Database className="w-4 h-4" />
@@ -376,7 +384,7 @@ export function Layout() {
         </main>
       </div>
 
-      <EvidenceDrawer isOpen={evidenceOpen} onClose={() => setEvidenceOpen(false)} />
+      <EvidenceDrawer />
     </div>
   );
 }

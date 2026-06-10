@@ -3,10 +3,11 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Download, MessageSquarePlus, RotateCcw, Save } from 'lucide-react';
 import { toast } from 'sonner';
 import { PageShell } from '../components/PageShell';
+import { useEvidence } from '../components/EvidenceDrawer';
 import { generateMockAnswer } from '../features/chat/api';
 import { CHAT_AGENTS, getChatAgent } from '../features/chat/mockData';
 import { useChatWorkspace } from '../features/chat/store';
-import type { ChatAgentId, ChatMessage } from '../features/chat/types';
+import type { ChatAgentId, ChatCitation, ChatMessage } from '../features/chat/types';
 import { CHAT_AGENT_IDS } from '../features/chat/types';
 import {
   buildSessionMarkdown,
@@ -25,17 +26,42 @@ import { ConversationPane } from '../features/chat/components/ConversationPane';
 import { PromptStarters } from '../features/chat/components/PromptStarters';
 import { SessionList } from '../features/chat/components/SessionList';
 import { StructuredAnswerCards } from '../features/chat/components/StructuredAnswerCards';
+import type { EvidenceChunkDTO } from '@/lib/sse.types';
 
 function isChatAgentId(value: string | null): value is ChatAgentId {
   return CHAT_AGENT_IDS.includes(value as ChatAgentId);
+}
+
+function citationToChunk(citation: ChatCitation): EvidenceChunkDTO {
+  return {
+    chunk_id: citation.id,
+    document_id: `chat-${citation.id}`,
+    source_url: citation.url,
+    platform: citation.type === 'internal' ? 'securehub' : citation.type,
+    author: citation.source,
+    published_at: null,
+    fetched_at: null,
+    rights_note: '演示引用，仅用于本地问答面板',
+    asset_type: citation.type,
+    excerpt: citation.excerpt,
+    page_no: null,
+    chapter: citation.title,
+    timestamp: null,
+    reliability: citation.reliability / 100,
+  };
 }
 
 export function Chat() {
   const { workspace, dispatch, saveNow, resetDemo } = useChatWorkspace();
   const [params] = useSearchParams();
   const navigate = useNavigate();
+  const evidence = useEvidence();
   const cancelledMessages = useRef<Set<string>>(new Set());
   const tabParam = params.get('tab');
+  const courseId = params.get('courseId') ?? params.get('course');
+  const currentKpId = params.get('kpId') ?? 'sqli';
+  const currentKpTitle = params.get('kpTitle') ?? 'SQL 注入基础';
+  const courseContext = courseId ? { courseId, currentKpId, currentKpTitle } : null;
   const activeAgentId = isChatAgentId(tabParam) ? tabParam : workspace.activeAgentId;
   const activeAgent = getChatAgent(activeAgentId);
   const sessions = getSessionsByAgent(workspace, activeAgentId);
@@ -43,6 +69,15 @@ export function Chat() {
   const activeDraft = activeSession ? (workspace.drafts[activeSession.id] ?? '') : '';
   const isGenerating = Boolean(workspace.generatingMessageId);
   const currentAssistantMessage = getLastAssistantMessage(activeSession);
+  const currentChunks = courseContext && evidence.chunks.length
+    ? evidence.chunks
+    : (currentAssistantMessage?.citations ?? []).map(citationToChunk);
+
+  const chatUrl = (agentId: ChatAgentId) => {
+    const next = new URLSearchParams(params);
+    next.set('tab', agentId);
+    return `/chat?${next.toString()}`;
+  };
 
   useEffect(() => {
     if (tabParam && isChatAgentId(tabParam)) {
@@ -51,8 +86,10 @@ export function Chat() {
       }
       return;
     }
-    navigate(`/chat?tab=${workspace.activeAgentId}`, { replace: true });
-  }, [dispatch, navigate, tabParam, workspace.activeAgentId]);
+    const next = new URLSearchParams(params);
+    next.set('tab', workspace.activeAgentId);
+    navigate(`/chat?${next.toString()}`, { replace: true });
+  }, [dispatch, navigate, params, tabParam, workspace.activeAgentId]);
 
   const runAnswerGeneration = async (
     agentId: ChatAgentId,
@@ -104,7 +141,7 @@ export function Chat() {
   const createSessionForAgent = (agentId: ChatAgentId) => {
     const session = createChatSession(agentId);
     dispatch({ type: 'addSession', session });
-    navigate(`/chat?tab=${agentId}`);
+    navigate(chatUrl(agentId));
     toast.success('已新建会话');
     return session;
   };
@@ -178,7 +215,7 @@ export function Chat() {
 
   const handleAgentSelect = (agentId: ChatAgentId) => {
     dispatch({ type: 'setActiveAgent', agentId });
-    navigate(`/chat?tab=${agentId}`);
+    navigate(chatUrl(agentId));
   };
 
   const handleSessionSelect = (sessionId: string) => {
@@ -239,6 +276,12 @@ export function Chat() {
 
   const renderWorkbench = () => (
     <div className="space-y-4">
+      {courseContext && (
+        <div className="rounded-xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-900">
+          当前学习：{courseContext.currentKpTitle}
+          <span className="ml-2 text-xs text-blue-700">知识点 ID：{courseContext.currentKpId}</span>
+        </div>
+      )}
       <ChatWorkbenchBar workspace={workspace} agent={activeAgent} session={activeSession} />
       <div className="grid min-h-[calc(100vh-17rem)] gap-4 lg:grid-cols-[280px_minmax(0,1fr)] xl:grid-cols-[280px_minmax(0,1fr)_320px]">
         <aside className="space-y-4 lg:max-h-[calc(100vh-17rem)] lg:overflow-y-auto">
@@ -285,7 +328,7 @@ export function Chat() {
         />
 
         <aside className="hidden space-y-4 xl:block xl:max-h-[calc(100vh-17rem)] xl:overflow-y-auto">
-          <CitationPanel citations={currentAssistantMessage?.citations ?? []} />
+          <CitationPanel chunks={currentChunks} />
           <StructuredAnswerCards cards={currentAssistantMessage?.structuredCards ?? []} />
         </aside>
       </div>

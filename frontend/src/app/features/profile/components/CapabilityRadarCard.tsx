@@ -1,50 +1,48 @@
-import { Minus, TrendingDown, TrendingUp } from 'lucide-react';
+import { ShieldCheck } from 'lucide-react';
 import { Card, Tag } from '@/app/components/PageShell';
-import type { CapabilityScore } from '../types';
+import { EmptyState } from '@/app/components/StateView';
+import type { CapabilityDTO } from '@/lib/sse.types';
 
-const trendIcons = {
-  up: TrendingUp,
-  flat: Minus,
-  down: TrendingDown,
-};
+function percent(value: number): number {
+  return Math.round(Math.max(0, Math.min(1, value)) * 100);
+}
 
-const trendLabels = {
-  up: '上升',
-  flat: '稳定',
-  down: '下降',
-};
-
-export function CapabilityRadarCard({ capabilities }: { capabilities: CapabilityScore[] }) {
+export function CapabilityRadarCard({ capabilities }: { capabilities: CapabilityDTO[] }) {
   return (
-    <Card title="能力雷达" subtitle="基于资产、任务和互动记录的演示画像评分">
-      <ul className="space-y-4">
-        {capabilities.map((capability) => {
-          const TrendIcon = trendIcons[capability.trend];
-          return (
-            <li key={capability.id}>
-              <div className="mb-1.5 flex items-center justify-between gap-3">
-                <div>
-                  <p className="text-sm font-medium text-slate-800">{capability.name}</p>
-                  <p className="mt-0.5 text-xs text-slate-500">{capability.evidence}</p>
+    <Card title="能力雷达" subtitle="基于 user_capabilities 的课程学习能力画像">
+      {!capabilities.length ? (
+        <EmptyState text="完成画像对话以解锁能力雷达" />
+      ) : (
+        <ul className="space-y-4">
+          {capabilities.map((capability) => {
+            const score = percent(capability.score);
+            const confidence = percent(capability.confidence);
+            return (
+              <li key={capability.dimension}>
+                <div className="mb-1.5 flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-medium text-slate-800">{capability.dimension}</p>
+                    <p className="mt-0.5 text-xs text-slate-500">证据 {capability.evidence_count} 条 · 置信度 {confidence}%</p>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-2">
+                    <Tag tone={score >= 70 ? 'green' : score >= 45 ? 'blue' : 'amber'}>
+                      <ShieldCheck className="mr-1 h-3 w-3" />
+                      {confidence}%
+                    </Tag>
+                    <span className="w-10 text-right text-sm font-semibold text-slate-900">{score}%</span>
+                  </div>
                 </div>
-                <div className="flex shrink-0 items-center gap-2">
-                  <Tag tone={capability.trend === 'up' ? 'green' : capability.trend === 'down' ? 'red' : 'default'}>
-                    <TrendIcon className="mr-1 h-3 w-3" />
-                    {trendLabels[capability.trend]}
-                  </Tag>
-                  <span className="w-8 text-right text-sm font-semibold text-slate-900">{capability.score}</span>
+                <div className="h-2 rounded-full bg-slate-100">
+                  <div
+                    className="h-full rounded-full bg-brand-blue-600 transition-all"
+                    style={{ width: `${score}%` }}
+                  />
                 </div>
-              </div>
-              <div className="h-2 rounded-full bg-slate-100">
-                <div
-                  className="h-full rounded-full bg-brand-blue-600 transition-all"
-                  style={{ width: `${capability.score}%` }}
-                />
-              </div>
-            </li>
-          );
-        })}
-      </ul>
+              </li>
+            );
+          })}
+        </ul>
+      )}
     </Card>
   );
 }

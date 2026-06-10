@@ -2,8 +2,9 @@ import { RefreshCw, UserRound } from 'lucide-react';
 import { useState, type Dispatch } from 'react';
 import { toast } from 'sonner';
 import { Card, Tag } from '@/app/components/PageShell';
+import type { CapabilityDTO } from '@/lib/sse.types';
 import type { ProfileAction } from '../store';
-import type { ProfileWorkspace } from '../types';
+import type { CapabilityScore, ProfileWorkspace } from '../types';
 import { computeProfileStats, formatDateTime } from '../utils';
 import { CapabilityRadarCard } from './CapabilityRadarCard';
 import { TagEditor } from './TagEditor';
@@ -12,10 +13,12 @@ export function PersonaPanel({
   workspace,
   dispatch,
   onEdit,
+  capabilities,
 }: {
   workspace: ProfileWorkspace;
   dispatch: Dispatch<ProfileAction>;
   onEdit: () => void;
+  capabilities?: CapabilityDTO[];
 }) {
   const [regenerating, setRegenerating] = useState(false);
   const stats = computeProfileStats(workspace);
@@ -114,7 +117,7 @@ export function PersonaPanel({
       </div>
 
       <div className="grid gap-4 xl:grid-cols-[1fr_0.9fr]">
-        <CapabilityRadarCard capabilities={workspace.capabilities} />
+        <CapabilityRadarCard capabilities={capabilities ?? workspace.capabilities.map(capabilityScoreToDTO)} />
 
         <Card title="兴趣与标签" subtitle="支持新增、删除和一键添加推荐标签">
           <TagEditor tags={user.tags} dispatch={dispatch} />
@@ -155,6 +158,15 @@ export function PersonaPanel({
       </div>
     </div>
   );
+}
+
+function capabilityScoreToDTO(capability: CapabilityScore): CapabilityDTO {
+  return {
+    dimension: capability.name,
+    score: capability.score / 100,
+    confidence: capability.trend === 'up' ? 0.78 : capability.trend === 'down' ? 0.52 : 0.64,
+    evidence_count: 1,
+  };
 }
 
 function weightLabel(key: string): string {
