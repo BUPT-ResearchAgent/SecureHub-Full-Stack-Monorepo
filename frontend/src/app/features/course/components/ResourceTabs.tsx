@@ -34,6 +34,25 @@ function initialResourceMap(): Partial<Record<ResourceType, ResourceItem>> {
   return Object.fromEntries(mockResources.map((resource) => [resource.type, resource])) as Partial<Record<ResourceType, ResourceItem>>;
 }
 
+function qualityBadgeClass(score?: number): string {
+  if (score == null) return 'border-slate-200 bg-slate-50 text-slate-500';
+  if (score >= 0.85) return 'border-emerald-200 bg-emerald-50 text-emerald-700';
+  if (score >= 0.7) return 'border-amber-200 bg-amber-50 text-amber-700';
+  return 'border-red-200 bg-red-50 text-red-700';
+}
+
+function ResourceQualityBadge({ score }: { score?: number }) {
+  const label = score == null ? '质量待评估' : `质量 ${Math.round(score * 100)}%`;
+  return (
+    <span
+      className={`inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-medium shadow-sm ${qualityBadgeClass(score)}`}
+      aria-label={score == null ? '质量分待评估' : `质量分 ${Math.round(score * 100)}%`}
+    >
+      {label}
+    </span>
+  );
+}
+
 export function ResourceTabs() {
   const { currentKpId } = useCourseState();
   const evidence = useEvidence();
@@ -194,9 +213,14 @@ export function ResourceTabs() {
         <ErrorState message={resource.errorMessage ?? '资源生成失败'} onRetry={startGeneration} />
       )}
 
-      <ErrorBoundary resetKey={active}>
-        {renderResource()}
-      </ErrorBoundary>
+      <div className="relative">
+        <div className="absolute right-4 top-4 z-10">
+          <ResourceQualityBadge score={resource.qualityScore} />
+        </div>
+        <ErrorBoundary resetKey={active}>
+          {renderResource()}
+        </ErrorBoundary>
+      </div>
     </div>
   );
 }
