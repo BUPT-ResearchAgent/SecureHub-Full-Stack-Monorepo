@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { PlayCircle } from 'lucide-react';
-import { ErrorState, InsufficientEvidenceState, LoadingState } from '@/app/components/StateView';
+import { ErrorBoundary } from '@/app/components/ErrorBoundary';
+import { ErrorState, InsufficientEvidenceState, LoadingState, ReconnectingState } from '@/app/components/StateView';
 import { useEvidence } from '@/app/components/EvidenceDrawer';
 import { useAgentTraceDispatch } from '@/app/features/agents/store';
 import { mockResources } from '../mockData';
-import { useCourseState } from '../store';
+import { useCourseDispatch, useCourseState } from '../store';
 import type { ResourceItem, ResourceType } from '../types';
 import { resourceTypeIcon, resourceTypeLabel } from '../utils';
 import { streamResourceGeneration } from '../api';
@@ -29,27 +30,64 @@ function fallbackResource(type: ResourceType): ResourceItem {
   };
 }
 
-function initialResourceMap(): Partial<Record<ResourceType, ResourceItem>> {
-  return Object.fromEntries(mockResources.map((resource) => [resource.type, resource])) as Partial<Record<ResourceType, ResourceItem>>;
+function initialResourceMap(source: ResourceItem[] = mockResources): Partial<Record<ResourceType, ResourceItem>> {
+  return Object.fromEntries(source.map((resource) => [resource.type, resource])) as Partial<Record<ResourceType, ResourceItem>>;
+}
+
+function qualityBadgeClass(score?: number): string {
+  if (score == null) return 'border-slate-200 bg-slate-50 text-slate-500';
+  if (score >= 0.85) return 'border-emerald-200 bg-emerald-50 text-emerald-700';
+  if (score >= 0.7) return 'border-amber-200 bg-amber-50 text-amber-700';
+  return 'border-red-200 bg-red-50 text-red-700';
+}
+
+function ResourceQualityBadge({ score }: { score?: number }) {
+  const label = score == null ? '质量待评估' : `质量 ${Math.round(score * 100)}%`;
+  return (
+    <span
+      className={`inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-medium shadow-sm ${qualityBadgeClass(score)}`}
+      aria-label={score == null ? '质量分待评估' : `质量分 ${Math.round(score * 100)}%`}
+    >
+      {label}
+    </span>
+  );
 }
 
 export function ResourceTabs() {
-  const { currentKpId } = useCourseState();
+  const { currentKpId, resources: storedResources } = useCourseState();
+  const courseDispatch = useCourseDispatch();
   const evidence = useEvidence();
   const traceDispatch = useAgentTraceDispatch();
   const cancelRef = useRef<() => void>();
+  const persistedSignaturesRef = useRef<Record<string, string>>({});
   const [active, setActive] = useState<ResourceType>('doc');
-  const [resources, setResources] = useState<Partial<Record<ResourceType, ResourceItem>>>(() => initialResourceMap());
+  const [resources, setResources] = useState<Partial<Record<ResourceType, ResourceItem>>>(() => initialResourceMap(storedResources));
   const [progressText, setProgressText] = useState('');
   const resource = resources[active] ?? fallbackResource(active);
   const isGenerating = resource.status === 'generating';
+  const isReconnecting = resource.errorCode === 'sse_reconnecting';
 
   const selectedResourceTypes = useMemo(() => resourceTypes, []);
+
+  useEffect(() => {
+    setResources(initialResourceMap(storedResources));
+  }, [storedResources]);
+
+  useEffect(() => {
+    Object.values(resources).forEach((resource) => {
+      if (!resource || resource.status !== 'ready') return;
+      const signature = `${resource.id}:${resource.qualityScore ?? ''}:${resource.content.length}:${resource.evidenceRefs.length}`;
+      if (persistedSignaturesRef.current[resource.type] === signature) return;
+      persistedSignaturesRef.current[resource.type] = signature;
+      courseDispatch({ type: 'upsertResource', resource });
+    });
+  }, [courseDispatch, resources]);
 
   const updateResource = (type: ResourceType, update: (resource: ResourceItem) => ResourceItem) => {
     setResources((current) => {
       const previous = current[type] ?? fallbackResource(type);
-      return { ...current, [type]: update(previous) };
+      const next = update(previous);
+      return { ...current, [type]: next };
     });
   };
 
@@ -100,10 +138,22 @@ export function ResourceTabs() {
           updateResource(targetType, (previous) => ({
             ...previous,
             status: 'ready',
+            errorCode: undefined,
+            errorMessage: undefined,
             qualityScore: done.quality_score,
           }));
         },
         onError(error) {
+          if (error.code === 'sse_reconnecting') {
+            setProgressText(error.message);
+            updateResource(targetType, (previous) => ({
+              ...previous,
+              status: 'generating',
+              errorCode: error.code,
+              errorMessage: error.message,
+            }));
+            return;
+          }
           setProgressText('');
           updateResource(targetType, (previous) => ({
             ...previous,
@@ -171,7 +221,8 @@ export function ResourceTabs() {
         </button>
       </div>
 
-      {isGenerating && <LoadingState text={progressText || '正在生成中…'} />}
+      {isReconnecting && <ReconnectingState text={resource.errorMessage} />}
+      {isGenerating && !isReconnecting && <LoadingState text={progressText || '正在生成中…'} />}
       {resource.status === 'failed' && resource.errorCode === 'InsufficientEvidence' && (
         <InsufficientEvidenceState onRetry={startGeneration} />
       )}
@@ -179,7 +230,14 @@ export function ResourceTabs() {
         <ErrorState message={resource.errorMessage ?? '资源生成失败'} onRetry={startGeneration} />
       )}
 
-      {renderResource()}
+      <div className="relative">
+        <div className="absolute right-4 top-4 z-10">
+          <ResourceQualityBadge score={resource.qualityScore} />
+        </div>
+        <ErrorBoundary resetKey={active}>
+          {renderResource()}
+        </ErrorBoundary>
+      </div>
     </div>
   );
 }

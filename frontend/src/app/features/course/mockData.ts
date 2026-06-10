@@ -56,6 +56,7 @@ export const mockResources: ResourceItem[] = mockResourceTypes.map((type) => ({
   status: 'ready',
   content: mockResourceContent[type],
   evidenceRefs: mockEvidenceChunks,
+  qualityScore: 0.86,
 }));
 
 export const mockAssessment: AssessmentReport = {

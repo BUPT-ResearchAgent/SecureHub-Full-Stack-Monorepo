@@ -149,8 +149,15 @@ export function openSSEPost(
   },
 ): () => void {
   const controller = new AbortController();
+  const maxRetries = 1;
+  const retryDelay = 2000;
 
-  void (async () => {
+  const sleep = (delay: number) =>
+    new Promise((resolve) => {
+      window.setTimeout(resolve, delay);
+    });
+
+  const connect = async (attempt: number): Promise<void> => {
     try {
       const response = await fetch(url, {
         method: 'POST',
@@ -220,9 +227,23 @@ export function openSSEPost(
       }
     } catch (error) {
       if (controller.signal.aborted) return;
+      if (attempt < maxRetries) {
+        dispatchEventByName(
+          'error',
+          { code: 'sse_reconnecting', message: '网络中断，正在重连…', recoverable: true },
+          opts,
+        );
+        await sleep(retryDelay);
+        if (!controller.signal.aborted) {
+          await connect(attempt + 1);
+        }
+        return;
+      }
       opts?.onError?.(error);
     }
-  })();
+  };
+
+  void connect(0);
 
   return () => controller.abort();
 }

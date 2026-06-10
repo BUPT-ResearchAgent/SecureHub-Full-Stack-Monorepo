@@ -20,6 +20,7 @@ import {
   Trophy,
 } from 'lucide-react';
 import { DataTag } from '@/app/components/DataTag';
+import { BrandFooter } from '@/app/components/BrandFooter';
 import { useAuth } from '@/app/features/auth/store';
 
 export function Landing() {
@@ -806,6 +807,7 @@ export function Landing() {
           </div>
         </div>
       </footer>
+      <BrandFooter />
     </div>
   );
 }

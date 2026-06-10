@@ -1,5 +1,5 @@
 // Status: mock
-import type { ProfileDTO } from '@/lib/sse.types';
+import type { GeneratedResourceDTO, ProfileDTO } from '@/lib/sse.types';
 
 export const mockProfile: ProfileDTO = {
   user_id: '00000000-0000-0000-0000-000000000001',
@@ -20,3 +20,87 @@ export const mockProfile: ProfileDTO = {
   ],
   updated_at: '2026-06-09T00:00:00Z',
 };
+
+export const mockGeneratedResources: GeneratedResourceDTO[] = [
+  {
+    id: 'history-doc-001',
+    user_id: mockProfile.user_id,
+    course_id: '00000000-0000-0000-0000-000000000101',
+    resource_type: 'doc',
+    title: 'SQL 注入基础讲解文档',
+    created_at: '2026-06-09T09:12:00Z',
+    quality_score: 0.88,
+  },
+  {
+    id: 'history-ppt-001',
+    user_id: mockProfile.user_id,
+    course_id: '00000000-0000-0000-0000-000000000101',
+    resource_type: 'ppt',
+    title: 'SQL 注入课堂演示大纲',
+    created_at: '2026-06-09T09:20:00Z',
+    quality_score: 0.86,
+  },
+  {
+    id: 'history-mindmap-001',
+    user_id: mockProfile.user_id,
+    course_id: '00000000-0000-0000-0000-000000000101',
+    resource_type: 'mindmap',
+    title: 'SQL 注入知识结构图',
+    created_at: '2026-06-09T09:28:00Z',
+    quality_score: 0.9,
+  },
+  {
+    id: 'history-quiz-001',
+    user_id: mockProfile.user_id,
+    course_id: '00000000-0000-0000-0000-000000000101',
+    resource_type: 'quiz',
+    title: 'SQL 注入三类题型练习',
+    created_at: '2026-06-09T09:36:00Z',
+    quality_score: 0.84,
+  },
+  {
+    id: 'history-lab-001',
+    user_id: mockProfile.user_id,
+    course_id: '00000000-0000-0000-0000-000000000101',
+    resource_type: 'lab',
+    title: '参数化查询修复实验',
+    created_at: '2026-06-09T09:45:00Z',
+    quality_score: 0.87,
+  },
+  {
+    id: 'history-video-001',
+    user_id: mockProfile.user_id,
+    course_id: '00000000-0000-0000-0000-000000000101',
+    resource_type: 'video',
+    title: 'SQL 注入分镜讲解脚本',
+    created_at: '2026-06-09T09:54:00Z',
+    quality_score: 0.82,
+  },
+  {
+    id: 'history-readings-001',
+    user_id: mockProfile.user_id,
+    course_id: '00000000-0000-0000-0000-000000000101',
+    resource_type: 'readings',
+    title: 'SQL 注入扩展阅读清单',
+    created_at: '2026-06-09T10:02:00Z',
+    quality_score: 0.91,
+  },
+  {
+    id: 'history-doc-002',
+    user_id: mockProfile.user_id,
+    course_id: '00000000-0000-0000-0000-000000000101',
+    resource_type: 'doc',
+    title: '布尔盲注判断流程补充说明',
+    created_at: '2026-06-09T10:18:00Z',
+    quality_score: 0.79,
+  },
+  {
+    id: 'history-lab-002',
+    user_id: mockProfile.user_id,
+    course_id: '00000000-0000-0000-0000-000000000101',
+    resource_type: 'lab',
+    title: '时间盲注验证与修复验收点',
+    created_at: '2026-06-09T10:30:00Z',
+    quality_score: 0.81,
+  },
+];

@@ -14,6 +14,16 @@ export type ProfileDTO = {
   updated_at: string;
 };
 
+export type GeneratedResourceDTO = {
+  id: string;
+  user_id?: string;
+  course_id?: string;
+  resource_type: ResourceType;
+  title: string;
+  created_at: string;
+  quality_score?: number | null;
+};
+
 export type EvidenceChunkDTO = {
   chunk_id: string;
   document_id: string;

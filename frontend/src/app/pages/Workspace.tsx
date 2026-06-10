@@ -1,10 +1,11 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
-import { FileText, Play, RefreshCcw, RotateCcw, Save, type LucideIcon } from 'lucide-react';
+import { ArrowRight, FileText, GraduationCap, Play, RefreshCcw, RotateCcw, Save, type LucideIcon } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 
 import { PageShell } from '@/app/components/PageShell';
+import { Progress } from '@/app/components/ui/progress';
 import { DailyBriefDrawer } from '@/app/features/workspace/components/DailyBriefDrawer';
 import { DataFreshnessPanel } from '@/app/features/workspace/components/DataFreshnessPanel';
 import { DeadlineReminderPanel } from '@/app/features/workspace/components/DeadlineReminderPanel';
@@ -18,6 +19,9 @@ import { refreshDataSourceDemo } from '@/app/features/workspace/api';
 import { useWorkspaceDashboard } from '@/app/features/workspace/store';
 import type { DataSourceStatus } from '@/app/features/workspace/types';
 import { firstHighPriorityTask } from '@/app/features/workspace/utils';
+import { apiGet } from '@/lib/api';
+import { withMockFallback } from '@/lib/mock';
+import { mockCourse, mockKnowledgeNodes } from '@/lib/mock/course.mock';
 
 function ToolbarButton({
   children,
@@ -45,6 +49,110 @@ function ToolbarButton({
       <Icon className="h-4 w-4" />
       <span className="hidden sm:inline">{children}</span>
     </button>
+  );
+}
+
+type CourseSummary = {
+  title: string;
+  progress: number;
+  currentKpTitle: string;
+};
+
+type CourseApiItem = {
+  title?: string;
+  progress?: number;
+  current_kp_title?: string;
+  currentKpTitle?: string;
+  knowledge_nodes?: Array<{ title?: string; status?: string }>;
+};
+
+type CourseApiListResponse = CourseApiItem[] | { items?: CourseApiItem[]; courses?: CourseApiItem[] };
+
+function mockCourseSummary(): CourseSummary {
+  return {
+    title: mockCourse.title || 'Web 安全基础',
+    progress: mockCourse.progress ?? 0.35,
+    currentKpTitle: mockKnowledgeNodes[0]?.title || 'SQL 注入基础',
+  };
+}
+
+function pickFirstCourse(payload: CourseApiListResponse): CourseApiItem | undefined {
+  if (Array.isArray(payload)) return payload[0];
+  return payload.items?.[0] ?? payload.courses?.[0];
+}
+
+function normalizeCourseSummary(payload: CourseApiListResponse): CourseSummary {
+  const first = pickFirstCourse(payload);
+  if (!first) return mockCourseSummary();
+  const currentNode = first.knowledge_nodes?.find((node) => node.status === 'active') ?? first.knowledge_nodes?.[0];
+  return {
+    title: first.title || mockCourseSummary().title,
+    progress: typeof first.progress === 'number' ? first.progress : mockCourseSummary().progress,
+    currentKpTitle: first.current_kp_title || first.currentKpTitle || currentNode?.title || mockCourseSummary().currentKpTitle,
+  };
+}
+
+function TodayCourseCard() {
+  const navigate = useNavigate();
+  const [course, setCourse] = useState<CourseSummary>(() => mockCourseSummary());
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    withMockFallback(
+      () => apiGet<CourseApiListResponse>('/api/v1/courses').then(normalizeCourseSummary),
+      mockCourseSummary,
+    )
+      .then((summary) => {
+        if (!cancelled) setCourse(summary);
+      })
+      .catch(() => {
+        if (!cancelled) setCourse(mockCourseSummary());
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const progress = Math.round(Math.max(0, Math.min(1, course.progress)) * 100);
+
+  return (
+    <section className="rounded-2xl border border-blue-100 bg-gradient-to-r from-blue-50 to-white p-5 shadow-sm">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex min-w-0 items-start gap-4">
+          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-brand-blue-600 text-white">
+            <GraduationCap className="h-6 w-6" />
+          </div>
+          <div className="min-w-0">
+            <div className="text-xs font-medium text-brand-blue-600">今日课程</div>
+            <h2 className="mt-1 truncate text-xl font-semibold text-slate-900">{course.title}</h2>
+            <p className="mt-1 text-sm text-slate-600">
+              当前知识点：{course.currentKpTitle}
+              {loading && <span className="ml-2 text-xs text-slate-400">同步中…</span>}
+            </p>
+          </div>
+        </div>
+        <div className="w-full max-w-md space-y-2">
+          <div className="flex items-center justify-between text-xs text-slate-500">
+            <span>学习进度</span>
+            <span>{progress}%</span>
+          </div>
+          <Progress value={progress} className="h-2 bg-blue-100" aria-label={`课程学习进度 ${progress}%`} />
+        </div>
+        <button
+          type="button"
+          onClick={() => navigate('/course?tab=workbench')}
+          className="inline-flex shrink-0 items-center justify-center gap-2 rounded-lg bg-brand-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-blue-700"
+        >
+          继续学习
+          <ArrowRight className="h-4 w-4" />
+        </button>
+      </div>
+    </section>
   );
 }
 
@@ -132,6 +240,7 @@ export function Workspace() {
 
   const renderWithSummary = (content: ReactNode) => (
     <div className="space-y-5">
+      <TodayCourseCard />
       <WorkspaceSummaryBar dashboard={dashboard} />
       {content}
     </div>

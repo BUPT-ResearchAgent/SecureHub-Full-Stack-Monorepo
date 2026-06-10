@@ -21,6 +21,8 @@ import {
   ShieldCheck,
 } from 'lucide-react';
 import { EvidenceDrawer, EvidenceProvider, useEvidence } from './EvidenceDrawer';
+import { BrandFooter } from './BrandFooter';
+import { BackendStatusPanel } from './BackendStatusPanel';
 import { GlobalSearch } from './GlobalSearch';
 import {
   DropdownMenu,
@@ -174,6 +176,7 @@ export const navItems: NavItem[] = [
     label: '个人中心',
     children: [
       { key: 'persona', label: '用户画像' },
+      { key: 'resources', label: '资源历史' },
       { key: 'vault', label: '个人资产库' },
       { key: 'docs', label: '文档资产' },
       { key: 'slides', label: '演示资产' },
@@ -382,10 +385,12 @@ function LayoutFrame() {
           <div className="max-w-[1280px] mx-auto px-6 py-6">
             <Outlet />
           </div>
+          <BrandFooter />
         </main>
       </div>
 
       <EvidenceDrawer />
+      <BackendStatusPanel />
     </div>
   );
 }

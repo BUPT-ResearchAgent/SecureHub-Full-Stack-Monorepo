@@ -103,11 +103,53 @@ function formatLocation(chunk: EvidenceChunkDTO): string {
 
 export function EvidenceDrawer() {
   const { chunks, isOpen, close, clearEvidence } = useEvidence();
+  const drawerRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     if (!isOpen) return;
+    const drawer = drawerRef.current;
+    const focusableSelector = [
+      'a[href]',
+      'button:not([disabled])',
+      'input:not([disabled])',
+      'select:not([disabled])',
+      'textarea:not([disabled])',
+      '[tabindex]:not([tabindex="-1"])',
+    ].join(',');
+
+    const getFocusable = () => {
+      if (!drawer) return [];
+      return Array.from(drawer.querySelectorAll<HTMLElement>(focusableSelector)).filter(
+        (element) => !element.hasAttribute('disabled') && element.getAttribute('aria-hidden') !== 'true',
+      );
+    };
+
+    window.setTimeout(() => {
+      const first = getFocusable()[0];
+      (first ?? drawer)?.focus();
+    }, 0);
+
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') close();
+      if (event.key === 'Escape') {
+        close();
+        return;
+      }
+      if (event.key !== 'Tab') return;
+      const focusable = getFocusable();
+      if (!focusable.length) {
+        event.preventDefault();
+        drawer?.focus();
+        return;
+      }
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
@@ -119,7 +161,11 @@ export function EvidenceDrawer() {
     <>
       <div className="fixed inset-0 z-40 bg-black/30" onClick={close} />
 
-      <aside className="fixed bottom-0 right-0 top-0 z-50 flex w-[390px] max-w-full flex-col bg-white shadow-2xl">
+      <aside
+        ref={drawerRef}
+        tabIndex={-1}
+        className="fixed bottom-0 right-0 top-0 z-50 flex w-[390px] max-w-full flex-col bg-white shadow-2xl"
+      >
         <header className="flex h-16 items-center justify-between border-b border-slate-200 px-5">
           <div>
             <h2 className="text-base font-semibold text-slate-900">证据链</h2>

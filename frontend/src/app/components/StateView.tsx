@@ -1,5 +1,5 @@
 // Status: real
-import { AlertCircle, FileSearch, Loader2, RefreshCw, SearchX } from 'lucide-react';
+import { AlertCircle, FileSearch, Loader2, RefreshCw, SearchX, Wifi } from 'lucide-react';
 import type { ReactNode } from 'react';
 
 export function LoadingState({ text = '正在生成中…' }: { text?: string }) {
@@ -11,9 +11,27 @@ export function LoadingState({ text = '正在生成中…' }: { text?: string })
   );
 }
 
-export function ErrorState({ message, onRetry }: { message: string; onRetry?: () => void }) {
+export function ReconnectingState({ text = '网络中断，正在重连…' }: { text?: string }) {
   return (
-    <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-800">
+    <div className="flex items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900">
+      <Wifi className="h-4 w-4 text-blue-700" />
+      <Loader2 className="h-4 w-4 animate-spin text-blue-700" />
+      {text}
+    </div>
+  );
+}
+
+export function ErrorState({
+  message,
+  onRetry,
+  retryText = '重试',
+}: {
+  message: string;
+  onRetry?: () => void;
+  retryText?: string;
+}) {
+  return (
+    <div className="rounded-lg border border-red-300 bg-red-50 p-4 text-sm text-red-900">
       <div className="flex items-start gap-2">
         <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
         <div className="min-w-0 flex-1">
@@ -22,10 +40,10 @@ export function ErrorState({ message, onRetry }: { message: string; onRetry?: ()
             <button
               type="button"
               onClick={onRetry}
-              className="mt-3 inline-flex items-center gap-1.5 rounded-md bg-red-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-red-700"
+              className="mt-3 inline-flex items-center gap-1.5 rounded-md bg-red-700 px-3 py-1.5 text-xs font-medium text-white hover:bg-red-800"
             >
               <RefreshCw className="h-3.5 w-3.5" />
-              重试
+              {retryText}
             </button>
           )}
         </div>
@@ -36,7 +54,7 @@ export function ErrorState({ message, onRetry }: { message: string; onRetry?: ()
 
 export function InsufficientEvidenceState({ onRetry }: { onRetry?: () => void }) {
   return (
-    <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+    <div className="rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950">
       <div className="flex items-start gap-2">
         <SearchX className="mt-0.5 h-4 w-4 shrink-0" />
         <div className="min-w-0 flex-1">
@@ -45,7 +63,7 @@ export function InsufficientEvidenceState({ onRetry }: { onRetry?: () => void })
             <button
               type="button"
               onClick={onRetry}
-              className="mt-3 inline-flex items-center gap-1.5 rounded-md bg-amber-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-amber-700"
+              className="mt-3 inline-flex items-center gap-1.5 rounded-md bg-amber-700 px-3 py-1.5 text-xs font-medium text-white hover:bg-amber-800"
             >
               <RefreshCw className="h-3.5 w-3.5" />
               重新尝试

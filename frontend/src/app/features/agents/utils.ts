@@ -12,8 +12,8 @@ export function formatDuration(duration?: number | null): string {
 export function statusLabel(status?: string): string {
   const labels: Record<string, string> = {
     pending: '排队中',
-    success: '成功',
     running: '运行中',
+    success: '成功',
     failed: '失败',
     skipped: '已跳过',
   };

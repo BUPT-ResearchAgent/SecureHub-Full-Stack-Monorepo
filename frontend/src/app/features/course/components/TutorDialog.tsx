@@ -109,6 +109,13 @@ export function TutorDialog() {
           patchMessage(assistantMessage.id, { status: 'done' });
         },
         onError(error) {
+          if (error.code === 'sse_reconnecting') {
+            patchMessage(assistantMessage.id, {
+              status: 'generating',
+              content: '网络中断，正在重连…',
+            });
+            return;
+          }
           setGenerating(false);
           patchMessage(assistantMessage.id, {
             status: 'error',

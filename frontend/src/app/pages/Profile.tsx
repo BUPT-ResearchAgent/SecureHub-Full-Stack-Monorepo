@@ -11,6 +11,7 @@ import { NotificationSettingsPanel } from '../features/profile/components/Notifi
 import { PersonaPanel } from '../features/profile/components/PersonaPanel';
 import { ProfileEditDrawer } from '../features/profile/components/ProfileEditDrawer';
 import { ProfileWorkbenchBar } from '../features/profile/components/ProfileWorkbenchBar';
+import { GeneratedResourceHistory } from '../features/profile/components/GeneratedResourceHistory';
 import { SubmitChecklistPanel } from '../features/profile/components/SubmitChecklistPanel';
 import { useAuth } from '../features/auth/store';
 import { getMyProfile } from '../features/profile/api';
@@ -123,6 +124,12 @@ export function Profile() {
                 )}
               </div>
             ),
+          },
+          {
+            key: 'resources',
+            label: '资源历史',
+            description: '查看课程学习中已生成的讲解文档、课件、思维导图、练习题、实验与阅读资源',
+            render: () => <GeneratedResourceHistory userId={user?.id ?? '00000000-0000-0000-0000-000000000001'} />,
           },
           {
             key: 'vault',

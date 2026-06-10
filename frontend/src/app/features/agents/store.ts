@@ -1,5 +1,6 @@
 // Status: real
-import { createContext, createElement, useContext, useReducer, type Dispatch, type ReactNode } from 'react';
+import { createContext, createElement, useContext, type Dispatch, type ReactNode } from 'react';
+import { usePersistedReducer } from '@/lib/persist';
 import type { AgentRunDTO } from './types';
 import { getRunId } from './utils';
 
@@ -46,7 +47,7 @@ const AgentTraceStateContext = createContext<AgentTraceState | null>(null);
 const AgentTraceDispatchContext = createContext<Dispatch<AgentTraceAction> | null>(null);
 
 export function AgentTraceProvider({ children }: { children: ReactNode }) {
-  const [state, dispatch] = useReducer(agentTraceReducer, initialAgentTraceState);
+  const [state, dispatch] = usePersistedReducer(agentTraceReducer, initialAgentTraceState, 'securehub-agents-trace');
   return createElement(
     AgentTraceStateContext.Provider,
     { value: state },

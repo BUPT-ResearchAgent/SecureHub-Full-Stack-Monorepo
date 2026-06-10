@@ -1,4 +1,5 @@
-import { createContext, createElement, useContext, useReducer, type Dispatch, type ReactNode } from 'react';
+import { createContext, createElement, useContext, type Dispatch, type ReactNode } from 'react';
+import { usePersistedReducer } from '@/lib/persist';
 import type { AssessmentReport, LearningPath, LearningPersona, ResourceItem } from './types';
 import { demoCurrentKpId } from '@/lib/mock/storyline';
 import { mockAssessment, mockLearningPath, mockPersona, mockResources } from './mockData';
@@ -59,7 +60,7 @@ export function courseReducer(state: CourseState, action: CourseAction): CourseS
 }
 
 export function useCourseStore() {
-  return useReducer(courseReducer, initialCourseState);
+  return usePersistedReducer(courseReducer, initialCourseState, 'securehub-course-state');
 }
 
 const CourseStateContext = createContext<CourseState | null>(null);

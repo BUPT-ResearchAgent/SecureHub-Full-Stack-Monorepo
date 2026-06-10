@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { AgentBadge } from '@/app/components/AgentBadge';
+import { ErrorBoundary } from '@/app/components/ErrorBoundary';
 import { PageShell, type TabDef } from '@/app/components/PageShell';
 import { StreamingProgress } from '@/app/components/StreamingProgress';
 import { AgentTracePanel } from '@/app/features/agents/components/AgentTracePanel';
@@ -71,7 +72,9 @@ export function CourseStudy() {
   return (
     <AgentTraceProvider>
       <CourseProvider>
-        <CourseStudyInner />
+        <ErrorBoundary resetKey="course-study">
+          <CourseStudyInner />
+        </ErrorBoundary>
       </CourseProvider>
     </AgentTraceProvider>
   );
@@ -142,6 +145,30 @@ function CourseStudyInner() {
 
   return (
     <div tabIndex={0} onKeyDown={handleKeyDown} className="outline-none" aria-label="课程学习标签区">
+      <div role="tablist" aria-label="课程学习标签" className="mb-4 flex flex-wrap gap-2">
+        {tabOrder.map((key) => {
+          const tab = tabs.find((item) => item.key === key);
+          if (!tab) return null;
+          const selected = activeTab === key;
+          return (
+            <button
+              key={key}
+              type="button"
+              role="tab"
+              aria-selected={selected}
+              tabIndex={selected ? 0 : -1}
+              onClick={() => setActiveTab(key)}
+              className={`rounded-lg border px-3 py-2 text-sm transition-colors ${
+                selected
+                  ? 'border-brand-blue-600 bg-brand-blue-50 text-brand-blue-700'
+                  : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+              }`}
+            >
+              {tab.label}
+            </button>
+          );
+        })}
+      </div>
       <PageShell
         title="课程学习"
         subtitle="A3 多智能体个性化学习工作台"
