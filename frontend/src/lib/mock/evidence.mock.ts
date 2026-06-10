@@ -17,6 +17,7 @@ export const mockEvidenceChunks: EvidenceChunkDTO[] = [
     chapter: 'SQL 注入基础',
     timestamp: null,
     reliability: 0.92,
+    metadata: { collection_mode: 'scrapling' },
   },
   {
     chunk_id: '00000000-0000-0000-0000-000000000502',
@@ -33,6 +34,7 @@ export const mockEvidenceChunks: EvidenceChunkDTO[] = [
     chapter: '防御与参数化查询',
     timestamp: null,
     reliability: 0.9,
+    metadata: { collection_mode: 'scrapling' },
   },
   {
     chunk_id: '00000000-0000-0000-0000-000000000503',
@@ -49,5 +51,6 @@ export const mockEvidenceChunks: EvidenceChunkDTO[] = [
     chapter: 'SQL 注入演示转写',
     timestamp: 183,
     reliability: 0.78,
+    metadata: { collection_mode: 'mediacrawler' },
   },
 ];

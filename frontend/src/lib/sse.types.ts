@@ -29,6 +29,10 @@ export type EvidenceChunkDTO = {
   chapter?: string | null;
   timestamp?: number | null;
   reliability?: number | null;
+  metadata?: {
+    collection_mode?: 'manual' | 'api' | 'scrapling' | 'mediacrawler' | 'mindspider_reference';
+    [key: string]: unknown;
+  };
 };
 
 export type AgentRunDTO = {

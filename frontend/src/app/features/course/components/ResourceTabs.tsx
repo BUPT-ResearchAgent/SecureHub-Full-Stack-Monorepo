@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { PlayCircle } from 'lucide-react';
 import { ErrorState, InsufficientEvidenceState, LoadingState } from '@/app/components/StateView';
 import { useEvidence } from '@/app/components/EvidenceDrawer';
@@ -53,10 +53,10 @@ export function ResourceTabs() {
     });
   };
 
-  const startGeneration = () => {
+  const startGeneration = (targetType: ResourceType = active) => {
     cancelRef.current?.();
     setProgressText('正在校验输入');
-    updateResource(active, (previous) => ({
+    updateResource(targetType, (previous) => ({
       ...previous,
       status: 'generating',
       content: '',
@@ -67,7 +67,7 @@ export function ResourceTabs() {
 
     cancelRef.current = streamResourceGeneration(
       '00000000-0000-0000-0000-000000000101',
-      active,
+      targetType,
       {
         user_id: '00000000-0000-0000-0000-000000000001',
         kp_id: currentKpId,
@@ -79,7 +79,7 @@ export function ResourceTabs() {
         },
         onEvidence(chunk) {
           evidence.pushEvidence([chunk]);
-          updateResource(active, (previous) => ({
+          updateResource(targetType, (previous) => ({
             ...previous,
             evidenceRefs: previous.evidenceRefs.some((item) => item.chunk_id === chunk.chunk_id)
               ? previous.evidenceRefs
@@ -87,17 +87,17 @@ export function ResourceTabs() {
           }));
         },
         onToken(token) {
-          updateResource(active, (previous) => ({ ...previous, content: `${previous.content}${token.content}` }));
+          updateResource(targetType, (previous) => ({ ...previous, content: `${previous.content}${token.content}` }));
         },
         onArtifact(artifact) {
-          updateResource(active, (previous) => ({ ...previous, id: artifact.resource_id, title: artifact.title }));
+          updateResource(targetType, (previous) => ({ ...previous, id: artifact.resource_id, title: artifact.title }));
         },
         onTrace(run) {
           traceDispatch({ type: 'upsertRun', run });
         },
         onDone(done) {
           setProgressText('');
-          updateResource(active, (previous) => ({
+          updateResource(targetType, (previous) => ({
             ...previous,
             status: 'ready',
             qualityScore: done.quality_score,
@@ -105,7 +105,7 @@ export function ResourceTabs() {
         },
         onError(error) {
           setProgressText('');
-          updateResource(active, (previous) => ({
+          updateResource(targetType, (previous) => ({
             ...previous,
             status: 'failed',
             errorCode: error.code,
@@ -115,6 +115,18 @@ export function ResourceTabs() {
       },
     );
   };
+
+  useEffect(() => {
+    const handleDemoStage = (event: Event) => {
+      const detail = (event as CustomEvent<{ tab?: string; resourceType?: ResourceType }>).detail;
+      if (detail?.tab !== 'workbench') return;
+      const targetType = detail.resourceType ?? 'doc';
+      setActive(targetType);
+      window.setTimeout(() => startGeneration(targetType), 120);
+    };
+    window.addEventListener('securehub-course-demo-stage', handleDemoStage);
+    return () => window.removeEventListener('securehub-course-demo-stage', handleDemoStage);
+  });
 
   const renderResource = () => {
     if (active === 'doc') return <DocResourceView resource={resource} />;
@@ -150,7 +162,7 @@ export function ResourceTabs() {
         </div>
         <button
           type="button"
-          onClick={startGeneration}
+          onClick={() => startGeneration()}
           disabled={isGenerating}
           className="inline-flex items-center gap-2 rounded-lg bg-brand-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
         >

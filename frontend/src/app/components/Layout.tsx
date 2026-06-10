@@ -331,7 +331,7 @@ function LayoutFrame() {
 
           <div className="flex items-center gap-2">
             <button
-              onClick={evidence.toggle}
+              onClick={(event) => evidence.toggle(event.currentTarget)}
               className="flex items-center gap-2 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-100 rounded-lg transition-colors"
             >
               <Database className="w-4 h-4" />

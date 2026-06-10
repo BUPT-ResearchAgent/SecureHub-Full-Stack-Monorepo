@@ -6,6 +6,7 @@ import { mockAgentRuns } from './agents.mock';
 import { mockEvidenceChunks } from './evidence.mock';
 import { mockResourceContent, mockResourceTitle } from './resources.mock';
 import { replaySSEEvents } from './sse-replay';
+import { demoCurrentKpId } from './storyline';
 
 export const mockCourse = {
   id: '00000000-0000-0000-0000-000000000101',
@@ -16,7 +17,7 @@ export const mockCourse = {
 };
 
 export const mockKnowledgeNodes = [
-  { id: 'sqli', title: 'SQL 注入基础', status: 'active' },
+  { id: demoCurrentKpId, title: 'SQL 注入基础', status: 'active' },
   { id: 'xss', title: 'XSS 跨站脚本', status: 'ready' },
   { id: 'csrf', title: 'CSRF 请求伪造', status: 'ready' },
   { id: 'upload', title: '文件上传风险', status: 'locked' },
@@ -123,7 +124,7 @@ export async function replayAssessment(answers: Array<Record<string, unknown>>):
   const answered = answers.length;
   return {
     score: answered >= 2 ? 0.82 : 0.58,
-    scoreVector: { web_security: 0.48, sqli: 0.52, secure_coding: 0.44 },
+    scoreVector: { web_security: 0.48, sql_injection: 0.52, secure_coding: 0.44 },
     feedback: [
       '参数化查询理解较好，建议继续练习不同数据库的绑定写法。',
       '对布尔盲注和时间盲注的判断步骤还需要补一轮实操。',

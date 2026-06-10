@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { AgentBadge } from '@/app/components/AgentBadge';
 import { PageShell, type TabDef } from '@/app/components/PageShell';
 import { StreamingProgress } from '@/app/components/StreamingProgress';
@@ -10,8 +11,9 @@ import { LearningPathDAG } from '@/app/features/course/components/LearningPathDA
 import { PersonaBuilder } from '@/app/features/course/components/PersonaBuilder';
 import { ResourceTabs } from '@/app/features/course/components/ResourceTabs';
 import { TutorDialog } from '@/app/features/course/components/TutorDialog';
-import { CourseProvider } from '@/app/features/course/store';
+import { CourseProvider, useCourseDispatch } from '@/app/features/course/store';
 import { isMockMode, setMockMode } from '@/lib/mock';
+import { courseDemoStoryline, demoCurrentKpId } from '@/lib/mock/storyline';
 
 function EntryTab() {
   return (
@@ -58,6 +60,13 @@ const tabs: TabDef[] = [
   },
 ];
 
+const tabOrder = ['entry', 'path', 'workbench', 'tutor', 'assess'] as const;
+type CourseTabKey = typeof tabOrder[number];
+
+function isCourseTab(value: string | null): value is CourseTabKey {
+  return tabOrder.includes(value as CourseTabKey);
+}
+
 export function CourseStudy() {
   return (
     <AgentTraceProvider>
@@ -69,7 +78,27 @@ export function CourseStudy() {
 }
 
 function CourseStudyInner() {
+  const navigate = useNavigate();
+  const [params, setParams] = useSearchParams();
+  const dispatch = useCourseDispatch();
   const [mockEnabled, setMockEnabled] = useState(() => isMockMode());
+  const [demoRunning, setDemoRunning] = useState(false);
+  const demoTimersRef = useRef<number[]>([]);
+  const rawTab = params.get('tab');
+  const activeTab: CourseTabKey = isCourseTab(rawTab) ? rawTab : 'entry';
+
+  const clearDemoTimers = () => {
+    demoTimersRef.current.forEach((timer) => window.clearTimeout(timer));
+    demoTimersRef.current = [];
+  };
+
+  useEffect(() => clearDemoTimers, []);
+
+  const setActiveTab = (tab: CourseTabKey, replace = false) => {
+    const next = new URLSearchParams(params);
+    next.set('tab', tab);
+    setParams(next, { replace });
+  };
 
   const toggleMock = () => {
     const next = !mockEnabled;
@@ -77,29 +106,76 @@ function CourseStudyInner() {
     setMockEnabled(next);
   };
 
+  const startDemo = () => {
+    clearDemoTimers();
+    setMockMode(true);
+    setMockEnabled(true);
+    setDemoRunning(true);
+    dispatch({ type: 'setCurrentKp', kpId: demoCurrentKpId });
+
+    courseDemoStoryline.forEach((stage, index) => {
+      const timer = window.setTimeout(() => {
+        window.dispatchEvent(new CustomEvent('securehub-course-demo-stage', { detail: stage }));
+        if (stage.targetPath) {
+          setDemoRunning(false);
+          navigate(stage.targetPath);
+          return;
+        }
+        setActiveTab(stage.tab, true);
+        if (index === courseDemoStoryline.length - 1) setDemoRunning(false);
+      }, index * 3000);
+      demoTimersRef.current.push(timer);
+    });
+  };
+
+  const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+    const target = event.target;
+    if (target instanceof HTMLElement && ['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON'].includes(target.tagName)) return;
+    event.preventDefault();
+    const currentIndex = tabOrder.indexOf(activeTab);
+    const nextIndex = event.key === 'ArrowRight'
+      ? (currentIndex + 1) % tabOrder.length
+      : (currentIndex - 1 + tabOrder.length) % tabOrder.length;
+    setActiveTab(tabOrder[nextIndex]);
+  };
+
   return (
-    <PageShell
-      title="课程学习"
-      subtitle="A3 多智能体个性化学习工作台"
-      tabs={tabs}
-      defaultTab="entry"
-      actions={
-        <div className="flex flex-wrap items-center justify-end gap-2">
-          {import.meta.env.DEV && (
-            <button
-              type="button"
-              onClick={toggleMock}
-              className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50"
-            >
-              {mockEnabled ? '使用真后端' : '使用 Mock 演示'}
-            </button>
-          )}
-          <AgentBadge agentId="career_planner" />
-          <AgentBadge agentId="doc_archivist" />
-          <AgentBadge agentId="outcome_evaluator" />
-        </div>
-      }
-    />
+    <div tabIndex={0} onKeyDown={handleKeyDown} className="outline-none" aria-label="课程学习标签区">
+      <PageShell
+        title="课程学习"
+        subtitle="A3 多智能体个性化学习工作台"
+        tabs={tabs}
+        defaultTab="entry"
+        actions={
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            {import.meta.env.DEV && (
+              <button
+                type="button"
+                onClick={toggleMock}
+                title="演示用：使用本地 Mock 数据"
+                className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50"
+              >
+                {mockEnabled ? '使用真后端' : '使用 Mock 演示'}
+              </button>
+            )}
+            {import.meta.env.DEV && mockEnabled && (
+              <button
+                type="button"
+                onClick={startDemo}
+                disabled={demoRunning}
+                className="rounded-lg bg-brand-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {demoRunning ? '演示进行中' : '演示开始'}
+              </button>
+            )}
+            <AgentBadge agentId="career_planner" />
+            <AgentBadge agentId="doc_archivist" />
+            <AgentBadge agentId="outcome_evaluator" />
+          </div>
+        }
+      />
+    </div>
   );
 }
 

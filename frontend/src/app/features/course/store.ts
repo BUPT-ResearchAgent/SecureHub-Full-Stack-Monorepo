@@ -1,5 +1,6 @@
 import { createContext, createElement, useContext, useReducer, type Dispatch, type ReactNode } from 'react';
 import type { AssessmentReport, LearningPath, LearningPersona, ResourceItem } from './types';
+import { demoCurrentKpId } from '@/lib/mock/storyline';
 import { mockAssessment, mockLearningPath, mockPersona, mockResources } from './mockData';
 
 export type CourseState = {
@@ -21,7 +22,7 @@ export type CourseAction =
   | { type: 'setCurrentKp'; kpId: string };
 
 export const initialCourseState: CourseState = {
-  currentKpId: 'sqli',
+  currentKpId: demoCurrentKpId,
   persona: mockPersona,
   path: mockLearningPath,
   resources: mockResources,

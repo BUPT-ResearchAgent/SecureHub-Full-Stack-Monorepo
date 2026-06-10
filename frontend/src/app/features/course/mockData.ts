@@ -1,6 +1,7 @@
 import type { AssessmentReport, LearningPath, LearningPersona, ResourceItem } from './types';
 import { mockEvidenceChunks } from '@/lib/mock/evidence.mock';
 import { mockResourceContent, mockResourceTitle } from '@/lib/mock/resources.mock';
+import { demoCurrentKpId } from '@/lib/mock/storyline';
 
 export const mockPersona: LearningPersona = {
   userId: 'demo-user',
@@ -20,14 +21,14 @@ export const mockPersona: LearningPersona = {
 export const mockLearningPath: LearningPath = {
   courseId: '00000000-0000-0000-0000-000000000101',
   nodes: [
-    { id: 'sqli', label: 'SQL 注入基础', status: 'active', priority: 1 },
+    { id: demoCurrentKpId, label: 'SQL 注入基础', status: 'active', priority: 1 },
     { id: 'xss', label: 'XSS 跨站脚本', status: 'ready', priority: 2 },
     { id: 'csrf', label: 'CSRF 请求伪造', status: 'ready', priority: 3 },
     { id: 'upload', label: '文件上传风险', status: 'locked', priority: 4 },
     { id: 'ssrf', label: 'SSRF 服务端请求伪造', status: 'locked', priority: 5 },
   ],
   edges: [
-    { id: 'sqli-xss', source: 'sqli', target: 'xss' },
+    { id: 'sql_injection-xss', source: demoCurrentKpId, target: 'xss' },
     { id: 'xss-csrf', source: 'xss', target: 'csrf' },
     { id: 'csrf-upload', source: 'csrf', target: 'upload' },
     { id: 'upload-ssrf', source: 'upload', target: 'ssrf' },
@@ -59,7 +60,7 @@ export const mockResources: ResourceItem[] = mockResourceTypes.map((type) => ({
 
 export const mockAssessment: AssessmentReport = {
   score: 0.82,
-  scoreVector: { sqli: 0.52, secure_coding: 0.44, evidence: 0.48 },
+  scoreVector: { sql_injection: 0.52, secure_coding: 0.44, evidence: 0.48 },
   feedback: ['参数化查询理解较好，建议继续补充布尔盲注与时间盲注判断练习。', '完成一次修复前后对比复盘，可以提升实操维度置信度。'],
   updatedProfile: { weak_points: '布尔盲注与时间盲注判断步骤' },
   updatedCapabilities: [

@@ -1,5 +1,6 @@
 import { ExternalLink, ShieldCheck } from 'lucide-react';
 import type { EvidenceChunkDTO } from '@/lib/sse.types';
+import { CollectionModeBadge } from '@/app/features/sources/components/CollectionModeBadge';
 import { SourceBadge } from '@/app/features/sources/components/SourceBadge';
 
 function formatDate(value?: string | null): string {
@@ -36,6 +37,7 @@ export function CitationPanel({ chunks }: { chunks: EvidenceChunkDTO[] }) {
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-1.5">
                   <SourceBadge platform={chunk.platform} />
+                  <CollectionModeBadge mode={chunk.metadata?.collection_mode} />
                   <span className="inline-flex items-center gap-1 rounded-md bg-emerald-50 px-2 py-0.5 text-xs text-emerald-700">
                     <ShieldCheck className="h-3 w-3" />
                     {formatReliability(chunk.reliability)}

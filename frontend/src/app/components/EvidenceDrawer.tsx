@@ -1,15 +1,16 @@
-import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { ExternalLink, X } from 'lucide-react';
 import type { EvidenceChunkDTO } from '@/lib/sse.types';
+import { CollectionModeBadge } from '@/app/features/sources/components/CollectionModeBadge';
 import { SourceBadge } from '@/app/features/sources/components/SourceBadge';
 import { SourcePanel } from '@/app/features/sources/components/SourcePanel';
 
 type EvidenceContextValue = {
   chunks: EvidenceChunkDTO[];
   isOpen: boolean;
-  open: () => void;
+  open: (trigger?: HTMLElement | null) => void;
   close: () => void;
-  toggle: () => void;
+  toggle: (trigger?: HTMLElement | null) => void;
   pushEvidence: (chunks: EvidenceChunkDTO[]) => void;
   clearEvidence: () => void;
 };
@@ -19,26 +20,57 @@ const EvidenceContext = createContext<EvidenceContextValue | null>(null);
 export function EvidenceProvider({ children }: { children: ReactNode }) {
   const [chunks, setChunks] = useState<EvidenceChunkDTO[]>([]);
   const [isOpen, setIsOpen] = useState(false);
+  const lastFocusRef = useRef<HTMLElement | null>(null);
+
+  const rememberFocus = useCallback((trigger?: HTMLElement | null) => {
+    if (trigger) {
+      lastFocusRef.current = trigger;
+      return;
+    }
+    if (typeof document !== 'undefined' && document.activeElement instanceof HTMLElement) {
+      lastFocusRef.current = document.activeElement;
+    }
+  }, []);
+
+  const close = useCallback(() => {
+    setIsOpen(false);
+    window.setTimeout(() => lastFocusRef.current?.focus(), 0);
+  }, []);
 
   const pushEvidence = useCallback((incoming: EvidenceChunkDTO[]) => {
     if (!incoming.length) return;
+    rememberFocus();
     setChunks((current) => {
       const byId = new Map(current.map((chunk) => [chunk.chunk_id, chunk]));
       incoming.forEach((chunk) => byId.set(chunk.chunk_id, chunk));
       return Array.from(byId.values());
     });
     setIsOpen(true);
-  }, []);
+  }, [rememberFocus]);
+
+  const open = useCallback((trigger?: HTMLElement | null) => {
+    rememberFocus(trigger);
+    setIsOpen(true);
+  }, [rememberFocus]);
+
+  const toggle = useCallback((trigger?: HTMLElement | null) => {
+    if (isOpen) {
+      close();
+      return;
+    }
+    rememberFocus(trigger);
+    setIsOpen(true);
+  }, [close, isOpen, rememberFocus]);
 
   const value = useMemo<EvidenceContextValue>(() => ({
     chunks,
     isOpen,
-    open: () => setIsOpen(true),
-    close: () => setIsOpen(false),
-    toggle: () => setIsOpen((open) => !open),
+    open,
+    close,
+    toggle,
     pushEvidence,
     clearEvidence: () => setChunks([]),
-  }), [chunks, isOpen, pushEvidence]);
+  }), [chunks, close, isOpen, open, pushEvidence, toggle]);
 
   return <EvidenceContext.Provider value={value}>{children}</EvidenceContext.Provider>;
 }
@@ -71,6 +103,15 @@ function formatLocation(chunk: EvidenceChunkDTO): string {
 
 export function EvidenceDrawer() {
   const { chunks, isOpen, close, clearEvidence } = useEvidence();
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') close();
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [close, isOpen]);
 
   if (!isOpen) return null;
 
@@ -122,7 +163,10 @@ export function EvidenceDrawer() {
             return (
               <article key={chunk.chunk_id} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <SourceBadge platform={chunk.platform} />
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <SourceBadge platform={chunk.platform} />
+                    <CollectionModeBadge mode={chunk.metadata?.collection_mode} />
+                  </div>
                   <span className="rounded-md bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">
                     可信度 {formatReliability(chunk.reliability)}
                   </span>

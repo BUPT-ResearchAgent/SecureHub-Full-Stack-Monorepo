@@ -11,9 +11,11 @@ export function formatDuration(duration?: number | null): string {
 
 export function statusLabel(status?: string): string {
   const labels: Record<string, string> = {
+    pending: '排队中',
     success: '成功',
     running: '运行中',
     failed: '失败',
+    skipped: '已跳过',
   };
   return labels[status ?? ''] ?? '未知';
 }
@@ -22,6 +24,8 @@ export function statusBadgeClass(status?: string): string {
   if (status === 'success') return 'bg-emerald-50 text-emerald-700 border-emerald-100';
   if (status === 'running') return 'bg-blue-50 text-blue-700 border-blue-100';
   if (status === 'failed') return 'bg-red-50 text-red-700 border-red-100';
+  if (status === 'pending') return 'bg-amber-50 text-amber-700 border-amber-100';
+  if (status === 'skipped') return 'bg-slate-50 text-slate-500 border-slate-100';
   return 'bg-slate-50 text-slate-600 border-slate-100';
 }
 
