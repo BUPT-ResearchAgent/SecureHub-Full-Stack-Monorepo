@@ -1,4 +1,4 @@
-# Status: [planned]
+# Status: real
 
 from app.agents.hot_analyst.agent import HotAnalystAgent
 

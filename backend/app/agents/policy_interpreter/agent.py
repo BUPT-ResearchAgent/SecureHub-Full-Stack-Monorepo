@@ -1,4 +1,4 @@
-# Status: [planned]
+# Status: real
 
 from app.agents.base import AgentCapability, BaseAgent
 from app.agents.policy_interpreter.skills import compliance_check, interpret_policy

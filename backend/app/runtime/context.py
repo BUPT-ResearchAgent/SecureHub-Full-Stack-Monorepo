@@ -1,4 +1,9 @@
-# Status: [planned]
+# Status: real
+
+"""旧式 LangGraph 节点使用的 ``RunContext``。
+
+新代码请使用 ``app.runtime.harness.HarnessContext``；本文件保留作为兼容层。
+"""
 
 from dataclasses import dataclass, field
 from typing import Any

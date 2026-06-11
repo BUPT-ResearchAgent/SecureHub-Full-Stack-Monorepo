@@ -1,4 +1,4 @@
-# Status: [planned]
+# Status: real
 
 from app.agents.competition_advisor.agent import CompetitionAdvisorAgent
 

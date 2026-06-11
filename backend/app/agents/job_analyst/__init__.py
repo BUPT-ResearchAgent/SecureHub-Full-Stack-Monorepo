@@ -1,4 +1,4 @@
-# Status: [planned]
+# Status: real
 
 from app.agents.job_analyst.agent import JobAnalystAgent
 

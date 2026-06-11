@@ -33,7 +33,9 @@ services:
         required: false
     volumes:
       - ./frontend:/app/frontend
-    command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
+      - frontend_node_modules:/app/frontend/node_modules
+      - pnpm_store:/pnpm-store
+    command: sh -c "corepack enable && pnpm config set store-dir /pnpm-store && pnpm install --no-frozen-lockfile && pnpm approve-builds @tailwindcss/oxide esbuild && pnpm rebuild @tailwindcss/oxide esbuild && pnpm exec vite --host 0.0.0.0"
     ports:
       - "${FRONTEND_PORT:-5173}:5173"
     environment:
@@ -49,7 +51,8 @@ services:
         required: false
     volumes:
       - ./backend:/app/backend
-    command: sh -c "pip install uv && uv sync && uv run alembic upgrade head && uv run uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
+      - backend_venv:/app/backend/.venv
+    command: sh -c "pip install uv 2>/dev/null || pip install --break-system-packages uv && uv sync && uv run alembic upgrade head && uv run uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
     ports:
       - "${BACKEND_PORT:-8000}:8000"
     environment:
@@ -70,3 +73,6 @@ services:
 
 volumes:
   pgdata:
+  frontend_node_modules:
+  pnpm_store:
+  backend_venv:

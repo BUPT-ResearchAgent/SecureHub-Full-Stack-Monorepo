@@ -1,4 +1,4 @@
-# Status: [planned]
+# Status: real
 
 from app.agents.base import AgentCapability, BaseAgent
 from app.agents.competition_advisor.skills import generate_competition_plan, generate_quiz, recommend_competition
