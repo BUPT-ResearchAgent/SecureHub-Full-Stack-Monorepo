@@ -230,7 +230,7 @@ export function createDefaultWorkspace(): ChatWorkspace {
         '| AI 代码生成安全审计 | 中 | 结合 SAST 规则与 LLM 解释 | 上传代码片段生成修复建议 |',
         '| 面向高校科研数据的脱敏助手 | 高 | 合规清单 + 自动脱敏策略 | 表格数据脱敏前后对比 |',
         '',
-        '> 当前回答为 mock 生成，用于演示选题拆解流程，不代表真实联网检索结果。',
+        '> 当前回答为演示生成，用于演示选题拆解流程，不代表真实联网检索结果。',
         '',
         '下一步建议先确认：你更偏算法验证、系统原型，还是竞赛答辩展示？',
       ].join('\n'),
@@ -238,7 +238,7 @@ export function createDefaultWorkspace(): ChatWorkspace {
       [citation('topic-ai-safety', 'AI 安全选题演示知识条目', 'project', 86)],
       [
         card('topic-card-1', 'suggestion', '候选选题', '提示注入检测适合做端到端系统演示，能展示攻击样本、检测规则和报告导出。', 88),
-        card('topic-card-2', 'risk', '主要风险', '不要把 mock 结果包装成真实论文检索，答辩时应说明后续接入真实数据源。', 72),
+        card('topic-card-2', 'risk', '主要风险', '不要把演示结果包装成真实论文检索，答辩时应说明后续接入真实数据源。', 72),
       ],
       ['AI 安全', '选题'],
     ),

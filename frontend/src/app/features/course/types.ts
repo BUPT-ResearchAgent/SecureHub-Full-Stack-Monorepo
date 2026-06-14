@@ -1,4 +1,6 @@
-export type ResourceType = 'doc' | 'ppt' | 'mindmap' | 'quiz' | 'lab' | 'video';
+import type { CapabilityDTO, EvidenceChunkDTO, ResourceType as SSEResourceType } from '@/lib/sse.types';
+
+export type ResourceType = SSEResourceType;
 
 export type PersonaDimensionKey =
   | 'base_knowledge'
@@ -36,20 +38,16 @@ export type LearningPath = {
   milestones: Array<{ id: string; title: string; week: number }>;
 };
 
-export type EvidenceRef = {
-  chunkId: string;
-  source: string;
-  excerpt: string;
-  reliability: number;
-};
-
 export type ResourceItem = {
   id: string;
   type: ResourceType;
   title: string;
   status: 'idle' | 'generating' | 'ready' | 'failed';
   content: string;
-  evidenceRefs: EvidenceRef[];
+  evidenceRefs: EvidenceChunkDTO[];
+  qualityScore?: number;
+  errorCode?: string;
+  errorMessage?: string;
 };
 
 export type AssessmentReport = {
@@ -57,6 +55,7 @@ export type AssessmentReport = {
   scoreVector: Record<string, number>;
   feedback: string[];
   updatedProfile: Partial<LearningPersona['dimensions']>;
+  updatedCapabilities?: CapabilityDTO[];
 };
 
 export type CourseProgressEvent = {

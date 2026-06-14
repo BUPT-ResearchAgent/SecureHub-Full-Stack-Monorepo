@@ -1,5 +1,5 @@
 import type { SSEHandlers } from './sse';
-import { streamTask } from './sse';
+import { streamTask, streamTaskPost } from './sse';
 
 const DEFAULT_API_BASE_URL = 'http://127.0.0.1:8000';
 
@@ -137,4 +137,14 @@ export async function apiPost<T, B = unknown>(
 
 export function apiStream(path: string, handlers: SSEHandlers): () => void {
   return streamTask(`${API_BASE_URL}${path}`, handlers);
+}
+
+export function apiStreamPost<B = unknown>(path: string, body: B, handlers: SSEHandlers): () => void {
+  const token = getStoredAuthToken();
+  return streamTaskPost(
+    `${API_BASE_URL}${path}`,
+    body,
+    handlers,
+    token ? { Authorization: `Bearer ${token}` } : undefined,
+  );
 }

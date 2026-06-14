@@ -3,8 +3,8 @@ import { NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom';
 import { toast } from 'sonner';
 import {
   LayoutDashboard,
-  GraduationCap,
   Swords,
+  GraduationCap,
   FlaskConical,
   PenLine,
   MessagesSquare,
@@ -20,7 +20,9 @@ import {
   LogOut,
   ShieldCheck,
 } from 'lucide-react';
-import { EvidenceDrawer } from './EvidenceDrawer';
+import { EvidenceDrawer, EvidenceProvider, useEvidence } from './EvidenceDrawer';
+import { BrandFooter } from './BrandFooter';
+import { BackendStatusPanel } from './BackendStatusPanel';
 import { GlobalSearch } from './GlobalSearch';
 import {
   DropdownMenu,
@@ -57,6 +59,20 @@ export const navItems: NavItem[] = [
     ],
   },
   {
+    path: '/practice',
+    icon: Swords,
+    label: '实战进阶',
+    children: [
+      { key: 'tutorial', label: '教程中心' },
+      { key: 'tools', label: '工具库' },
+      { key: 'contest', label: '竞赛专区' },
+      { key: 'hvv', label: '护网行动' },
+      { key: 'range', label: '靶场演练' },
+      { key: 'cases', label: '实战案例' },
+      { key: 'ddl', label: '竞赛截止' },
+    ],
+  },
+  {
     path: '/course',
     icon: GraduationCap,
     label: '课程学习',
@@ -69,28 +85,15 @@ export const navItems: NavItem[] = [
     ],
   },
   {
-    path: '/practice',
-    icon: Swords,
-    label: '实战进阶',
-    children: [
-      { key: 'tutorial', label: '教程中心' },
-      { key: 'tools', label: '工具库' },
-      { key: 'contest', label: '竞赛专区' },
-      { key: 'hvv', label: '护网行动' },
-      { key: 'range', label: '靶场演练' },
-      { key: 'cases', label: '实战案例' },
-      { key: 'ddl', label: '竞赛DDL' },
-    ],
-  },
-  {
     path: '/research',
     icon: FlaskConical,
     label: '科研创新',
     children: [
+      { key: 'recommend', label: '个性化推荐' },
       { key: 'fund', label: '基金项目' },
       { key: 'news', label: '科研动态' },
       { key: 'innovation', label: '学术创新' },
-      { key: 'hot', label: '热点文章' },
+      { key: 'hot', label: '舆情趋势' },
       { key: 'patent', label: '专利成果' },
       { key: 'lab', label: '开放实验室' },
       { key: 'compare', label: '科研机会对比' },
@@ -173,6 +176,7 @@ export const navItems: NavItem[] = [
     label: '个人中心',
     children: [
       { key: 'persona', label: '用户画像' },
+      { key: 'resources', label: '资源历史' },
       { key: 'vault', label: '个人资产库' },
       { key: 'docs', label: '文档资产' },
       { key: 'slides', label: '演示资产' },
@@ -186,10 +190,18 @@ export const navItems: NavItem[] = [
 ];
 
 export function Layout() {
+  return (
+    <EvidenceProvider>
+      <LayoutFrame />
+    </EvidenceProvider>
+  );
+}
+
+function LayoutFrame() {
   const navigate = useNavigate();
   const location = useLocation();
   const { user, logout } = useAuth();
-  const [evidenceOpen, setEvidenceOpen] = useState(false);
+  const evidence = useEvidence();
   const [collapsed, setCollapsed] = useState(false);
   const [expanded, setExpanded] = useState<string[]>(() => {
     const active = navItems.find((n) => location.pathname.startsWith(n.path));
@@ -323,7 +335,7 @@ export function Layout() {
 
           <div className="flex items-center gap-2">
             <button
-              onClick={() => setEvidenceOpen(!evidenceOpen)}
+              onClick={(event) => evidence.toggle(event.currentTarget)}
               className="flex items-center gap-2 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-100 rounded-lg transition-colors"
             >
               <Database className="w-4 h-4" />
@@ -373,10 +385,12 @@ export function Layout() {
           <div className="max-w-[1280px] mx-auto px-6 py-6">
             <Outlet />
           </div>
+          <BrandFooter />
         </main>
       </div>
 
-      <EvidenceDrawer isOpen={evidenceOpen} onClose={() => setEvidenceOpen(false)} />
+      <EvidenceDrawer />
+      <BackendStatusPanel />
     </div>
   );
 }

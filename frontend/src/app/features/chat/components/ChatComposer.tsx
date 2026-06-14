@@ -61,7 +61,7 @@ export function ChatComposer({
           </button>
         )}
       </div>
-      <p className="mt-2 text-xs text-slate-400">Enter 发送，Shift + Enter 换行</p>
+      <p className="mt-2 text-xs text-slate-400">回车发送，Shift + 回车换行</p>
     </div>
   );
 }

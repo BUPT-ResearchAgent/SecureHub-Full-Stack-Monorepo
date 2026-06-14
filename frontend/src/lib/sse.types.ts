@@ -1,5 +1,29 @@
 export type ResourceType = 'doc' | 'ppt' | 'mindmap' | 'quiz' | 'lab' | 'video' | 'readings';
 
+export type CapabilityDTO = {
+  dimension: string;
+  score: number;
+  confidence: number;
+  evidence_count: number;
+};
+
+export type ProfileDTO = {
+  user_id: string;
+  dimensions: Record<string, unknown>;
+  capabilities: CapabilityDTO[];
+  updated_at: string;
+};
+
+export type GeneratedResourceDTO = {
+  id: string;
+  user_id?: string;
+  course_id?: string;
+  resource_type: ResourceType;
+  title: string;
+  created_at: string;
+  quality_score?: number | null;
+};
+
 export type EvidenceChunkDTO = {
   chunk_id: string;
   document_id: string;
@@ -15,6 +39,10 @@ export type EvidenceChunkDTO = {
   chapter?: string | null;
   timestamp?: number | null;
   reliability?: number | null;
+  metadata?: {
+    collection_mode?: 'manual' | 'api' | 'scrapling' | 'mediacrawler' | 'mindspider_reference';
+    [key: string]: unknown;
+  };
 };
 
 export type AgentRunDTO = {
@@ -81,9 +109,9 @@ export type DoneEvent = {
 export type ErrorEvent = {
   event: 'error';
   data: {
-    code: string;
+    code?: string;
     message: string;
-    recoverable: boolean;
+    recoverable?: boolean;
   };
 };
 

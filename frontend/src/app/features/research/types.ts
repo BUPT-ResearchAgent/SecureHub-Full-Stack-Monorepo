@@ -1,5 +1,7 @@
+import type { EvidenceChunkDTO } from '@/lib/sse.types';
+
 export type ResearchItemType = 'fund' | 'news' | 'innovation' | 'paper' | 'patent' | 'lab';
-export type ResearchTab = 'fund' | 'news' | 'innovation' | 'hot' | 'patent' | 'lab' | 'compare';
+export type ResearchTab = 'recommend' | 'fund' | 'news' | 'innovation' | 'hot' | 'patent' | 'lab' | 'compare';
 export type SortKey = 'match' | 'deadline' | 'updated' | 'citation' | 'hot';
 
 export type EvidenceSource = {
@@ -140,4 +142,30 @@ export type ToggleResponse = {
   compared?: boolean;
   read?: boolean;
   in_reading_list?: boolean;
+};
+
+export type FundRecommendation = {
+  id: string;
+  project_name: string;
+  fit_score: number;
+  reason: string;
+  agent_name: 'career_planner';
+  evidence_chunks: EvidenceChunkDTO[];
+};
+
+export type HotTrendPoint = {
+  date: string;
+  heat: number;
+};
+
+export type HotTrendEvent = {
+  id: string;
+  title: string;
+  platform: string;
+  heat_score: number;
+  e_edu: number;
+  abuse_risk: '低' | '中' | '高';
+  summary: string;
+  series: HotTrendPoint[];
+  evidence_chunks: EvidenceChunkDTO[];
 };

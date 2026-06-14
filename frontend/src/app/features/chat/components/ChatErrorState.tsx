@@ -7,7 +7,7 @@ export function ChatErrorState({ message, onRetry }: { message?: string; onRetry
         <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
         <div className="min-w-0 flex-1">
           <p className="font-medium">回答生成失败</p>
-          <p className="mt-0.5 text-xs text-red-600">{message || 'mock 生成暂时失败，请重试。'}</p>
+          <p className="mt-0.5 text-xs text-red-600">{message || '演示回答暂时生成失败，请重试。'}</p>
         </div>
         <button
           type="button"
