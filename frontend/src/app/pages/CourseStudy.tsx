@@ -18,6 +18,7 @@ import {
 } from '@/app/components/ui/popover';
 import { AgentTracePanel } from '@/app/features/agents/components/AgentTracePanel';
 import { AgentTraceProvider } from '@/app/features/agents/store';
+import { CourseCatalogLanding } from '@/app/features/course/catalog/CourseCatalogLanding';
 import { CourseSwitcher } from '@/app/features/course/catalog/CourseSwitcher';
 import {
   courseCoverAccent,
@@ -152,11 +153,33 @@ export function CourseStudy() {
     <AgentTraceProvider>
       <CourseProvider>
         <ErrorBoundary resetKey="course-study">
-          <CourseStudyInner />
+          <CourseStudyShell />
         </ErrorBoundary>
       </CourseProvider>
     </AgentTraceProvider>
   );
+}
+
+function CourseStudyShell() {
+  const navigate = useNavigate();
+  const [params] = useSearchParams();
+  const rawCourseId = params.get('courseId');
+
+  // 没有 courseId 时显示 catalog 引导页（含「继续上次学习」hero / first-time banner / 4 张课程卡）。
+  if (!rawCourseId) {
+    return (
+      <CourseCatalogLanding
+        onSelect={(courseId) => {
+          const next = new URLSearchParams(params);
+          next.set('courseId', courseId);
+          // 主动跳转到课程页对话模式，避免回退一次产生历史栈。
+          navigate(`/course?${next.toString()}`);
+        }}
+      />
+    );
+  }
+
+  return <CourseStudyInner />;
 }
 
 function CourseStudyInner() {
