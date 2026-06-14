@@ -130,6 +130,7 @@ export type DailyBrief = {
 
 export type WorkspaceDashboard = {
   id: string;
+  ownerUserId: string;
   userName: string;
   today: string;
   dailyBrief: DailyBrief;

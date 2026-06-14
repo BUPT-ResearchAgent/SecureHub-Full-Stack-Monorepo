@@ -2,7 +2,8 @@ import { Download, LogOut, ShieldCheck, ShieldOff, Trash2 } from 'lucide-react';
 import { useState, type Dispatch, type ReactNode } from 'react';
 import { toast } from 'sonner';
 import { Card, Tag } from '@/app/components/PageShell';
-import { PROFILE_STORAGE_KEY } from '../mockData';
+import { useAuth } from '@/app/features/auth/store';
+import { getProfileStorageKey } from '../mockData';
 import type { ProfileAction } from '../store';
 import type { AccountDialogConfig, ProfileWorkspace } from '../types';
 import { downloadJsonFile, formatDateTime } from '../utils';
@@ -12,7 +13,7 @@ const dialogConfigs: Record<AccountDialogConfig['action'], AccountDialogConfig> 
   'data-scope': {
     action: 'data-scope',
     title: '管理数据授权范围',
-    description: '当前演示仅使用本地 mock 数据生成个性化推荐、画像和清单，不会请求真实后端个人数据。',
+    description: '当前演示仅使用本地演示数据生成个性化推荐、画像和清单，不会请求真实后端个人数据。',
     confirmLabel: '确认授权范围',
   },
   'two-factor': {
@@ -61,6 +62,7 @@ export function AccountCompliancePanel({
   workspace: ProfileWorkspace;
   dispatch: Dispatch<ProfileAction>;
 }) {
+  const { user } = useAuth();
   const [dialog, setDialog] = useState<AccountDialogConfig | null>(null);
 
   const confirmDialog = () => {
@@ -77,13 +79,13 @@ export function AccountCompliancePanel({
       toast.success('数据导出已生成');
     }
     if (dialog.action === 'clear-cache') {
-      window.localStorage.removeItem(PROFILE_STORAGE_KEY);
+      window.localStorage.removeItem(getProfileStorageKey(user?.id));
       dispatch({ type: 'clearLocalCache' });
       toast.success('本地缓存已清除，演示数据已恢复默认');
     }
     if (dialog.action === 'delete-account') {
       dispatch({ type: 'requestAccountDeletion' });
-      toast.success('注销申请已确认，mock 状态已更新');
+      toast.success('注销申请已确认，本地状态已更新');
     }
     if (dialog.action === 'ai-notice') {
       dispatch({ type: 'setAiNoticeAccepted', accepted: true });
@@ -158,7 +160,7 @@ export function AccountCompliancePanel({
           </Card>
         </div>
 
-        <Card title="数据与合规" subtitle="授权、导出、缓存和注销申请均为前端 mock 演示">
+        <Card title="数据与合规" subtitle="授权、导出、缓存和注销申请均为前端演示">
           <div className="grid gap-3 lg:grid-cols-2">
             <ActionCard title="数据授权范围" description={workspace.complianceSettings.dataScope} onManage={() => setDialog(dialogConfigs['data-scope'])} />
             <ActionCard
@@ -170,7 +172,7 @@ export function AccountCompliancePanel({
             <ActionCard title="清除本地缓存" description={workspace.complianceSettings.cacheClearedAt ? `上次清理：${formatDateTime(workspace.complianceSettings.cacheClearedAt)}` : '清理后恢复默认演示数据。'} onManage={() => setDialog(dialogConfigs['clear-cache'])} />
             <ActionCard
               title="注销账户"
-              description={workspace.complianceSettings.deletionRequested ? `已申请：${formatDateTime(workspace.complianceSettings.deletionRequestedAt)}` : '需要二次确认，仅更新 mock 状态。'}
+              description={workspace.complianceSettings.deletionRequested ? `已申请：${formatDateTime(workspace.complianceSettings.deletionRequestedAt)}` : '需要二次确认，仅更新本地状态。'}
               onManage={() => setDialog(dialogConfigs['delete-account'])}
               danger
               icon={<Trash2 className="h-4 w-4" />}

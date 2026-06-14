@@ -1,5 +1,7 @@
-import { apiPost, apiStream } from '@/lib/api';
+import { apiPost, apiStreamPost } from '@/lib/api';
 import type { SSEHandlers } from '@/lib/sse';
+import { isMockMode } from '@/lib/mock';
+import { replayAssessment, replayPersonaChat, replayResourceGeneration, replayTutorAsk } from '@/lib/mock/course.mock';
 import type { AssessmentReport, LearningPath, LearningPersona, ResourceItem, ResourceType } from './types';
 
 export type TaskResponse = {
@@ -7,41 +9,86 @@ export type TaskResponse = {
   status: string;
 };
 
-export async function buildPersona(userId: string, message: string): Promise<TaskResponse> {
-  return apiPost<TaskResponse>('/api/v1/profile/chat', { user_id: userId, message });
-}
+export type ResourceGenerationBody = {
+  user_id: string;
+  kp_id: string;
+  options?: Record<string, unknown>;
+};
 
-export async function planLearning(courseId: string, userId: string, selectedKpIds: string[]): Promise<TaskResponse> {
-  return apiPost<TaskResponse>(`/api/v1/courses/${courseId}/plan`, {
-    user_id: userId,
-    selected_kp_ids: selectedKpIds,
-  });
-}
-
-export async function generateResource(
-  courseId: string,
+export function streamPersonaChat(
   userId: string,
-  type: ResourceType,
-  kpId?: string,
-): Promise<TaskResponse & { resource_type: ResourceType }> {
-  return apiPost<TaskResponse & { resource_type: ResourceType }>(
-    `/api/v1/courses/${courseId}/resources/generate?type=${type}`,
-    { user_id: userId, kp_id: kpId },
-  );
+  message: string,
+  history: Array<Record<string, unknown>>,
+  handlers: SSEHandlers,
+): () => void {
+  if (isMockMode()) {
+    return replayPersonaChat(message, handlers);
+  }
+  return apiStreamPost('/api/v1/profile/chat', { user_id: userId, message, history }, handlers);
 }
 
-export async function runAssessment(userId: string, answers: Array<Record<string, unknown>>): Promise<AssessmentReport> {
-  // TODO: replace placeholder once P1 assessment endpoint is enabled.
-  return Promise.resolve({
-    score: 0,
-    scoreVector: {},
-    feedback: [`TODO: submit ${answers.length} answers for ${userId}`],
-    updatedProfile: {},
+export async function planLearning(courseId: string, userId: string, targetNodeId: string): Promise<LearningPath> {
+  return apiPost<LearningPath>(`/api/v1/courses/${courseId}/plan`, {
+    user_id: userId,
+    target_node_id: targetNodeId,
+    options: { depth: 3 },
   });
 }
 
-export function streamCourseTask(taskId: string, handlers: SSEHandlers): () => void {
-  return apiStream(`/api/v1/tasks/${taskId}/stream`, handlers);
+export function streamResourceGeneration(
+  courseId: string,
+  type: ResourceType,
+  body: ResourceGenerationBody,
+  handlers: SSEHandlers,
+): () => void {
+  if (isMockMode()) {
+    return replayResourceGeneration(type, handlers);
+  }
+  return apiStreamPost(`/api/v1/courses/${courseId}/resources/generate?type=${type}`, body, handlers);
+}
+
+export function streamTutorAsk(
+  userId: string,
+  courseId: string,
+  question: string,
+  kpId: string,
+  handlers: SSEHandlers,
+): () => void {
+  if (isMockMode()) {
+    return replayTutorAsk(question, handlers);
+  }
+  return apiStreamPost('/api/v1/tutor/ask', {
+    user_id: userId,
+    course_id: courseId,
+    question,
+    context: { kp_id: kpId },
+  }, handlers);
+}
+
+export async function runAssessment(
+  userId: string,
+  courseId: string,
+  answers: Array<Record<string, unknown>>,
+): Promise<AssessmentReport> {
+  if (isMockMode()) {
+    return replayAssessment(answers);
+  }
+  const response = await apiPost<{
+    score: number;
+    feedback: string;
+    updated_capabilities: AssessmentReport['updatedCapabilities'];
+  }>('/api/v1/assessment/run', {
+    user_id: userId,
+    course_id: courseId,
+    answers,
+  });
+  return {
+    score: response.score,
+    scoreVector: Object.fromEntries((response.updated_capabilities ?? []).map((item) => [item.dimension, item.score])),
+    feedback: [response.feedback],
+    updatedProfile: {},
+    updatedCapabilities: response.updated_capabilities,
+  };
 }
 
 export type CourseApiSnapshot = {

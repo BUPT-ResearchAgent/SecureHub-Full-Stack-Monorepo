@@ -134,7 +134,7 @@ export function buildSessionMarkdown(session: ChatSession, agent: ChatAgent): st
     `- 更新时间：${formatDateTime(session.updatedAt)}`,
     `- 标签：${session.tags.length ? session.tags.join('、') : '无'}`,
     '',
-    '> 当前内容为前端演示会话，回答由 mock 规则生成，后续可替换为真实问答后端。',
+    '> 当前内容为前端演示会话，回答由演示规则生成，后续可替换为真实问答后端。',
     '',
   ];
 

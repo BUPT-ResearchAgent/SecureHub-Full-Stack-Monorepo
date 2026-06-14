@@ -19,6 +19,8 @@ import {
   updateItemFlag,
 } from '../features/research/api';
 import { ComparePanel } from '../features/research/components/ComparePanel';
+import { FundRecommendationPanel } from '../features/research/components/FundRecommendationPanel';
+import { HotTrendPanel } from '../features/research/components/HotTrendPanel';
 import { ResearchCard } from '../features/research/components/ResearchCard';
 import { ResearchDetailDrawer } from '../features/research/components/ResearchDetailDrawer';
 import { ResearchToolbar } from '../features/research/components/ResearchToolbar';
@@ -34,13 +36,14 @@ import type {
 } from '../features/research/types';
 import { tabToItemType } from '../features/research/utils';
 
-const tabKeys: ResearchTab[] = ['fund', 'news', 'innovation', 'hot', 'patent', 'lab', 'compare'];
+const tabKeys: ResearchTab[] = ['recommend', 'fund', 'news', 'innovation', 'hot', 'patent', 'lab', 'compare'];
 
 const tabMeta: Omit<TabDef, 'render'>[] = [
+  { key: 'recommend', label: '个性化推荐', description: '基于课程画像与 SQL 注入主线推荐科研立项机会' },
   { key: 'fund', label: '基金项目', description: '国家自然科学基金、省部级课题等科研立项信息，按匹配度与截止日期聚合' },
   { key: 'news', label: '科研动态', description: '网络安全领域顶会录用动态、机构前沿资讯与学术组织要闻' },
   { key: 'innovation', label: '学术创新', description: '近期高被引创新方法与算法突破方向速览，识别论文价值高地' },
-  { key: 'hot', label: '热点文章', description: '按研究方向聚合的高被引与高转发论文推荐，附精读导读' },
+  { key: 'hot', label: '舆情趋势', description: 'hot_analyst 聚合 SQL 注入相关安全事件的 30 天热度与教育价值' },
   { key: 'patent', label: '专利成果', description: '已公开网络安全相关专利的检索与申请状态追踪，提供申请流程指引' },
   { key: 'lab', label: '开放实验室', description: '顶校与研究机构开放课题、数据集资源与暑期访学合作机会' },
   { key: 'compare', label: '科研机会对比', description: '多维对比不同科研立项机会、论文、专利与实验室条目' },
@@ -70,7 +73,7 @@ export function Research() {
   const [message, setMessage] = useState<string | null>(null);
 
   const loadItems = async () => {
-    if (activeItemType === 'compare') return;
+    if (activeTab === 'recommend' || activeTab === 'hot' || activeItemType === 'compare') return;
     setLoading(true);
     setError(null);
     try {
@@ -145,6 +148,14 @@ export function Research() {
   };
 
   const content = () => {
+    if (activeTab === 'recommend') {
+      return <FundRecommendationPanel />;
+    }
+
+    if (activeTab === 'hot') {
+      return <HotTrendPanel />;
+    }
+
     if (activeTab === 'compare') {
       return (
         <ComparePanel
@@ -157,12 +168,12 @@ export function Research() {
       );
     }
 
-    if (loading) return <StateBlock state="loading" message="正在加载科研创新数据..." />;
+    if (loading) return <StateBlock state="loading" message="正在加载科研创新数据…" />;
     if (error) return <StateBlock state="error" message={error} onRetry={loadItems} />;
     if (!items.length) return <StateBlock state="empty" message="当前筛选条件下暂无数据。" />;
 
     const itemType = activeItemType as ResearchItemType;
-    const gridClass = activeTab === 'innovation' ? 'grid grid-cols-3 gap-4' : activeTab === 'news' || activeTab === 'hot' ? 'grid grid-cols-1 gap-4' : 'grid grid-cols-2 gap-4';
+    const gridClass = activeTab === 'innovation' ? 'grid grid-cols-3 gap-4' : activeTab === 'news' ? 'grid grid-cols-1 gap-4' : 'grid grid-cols-2 gap-4';
 
     return (
       <div className={gridClass}>
@@ -242,10 +253,10 @@ export function Research() {
 }
 
 async function fetchByTab(tab: ResearchTab, filters: ResearchFilters): Promise<ResearchItem[]> {
+  if (tab === 'recommend' || tab === 'hot') return [];
   if (tab === 'fund') return fetchFunds(filters);
   if (tab === 'news') return fetchNews(filters);
   if (tab === 'innovation') return fetchInnovations(filters);
-  if (tab === 'hot') return fetchPapers(filters);
   if (tab === 'patent') return fetchPatents(filters);
   if (tab === 'lab') return fetchLabs(filters);
   return [];

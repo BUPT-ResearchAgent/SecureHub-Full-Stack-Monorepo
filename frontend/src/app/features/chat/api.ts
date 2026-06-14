@@ -53,7 +53,7 @@ function topicTemplate(question: string, messages: ChatMessage[]) {
   const embedded = hasKeyword(question, ['嵌入式', '工控', '物联网', 'IoT']);
   const title = embedded ? '嵌入式安全选题组合' : aiSafety ? 'AI 安全选题组合' : '竞赛型选题组合';
   const content = [
-    `${contextHint(messages)}以下内容为 **mock 生成 / 演示数据**，用于展示前端闭环。`,
+    `${contextHint(messages)}以下内容为 **演示生成 / 演示数据**，用于展示前端闭环。`,
     '',
     `### ${title}`,
     '',
@@ -67,7 +67,7 @@ function topicTemplate(question: string, messages: ChatMessage[]) {
     '',
     '- 先把选题限定到一个可运行场景，避免概念过宽。',
     '- 用“输入样例、分析过程、结构化输出、导出材料”串起演示。',
-    '- 答辩材料里明确标注 mock 数据边界，后续再接真实检索。',
+    '- 答辩材料里明确标注演示数据边界，后续再接真实检索。',
     '',
     '> 建议下一轮继续追问：数据集怎么准备、创新点怎么写、或者如何设计实验指标。',
     '',
@@ -338,7 +338,7 @@ export async function generateMockAnswer(
   await delay(latency);
 
   if (hasKeyword(question, ['模拟失败', 'fail-demo']) || Math.random() < 0.02) {
-    throw new Error('mock 生成失败，请点击重试。');
+    throw new Error('演示回答生成失败，请点击重试。');
   }
 
   const templates: Record<ChatAgentId, (q: string, m: ChatMessage[]) => Omit<ChatMessagePayload, 'actions'>> = {

@@ -1,14 +1,29 @@
-## Summary
+## 本 PR 做了什么
 
-- 
+-
 
-## Checks
+## 属于哪个模块
 
-- [ ] I did not add a 10th agent role.
-- [ ] I did not model cross-cutting infrastructure as an agent.
-- [ ] I did not create domain-specific knowledge tables such as course_chunks or fund_chunks.
-- [ ] I did not create feature-local persona storage; user_profiles remains the single persona source.
-- [ ] New endpoint/service/repository files include a status comment.
-- [ ] Generative skills call rag.retrieve() before LLM generation.
-- [ ] Skills call ctx.log_run() before returning.
-- [ ] If I changed CLAUDE.md architecture rules, schema, or differences, I updated the matching section.
+- [ ] 后端 Agent / Workflow
+- [ ] 前端 Course UI
+- [ ] 知识库 / Seed / Test
+- [ ] 文档 / CI / 集成
+
+## 是否触碰铁律
+
+- [ ] 未新增第 10 个 agent
+- [ ] 未新增 domain 专用表
+- [ ] `rag.retrieve` 已调用
+- [ ] `agent_runs` 已写
+- [ ] Status 注释已加
+- [ ] 改 schema 已同步 CLAUDE.md & AGENTS.md
+
+## 验收命令
+
+```bash
+
+```
+
+## 截图 / 日志
+
+-

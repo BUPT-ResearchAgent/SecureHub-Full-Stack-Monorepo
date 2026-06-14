@@ -3,6 +3,7 @@ import type { ResearchItem, ResearchItemType, ResearchTab } from './types';
 export const directions = ['全部方向', 'AI 安全', '零信任', '工控安全', '后量子密码', '隐私计算', '供应链安全'];
 
 export function tabToItemType(tab: ResearchTab): ResearchItemType | 'compare' {
+  if (tab === 'recommend') return 'compare';
   if (tab === 'hot') return 'paper';
   if (tab === 'compare') return 'compare';
   return tab;

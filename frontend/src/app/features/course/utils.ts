@@ -5,6 +5,7 @@ import {
   GitBranch,
   ListChecks,
   Presentation,
+  ScrollText,
   Video,
   type LucideIcon,
 } from 'lucide-react';
@@ -18,6 +19,7 @@ export function resourceTypeIcon(type: ResourceType): LucideIcon {
     quiz: ListChecks,
     lab: FlaskConical,
     video: Video,
+    readings: ScrollText,
   };
   return icons[type] ?? BookOpen;
 }
@@ -30,12 +32,13 @@ export function progressColor(percentage: number): string {
 
 export function resourceTypeLabel(type: ResourceType): string {
   const labels: Record<ResourceType, string> = {
-    doc: 'Document',
-    ppt: 'Slides',
-    mindmap: 'Mindmap',
-    quiz: 'Quiz',
-    lab: 'Lab',
-    video: 'Storyboard',
+    doc: '讲解文档',
+    ppt: '演示大纲',
+    mindmap: '思维导图',
+    quiz: '练习题',
+    lab: '实操案例',
+    video: '视频脚本',
+    readings: '拓展阅读',
   };
   return labels[type];
 }

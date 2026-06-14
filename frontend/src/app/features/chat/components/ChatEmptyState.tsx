@@ -21,7 +21,7 @@ export function ChatEmptyState({
         </div>
         <h3 className="mt-4 text-base font-semibold text-slate-900">开始与{agent.name}对话</h3>
         <p className="mt-2 text-sm leading-relaxed text-slate-500">
-          可以新建会话，也可以直接点击推荐问题发送，系统会生成 mock 回答并保存上下文。
+          可以新建会话，也可以直接点击推荐问题发送，系统会生成演示回答并保存上下文。
         </p>
         <div className="mt-5 flex justify-center">
           <button

@@ -1,9 +1,10 @@
 import { useState } from 'react';
 import { NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom';
+import { toast } from 'sonner';
 import {
   LayoutDashboard,
-  GraduationCap,
   Swords,
+  GraduationCap,
   FlaskConical,
   PenLine,
   MessagesSquare,
@@ -16,9 +17,22 @@ import {
   Menu,
   Bell,
   Database,
+  LogOut,
+  ShieldCheck,
 } from 'lucide-react';
-import { EvidenceDrawer } from './EvidenceDrawer';
+import { EvidenceDrawer, EvidenceProvider, useEvidence } from './EvidenceDrawer';
+import { BrandFooter } from './BrandFooter';
+import { BackendStatusPanel } from './BackendStatusPanel';
 import { GlobalSearch } from './GlobalSearch';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/app/components/ui/dropdown-menu';
+import { useAuth } from '@/app/features/auth/store';
 
 export type NavChild = { key: string; label: string };
 export type NavItem = {
@@ -45,6 +59,20 @@ export const navItems: NavItem[] = [
     ],
   },
   {
+    path: '/practice',
+    icon: Swords,
+    label: '实战进阶',
+    children: [
+      { key: 'tutorial', label: '教程中心' },
+      { key: 'tools', label: '工具库' },
+      { key: 'contest', label: '竞赛专区' },
+      { key: 'hvv', label: '护网行动' },
+      { key: 'range', label: '靶场演练' },
+      { key: 'cases', label: '实战案例' },
+      { key: 'ddl', label: '竞赛截止' },
+    ],
+  },
+  {
     path: '/course',
     icon: GraduationCap,
     label: '课程学习',
@@ -57,28 +85,15 @@ export const navItems: NavItem[] = [
     ],
   },
   {
-    path: '/practice',
-    icon: Swords,
-    label: '实战进阶',
-    children: [
-      { key: 'tutorial', label: '教程中心' },
-      { key: 'tools', label: '工具库' },
-      { key: 'contest', label: '竞赛专区' },
-      { key: 'hvv', label: '护网行动' },
-      { key: 'range', label: '靶场演练' },
-      { key: 'cases', label: '实战案例' },
-      { key: 'ddl', label: '竞赛DDL' },
-    ],
-  },
-  {
     path: '/research',
     icon: FlaskConical,
     label: '科研创新',
     children: [
+      { key: 'recommend', label: '个性化推荐' },
       { key: 'fund', label: '基金项目' },
       { key: 'news', label: '科研动态' },
       { key: 'innovation', label: '学术创新' },
-      { key: 'hot', label: '热点文章' },
+      { key: 'hot', label: '舆情趋势' },
       { key: 'patent', label: '专利成果' },
       { key: 'lab', label: '开放实验室' },
       { key: 'compare', label: '科研机会对比' },
@@ -161,6 +176,7 @@ export const navItems: NavItem[] = [
     label: '个人中心',
     children: [
       { key: 'persona', label: '用户画像' },
+      { key: 'resources', label: '资源历史' },
       { key: 'vault', label: '个人资产库' },
       { key: 'docs', label: '文档资产' },
       { key: 'slides', label: '演示资产' },
@@ -174,9 +190,18 @@ export const navItems: NavItem[] = [
 ];
 
 export function Layout() {
+  return (
+    <EvidenceProvider>
+      <LayoutFrame />
+    </EvidenceProvider>
+  );
+}
+
+function LayoutFrame() {
   const navigate = useNavigate();
   const location = useLocation();
-  const [evidenceOpen, setEvidenceOpen] = useState(false);
+  const { user, logout } = useAuth();
+  const evidence = useEvidence();
   const [collapsed, setCollapsed] = useState(false);
   const [expanded, setExpanded] = useState<string[]>(() => {
     const active = navItems.find((n) => location.pathname.startsWith(n.path));
@@ -186,29 +211,37 @@ export function Layout() {
   const toggle = (path: string) =>
     setExpanded((e) => (e.includes(path) ? [] : [path]));
 
+  const displayName = user?.display_name || '用户';
+  const avatarText = displayName.trim().slice(0, 1) || '用';
+
+  const handleLogout = async () => {
+    await logout();
+    toast.success('已退出登录');
+    navigate('/login', { replace: true });
+  };
+
   return (
     <div className="flex h-screen bg-slate-50 overflow-hidden">
       <aside
         className={`bg-white border-r border-slate-200 text-slate-700 transition-all duration-300 flex flex-col ${
-          collapsed ? 'w-16' : 'w-72'
+          collapsed ? 'w-16' : 'w-40'
         }`}
       >
-        <div className="h-16 flex items-center justify-between px-4 border-b border-slate-200 shrink-0">
-          {!collapsed && (
+        <div className="h-16 grid grid-cols-[1fr_auto_1fr] items-center px-3 border-b border-slate-200 shrink-0">
+          {!collapsed ? (
             <button
               onClick={() => navigate('/')}
-              className="flex items-center gap-2 hover:opacity-80 transition-opacity"
+              className="flex items-center gap-2 hover:opacity-80 transition-opacity col-start-1"
             >
-              <div className="w-8 h-8 bg-[#003399] rounded-lg flex items-center justify-center">
+              <div className="w-8 h-8 bg-[#003399] rounded-lg flex items-center justify-center shrink-0">
                 <span className="text-white font-bold text-sm">安</span>
               </div>
-              <span className="font-semibold text-[#003399]">安枢智梯 CyberLadder</span>
+              <span className="font-semibold text-[#003399] text-sm truncate">安枢智梯</span>
             </button>
-          )}
-          {collapsed && (
+          ) : (
             <button
               onClick={() => navigate('/')}
-              className="w-full flex justify-center hover:opacity-80"
+              className="col-start-2 hover:opacity-80"
             >
               <div className="w-8 h-8 bg-[#003399] rounded-lg flex items-center justify-center">
                 <span className="text-white font-bold text-sm">安</span>
@@ -217,13 +250,13 @@ export function Layout() {
           )}
           <button
             onClick={() => setCollapsed(!collapsed)}
-            className="p-1.5 hover:bg-slate-100 rounded-lg transition-colors text-slate-400"
+            className="col-start-3 p-1.5 hover:bg-slate-100 rounded-lg transition-colors text-slate-400 justify-self-end"
           >
             <Menu className="w-4 h-4" />
           </button>
         </div>
 
-        <nav className="flex-1 overflow-y-auto py-3">
+        <nav className="flex-1 overflow-y-auto py-2">
           <ul className="space-y-0.5 px-2">
             {navItems.map((item) => {
               const isActive = location.pathname.startsWith(item.path);
@@ -239,7 +272,7 @@ export function Layout() {
                         navigate(`${item.path}?tab=${item.children[0].key}`);
                       }
                     }}
-                    className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-md transition-colors ${
+                    className={`w-full flex items-center gap-2.5 px-2.5 py-2 rounded-md transition-colors ${
                       isActive
                         ? 'bg-[#003399]/10 text-[#003399]'
                         : 'text-slate-500 hover:bg-slate-100 hover:text-slate-700'
@@ -249,7 +282,7 @@ export function Layout() {
                     <item.icon className={`w-5 h-5 shrink-0 ${isActive ? 'text-[#003399]' : ''}`} />
                     {!collapsed && (
                       <>
-                        <span className="text-base flex-1 text-left">{item.label}</span>
+                        <span className="text-sm flex-1 text-left">{item.label}</span>
                         {isOpen ? (
                           <ChevronDown className="w-4 h-4 opacity-50" />
                         ) : (
@@ -261,9 +294,9 @@ export function Layout() {
                   {!collapsed && (
                     <div
                       className="overflow-hidden transition-all duration-300 ease-in-out"
-                      style={{ maxHeight: isOpen ? `${item.children.length * 44}px` : '0px' }}
+                      style={{ maxHeight: isOpen ? `${item.children.length * 40}px` : '0px' }}
                     >
-                      <ul className="mt-0.5 mb-1 ml-7 pl-3 border-l border-slate-200 space-y-0.5">
+                      <ul className="mt-0.5 mb-1 ml-5 pl-2 border-l border-slate-200 space-y-0.5">
                         {item.children.map((child) => {
                           const search = new URLSearchParams(location.search);
                           const activeTab = search.get('tab') || item.children[0].key;
@@ -272,7 +305,7 @@ export function Layout() {
                             <li key={child.key}>
                               <NavLink
                                 to={`${item.path}?tab=${child.key}`}
-                                className={`block px-3 py-2 rounded-md text-sm transition-colors ${
+                                className={`block px-2 py-1.5 rounded-md text-sm transition-colors ${
                                   childActive
                                     ? 'bg-[#003399]/10 text-[#003399]'
                                     : 'text-slate-400 hover:text-slate-700 hover:bg-slate-100'
@@ -301,7 +334,7 @@ export function Layout() {
 
           <div className="flex items-center gap-2">
             <button
-              onClick={() => setEvidenceOpen(!evidenceOpen)}
+              onClick={(event) => evidence.toggle(event.currentTarget)}
               className="flex items-center gap-2 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-100 rounded-lg transition-colors"
             >
               <Database className="w-4 h-4" />
@@ -311,23 +344,54 @@ export function Layout() {
               <Bell className="w-4 h-4 text-slate-600" />
               <span className="absolute top-1.5 right-1.5 w-1.5 h-1.5 bg-red-500 rounded-full" />
             </button>
-            <button className="flex items-center gap-2 px-2 py-1.5 hover:bg-slate-100 rounded-lg">
-              <div className="w-7 h-7 bg-brand-blue-600 text-white rounded-full flex items-center justify-center text-xs font-semibold">
-                陈
-              </div>
-              <span className="text-sm text-slate-700">陈同学</span>
-            </button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button className="flex max-w-[180px] items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-slate-100">
+                  <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-brand-blue-600 text-xs font-semibold text-white">
+                    {avatarText}
+                  </div>
+                  <span className="truncate text-sm text-slate-700">{displayName}</span>
+                  <ChevronDown className="h-4 w-4 shrink-0 text-slate-400" />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-56">
+                <DropdownMenuLabel>
+                  <div className="space-y-1">
+                    <p className="truncate text-sm font-medium text-slate-900">{displayName}</p>
+                    <p className="truncate text-xs font-normal text-slate-500">{user?.email}</p>
+                  </div>
+                </DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={() => navigate('/profile?tab=persona')}>
+                  <UserCircle className="h-4 w-4" />
+                  个人中心
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => navigate('/profile?tab=account')}>
+                  <ShieldCheck className="h-4 w-4" />
+                  账户与合规
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={handleLogout} className="text-red-600 focus:text-red-600">
+                  <LogOut className="h-4 w-4" />
+                  退出登录
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         </header>
 
-        <main className="flex-1 overflow-y-auto">
-          <div className="max-w-[1280px] mx-auto px-6 py-6">
-            <Outlet />
+        <main className="flex-1 flex flex-col min-h-0">
+          <div className="flex-1 overflow-y-auto">
+            <div className="max-w-[1280px] mx-auto px-4 py-1">
+              <Outlet />
+            </div>
           </div>
+          <BrandFooter />
         </main>
       </div>
 
-      <EvidenceDrawer isOpen={evidenceOpen} onClose={() => setEvidenceOpen(false)} />
+      <EvidenceDrawer />
+      <BackendStatusPanel />
     </div>
   );
 }

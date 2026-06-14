@@ -1,8 +1,12 @@
 import { apiGet, apiPost } from '@/lib/api';
+import { withMockFallback } from '@/lib/mock';
+import { mockFundRecommendations, mockHotTrendEvents } from '@/lib/mock/research.mock';
 import type {
   CompareItem,
   DetailResponse,
+  FundRecommendation,
   FundItem,
+  HotTrendEvent,
   InnovationItem,
   LabItem,
   NewsItem,
@@ -53,6 +57,23 @@ export function fetchCompareItems() {
 
 export function fetchResearchDetail(itemType: ResearchItemType, itemId: string) {
   return apiGet<DetailResponse>(`/api/v1/research/items/${itemType}/${itemId}`);
+}
+
+export function recommendFunds(userId: string, topic: string) {
+  return withMockFallback(
+    () => apiPost<FundRecommendation[], { user_id: string; topic: string }>(
+      '/api/v1/research/funds/recommend',
+      { user_id: userId, topic },
+    ),
+    () => mockFundRecommendations,
+  );
+}
+
+export function fetchHotTrendEvents() {
+  return withMockFallback(
+    () => apiGet<HotTrendEvent[]>('/api/v1/research/hot/trends?event=SQL%20%E6%B3%A8%E5%85%A5%E7%9B%B8%E5%85%B3%E5%AE%89%E5%85%A8%E4%BA%8B%E4%BB%B6'),
+    () => mockHotTrendEvents,
+  );
 }
 
 export function toggleFavorite(itemType: ResearchItemType, itemId: string) {

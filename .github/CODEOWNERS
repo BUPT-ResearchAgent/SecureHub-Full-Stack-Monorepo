@@ -1,0 +1,38 @@
+# GitHub require code owner review uses this file to route mandatory reviews.
+# Shared high-risk files require two owners to sign before merge.
+# Changes to CLAUDE.md or .codex/AGENTS.md require @member-a and @member-c review.
+
+# Backend runtime / agents / harness / streaming -> A
+/backend/app/runtime/ @member-a
+/backend/app/agents/ @member-a
+/backend/app/llm/ @member-a
+/backend/app/rag/ @member-a
+/backend/app/streaming/ @member-a
+/backend/app/services/agent/ @member-a
+/backend/app/services/resources/ @member-a
+/backend/app/services/storage/ @member-a
+
+# Frontend showcase -> B
+/frontend/src/features/course/ @member-b
+/frontend/src/features/agents/ @member-b
+/frontend/src/features/sources/ @member-b
+/frontend/src/app/pages/ @member-b
+
+# Knowledge / loaders / crawling / seeds / tests / CI -> C
+/backend/app/knowledge/ @member-c
+/backend/app/services/knowledge/ @member-c
+/backend/app/services/knowledge/crawling/ @member-c
+/backend/app/db/seeds/ @member-c
+/backend/tests/ @member-c
+/scripts/ @member-c
+/.github/ @member-c
+/data/ @member-c
+
+# Shared high-risk files need 2+ reviewers
+/backend/app/db/models/ @member-a @member-c
+/backend/app/db/migrations/ @member-a @member-c
+/frontend/src/lib/api.ts @member-a @member-b
+/frontend/src/lib/sse.ts @member-a @member-b
+/docs/api/ @member-a @member-b @member-c
+/CLAUDE.md @member-a @member-c
+/.codex/AGENTS.md @member-a @member-c
