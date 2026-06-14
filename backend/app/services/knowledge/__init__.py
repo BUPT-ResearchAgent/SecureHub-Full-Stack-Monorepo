@@ -1,4 +1,4 @@
-# Status: planned
+# Status: real
 
 from app.services.knowledge.chunking_service import ChunkingService
 from app.services.knowledge.embedding_service import EmbeddingService

@@ -1,0 +1,57 @@
+{
+  "status": "real",
+  "domain": "course_websec",
+  "course": "Web 安全基础",
+  "required_metadata": [
+    "platform",
+    "source_url",
+    "author",
+    "published_at",
+    "fetched_at",
+    "license",
+    "rights_note",
+    "asset_type"
+  ],
+  "p0_sources": [
+    {
+      "platform": "owasp",
+      "title": "OWASP SQL Injection",
+      "source_url": "https://owasp.org/www-community/attacks/SQL_Injection",
+      "author": "OWASP",
+      "license": "CC BY-SA 4.0",
+      "import_mode": "manual_import"
+    },
+    {
+      "platform": "owasp",
+      "title": "OWASP Cross Site Scripting",
+      "source_url": "https://owasp.org/www-community/attacks/xss/",
+      "author": "OWASP",
+      "license": "CC BY-SA 4.0",
+      "import_mode": "manual_import"
+    },
+    {
+      "platform": "portswigger",
+      "title": "PortSwigger CSRF",
+      "source_url": "https://portswigger.net/web-security/csrf",
+      "author": "PortSwigger Web Security Academy",
+      "license": "Public learning material",
+      "import_mode": "manual_import"
+    },
+    {
+      "platform": "portswigger",
+      "title": "PortSwigger File Upload",
+      "source_url": "https://portswigger.net/web-security/file-upload",
+      "author": "PortSwigger Web Security Academy",
+      "license": "Public learning material",
+      "import_mode": "manual_import"
+    },
+    {
+      "platform": "mineru",
+      "title": "PDF / MinerU parsed course notes",
+      "source_url": null,
+      "author": "SecureHub / MinerU",
+      "license": "unknown",
+      "import_mode": "pdf_mineru_import"
+    }
+  ]
+}
