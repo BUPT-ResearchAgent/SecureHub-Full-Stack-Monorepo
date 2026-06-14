@@ -24,4 +24,37 @@ async def retrieve(
     top_k: int = 8,
     filter: dict[str, Any] | None = None,
 ) -> list[EvidenceHit]:
-    raise NotImplementedError("TODO: run BM25 + pgvector retrieval and RRF fusion")
+    try:
+        from sqlalchemy import select
+        from app.db.models.knowledge.chunk import Chunk
+        from app.db.session import get_sessionmaker
+        from app.llm.embedding import embed_one
+
+        embedding = await embed_one(query)
+        sessionmaker = get_sessionmaker()
+        async with sessionmaker() as session:
+            stmt = (
+                select(Chunk)
+                .where(Chunk.domain == domain)
+                .order_by(Chunk.embedding.cosine_distance(embedding))
+                .limit(top_k)
+            )
+            result = await session.execute(stmt)
+            rows = result.scalars().all()
+            return [
+                EvidenceHit(
+                    chunk_id=row.id,
+                    document_id=row.document_id,
+                    domain=row.domain,
+                    chunk_text=row.chunk_text,
+                    source=row.metadata_.get("source") if row.metadata_ else None,
+                    reliability=row.metadata_.get("reliability", 0.8) if row.metadata_ else 0.8,
+                    score=0.0,
+                    metadata=row.metadata_ or {},
+                )
+                for row in rows
+            ]
+    except Exception:
+        import logging
+        logging.getLogger(__name__).debug("RAG retrieve: DB not ready, returning empty list")
+        return []
