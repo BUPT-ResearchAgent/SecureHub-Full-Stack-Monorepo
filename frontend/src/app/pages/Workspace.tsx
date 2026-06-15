@@ -52,6 +52,7 @@ import { PolicyFeed } from '@/app/features/workspace/components/PolicyFeed';
 import { RecentAssetsPanel } from '@/app/features/workspace/components/RecentAssetsPanel';
 import { RecommendedActionsPanel } from '@/app/features/workspace/components/RecommendedActionsPanel';
 import { TodayTasksPanel } from '@/app/features/workspace/components/TodayTasksPanel';
+import { WeeklyRhythmCard } from '@/app/features/workspace/components/WeeklyRhythmCard';
 import { refreshDataSourceDemo } from '@/app/features/workspace/api';
 import { useWorkspaceDashboard } from '@/app/features/workspace/store';
 import type { DataSourceStatus } from '@/app/features/workspace/types';
@@ -246,30 +247,8 @@ export function Workspace() {
         subtitle="A3 多智能体个性化学习的工作台入口 · 课程进度、生成资源、智能体活动与能力画像一屏可见"
       />
 
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_280px]">
-        <TodayCourseCard
-          courseId={activeCourse.id}
-          onContinue={() => navigate(`/course?courseId=${activeCourse.id}&view=chat`)}
-          onSwitchCourse={() => navigate('/course')}
-          onAssess={() => navigate(`/course?courseId=${activeCourse.id}&view=structured&tab=assess`)}
-          onViewPath={() => navigate(`/course?courseId=${activeCourse.id}&view=structured&tab=path`)}
-        />
-        <TodayXpCard />
-      </div>
-
-      <div className="grid gap-4 xl:grid-cols-3 lg:grid-cols-2">
-        <RecentResourcesCard onOpen={() => navigate('/profile?tab=resources')} />
-        <RecentAgentRunsCard onOpen={() => navigate(`/course?courseId=${activeCourse.id}&view=structured`)} />
-        <div className="space-y-4">
-          <CapabilityRadarPreviewCard onOpen={() => navigate('/profile?tab=persona')} />
-          <LearningScheduleCard
-            onContinue={() => navigate(`/course?courseId=${activeCourse.id}&view=chat`)}
-          />
-          {import.meta.env.DEV && <DataFreshnessCard />}
-        </div>
-      </div>
-
-      <section className="space-y-3 border-t border-slate-200 pt-5">
+      {/* 子模块工具栏与 tab nav：所有子页面公共。 */}
+      <section className="space-y-3 border-y border-slate-200 py-4">
         <header className="flex flex-wrap items-end justify-between gap-3">
           <div className="min-w-0">
             <p className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-2.5 py-0.5 text-[11px] font-medium text-slate-600">
@@ -309,12 +288,166 @@ export function Workspace() {
             );
           })}
         </nav>
-
-        <div>{renderSubmodule()}</div>
       </section>
+
+      {activeSubmoduleTab === 'today' ? (
+        <IntegratedTodayView
+          activeCourseId={activeCourse.id}
+          dashboard={dashboard}
+          dispatch={dispatch}
+          onOpenBrief={openBrief}
+          onStartWork={startWork}
+          onNavigate={goToPath}
+        />
+      ) : (
+        <div>{renderSubmodule()}</div>
+      )}
 
       <DailyBriefDrawer brief={dashboard.dailyBrief} open={briefOpen} onClose={() => setBriefOpen(false)} />
     </div>
+  );
+}
+
+/**
+ * 「今日要务」专属的整合视图。
+ *
+ * 用户访问 /workspace?tab=today 时显示：4 行结构，每张卡片都有清晰的归属位置，
+ * 避免「新仪表盘 + 旧 panel 粗暴叠加 + 第三列下垂溢出到旧区域」的旧问题。
+ *
+ *   Row1 (Hero, 2/3 + 1/3)        ：TodayCourseCard | TodayXpCard
+ *   Row2 (Summary strip, 全宽)     ：一句话 workspace 状态（今日还有 X / Y / Z）
+ *   Row3 (Insights, 3 等宽列)      ：RecentResources | RecentAgentRuns | CapabilityRadar
+ *   Row4 (Work, 2fr + 1fr)         ：今日要务列表 | 本周节奏 + 学习日程 + (dev) 数据新鲜度
+ */
+function IntegratedTodayView({
+  activeCourseId,
+  dashboard,
+  dispatch,
+  onOpenBrief,
+  onStartWork,
+  onNavigate,
+}: {
+  activeCourseId: string;
+  dashboard: ReturnType<typeof useWorkspaceDashboard>['dashboard'];
+  dispatch: ReturnType<typeof useWorkspaceDashboard>['dispatch'];
+  onOpenBrief: () => void;
+  onStartWork: () => void;
+  onNavigate: (path: string, message: string) => void;
+}) {
+  const navigate = useNavigate();
+  const stats = dashboardSummaryStats(dashboard);
+
+  return (
+    <div className="space-y-5">
+      {/* Row 1 · Hero */}
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_280px]">
+        <TodayCourseCard
+          courseId={activeCourseId}
+          onContinue={() => navigate(`/course?courseId=${activeCourseId}&view=chat`)}
+          onSwitchCourse={() => navigate('/course')}
+          onAssess={() => navigate(`/course?courseId=${activeCourseId}&view=structured&tab=assess`)}
+          onViewPath={() => navigate(`/course?courseId=${activeCourseId}&view=structured&tab=path`)}
+        />
+        <TodayXpCard />
+      </div>
+
+      {/* Row 2 · Workspace 状态摘要条 */}
+      <WorkspaceSummaryStrip
+        userName={dashboard.userName}
+        unfinishedTaskCount={stats.unfinished}
+        activeDeadlineCount={stats.deadlines}
+        activeActionCount={stats.actions}
+        onOpenBrief={onOpenBrief}
+        onStartWork={onStartWork}
+      />
+
+      {/* Row 3 · Insights（3 等宽小卡片，与 Row 4 不互相挤压） */}
+      <div className="grid gap-4 lg:grid-cols-3">
+        <RecentResourcesCard onOpen={() => navigate('/profile?tab=resources')} />
+        <RecentAgentRunsCard
+          onOpen={() => navigate(`/course?courseId=${activeCourseId}&view=structured`)}
+        />
+        <CapabilityRadarPreviewCard onOpen={() => navigate('/profile?tab=persona')} />
+      </div>
+
+      {/* Row 4 · 工作主区 */}
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,2fr)_minmax(280px,1fr)]">
+        <TodayTasksPanel
+          dashboard={dashboard}
+          dispatch={dispatch}
+          onOpenBrief={onOpenBrief}
+          onStartWork={onStartWork}
+          onNavigate={onNavigate}
+          showHeader={false}
+          showRhythm={false}
+        />
+        <div className="space-y-4">
+          <WeeklyRhythmCard dashboard={dashboard} />
+          <LearningScheduleCard
+            onContinue={() => navigate(`/course?courseId=${activeCourseId}&view=chat`)}
+          />
+          {import.meta.env.DEV && <DataFreshnessCard />}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function dashboardSummaryStats(dashboard: ReturnType<typeof useWorkspaceDashboard>['dashboard']) {
+  return {
+    unfinished: dashboard.tasks.filter((task) => !task.completed).length,
+    deadlines: dashboard.deadlines.filter((item) => item.status === 'active').length,
+    actions: dashboard.recommendedActions.filter((item) => item.status === 'active').length,
+  };
+}
+
+function WorkspaceSummaryStrip({
+  userName,
+  unfinishedTaskCount,
+  activeDeadlineCount,
+  activeActionCount,
+  onOpenBrief,
+  onStartWork,
+}: {
+  userName: string;
+  unfinishedTaskCount: number;
+  activeDeadlineCount: number;
+  activeActionCount: number;
+  onOpenBrief: () => void;
+  onStartWork: () => void;
+}) {
+  return (
+    <section className="flex flex-col items-start justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50/60 px-5 py-3 lg:flex-row lg:items-center">
+      <p className="text-sm leading-6 text-slate-600">
+        早上好，
+        <span className="font-semibold text-slate-900">{userName}</span>
+        ：今日还有
+        <span className="mx-1 font-semibold text-slate-900">{unfinishedTaskCount}</span>
+        项任务、
+        <span className="mx-1 font-semibold text-slate-900">{activeDeadlineCount}</span>
+        条截止提醒和
+        <span className="mx-1 font-semibold text-slate-900">{activeActionCount}</span>
+        条推荐行动待处理。
+      </p>
+      <div className="flex shrink-0 gap-2">
+        <button
+          type="button"
+          onClick={onOpenBrief}
+          className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-100"
+        >
+          <FileText className="h-3.5 w-3.5" />
+          查看今日简报
+        </button>
+        <button
+          type="button"
+          onClick={onStartWork}
+          className="inline-flex items-center gap-1.5 rounded-lg bg-brand-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-brand-blue-700"
+        >
+          开始工作
+          <ArrowRight className="h-3.5 w-3.5" />
+        </button>
+      </div>
+    </section>
   );
 }
 
