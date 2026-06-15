@@ -1,6 +1,13 @@
 // Status: partial-real
+// 4-B-3 升级：在原有"画像对话 + 六维卡片"基础上叠加：
+//   1) PersonaTreeCanvas — 径向画像树（替代静态卡片视觉）
+//   2) PersonaNarrative — 80-120 字人物简介，关键词高亮
+//   3) PersonaChallenger — 学生自陈触发挑战问题（mock：在 mock 模式下学生第一轮回答后自动触发一次）
+//   4) PersonaDimensionDrawer — 点击树节点查看证据片段
+//   5) 维度置信度由 challenge 结果驱动（accepted +0.2 / rejected -0.3）
+
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { CheckCircle2, MessageSquareText, Send } from 'lucide-react';
+import { ShieldCheck, MessageSquareText, Send } from 'lucide-react';
 import { Card, Tag } from '@/app/components/PageShell';
 import { ErrorState, InsufficientEvidenceState, LoadingState, ReconnectingState } from '@/app/components/StateView';
 import { useEvidence } from '@/app/components/EvidenceDrawer';
@@ -10,13 +17,30 @@ import { streamPersonaChat } from '../api';
 import { mockPersona } from '../mockData';
 import { useCourseDispatch } from '../store';
 import type { LearningPersona, PersonaDimensionKey } from '../types';
+import { PersonaTreeCanvas } from '../persona/PersonaTreeCanvas';
+import { PersonaNarrative } from '../persona/PersonaNarrative';
+import { PersonaDimensionDrawer } from '../persona/PersonaDimensionDrawer';
+import {
+  pickChallengeForClaim,
+  evaluateChallengeAnswer,
+} from '../persona/PersonaChallenger';
+import {
+  buildPersonaTree,
+  generatePersonaNarrative,
+  personaDimensionLabels,
+} from '@/lib/mock/persona.mock';
+import type {
+  PersonaChallengeQuestion,
+  PersonaDimensionNode,
+} from '@/lib/types/persona.types';
 
 export interface PersonaBuilderProps {
   userId?: string;
 }
 
 type DialogueTurn = {
-  role: 'user' | 'assistant';
+  id: string;
+  role: 'user' | 'assistant' | 'challenge' | 'challenge-answer' | 'challenge-result';
   content: string;
 };
 
@@ -29,16 +53,6 @@ const requiredDimensions: PersonaDimensionKey[] = [
   'target_direction',
 ];
 
-const dimensionLabels: Record<PersonaDimensionKey, string> = {
-  base_knowledge: '知识基础',
-  cognitive_style: '认知风格',
-  weak_points: '易错点',
-  preferred_modality: '偏好学习方式',
-  time_budget: '时间预算',
-  target_direction: '目标方向',
-  motivation: '学习动机',
-};
-
 const demoDimensions: Record<PersonaDimensionKey, string> = {
   base_knowledge: '具备 Python 基础，了解 HTTP 请求与表单提交',
   cognitive_style: '先看攻击现象，再用修复案例反推原理',
@@ -50,6 +64,7 @@ const demoDimensions: Record<PersonaDimensionKey, string> = {
 };
 
 const initialTurn: DialogueTurn = {
+  id: 'turn-init',
   role: 'assistant',
   content: '我会通过几轮对话确认你的基础、目标、薄弱点和学习偏好，再启动个性化学习路径。',
 };
@@ -103,6 +118,12 @@ export function PersonaBuilder({ userId = mockPersona.userId }: PersonaBuilderPr
   const [streaming, setStreaming] = useState(false);
   const [error, setError] = useState<{ code?: string; message: string }>();
   const [identified, setIdentified] = useState<Partial<Record<PersonaDimensionKey, string>>>({});
+  const [verifyStatus, setVerifyStatus] = useState<Record<string, 'verified' | 'challenged'>>({});
+  const [challengeQueue, setChallengeQueue] = useState<PersonaChallengeQuestion[]>([]);
+  const [activeChallenge, setActiveChallenge] = useState<PersonaChallengeQuestion | null>(null);
+  const [challengeAnswer, setChallengeAnswer] = useState('');
+  const [selectedNode, setSelectedNode] = useState<PersonaDimensionNode | undefined>();
+  const [recentlyUpdated, setRecentlyUpdated] = useState<string | undefined>();
   const mockMode = isMockMode();
 
   useEffect(() => () => cancelRef.current?.(), []);
@@ -113,14 +134,15 @@ export function PersonaBuilder({ userId = mockPersona.userId }: PersonaBuilderPr
     const timers: number[] = [];
     setTurns([initialTurn]);
     setIdentified({});
+    setVerifyStatus({});
     setError(undefined);
 
     mockRounds.forEach((round, index) => {
       const timer = window.setTimeout(() => {
         setTurns((current) => [
           ...current,
-          { role: 'user', content: round.user },
-          { role: 'assistant', content: round.assistant },
+          { id: `turn-user-${index}`, role: 'user', content: round.user },
+          { id: `turn-bot-${index}`, role: 'assistant', content: round.assistant },
         ]);
         setIdentified((current) => {
           const next = { ...current };
@@ -133,6 +155,13 @@ export function PersonaBuilder({ userId = mockPersona.userId }: PersonaBuilderPr
           }
           return next;
         });
+        if (index === 0) {
+          const claim = round.user;
+          const pick = pickChallengeForClaim(claim);
+          if (pick) {
+            setChallengeQueue((current) => [...current, pick]);
+          }
+        }
       }, 700 + index * 1200);
       timers.push(timer);
     });
@@ -142,22 +171,64 @@ export function PersonaBuilder({ userId = mockPersona.userId }: PersonaBuilderPr
     };
   }, [courseDispatch, mockMode, userId]);
 
+  useEffect(() => {
+    if (activeChallenge || challengeQueue.length === 0) return;
+    const [next, ...rest] = challengeQueue;
+    setActiveChallenge(next);
+    setChallengeQueue(rest);
+    setTurns((current) => [
+      ...current,
+      {
+        id: `challenge-${next.id}`,
+        role: 'challenge',
+        content: `我用一道挑战题确认一下：${next.prompt}`,
+      },
+    ]);
+  }, [activeChallenge, challengeQueue]);
+
   const identifiedCount = useMemo(
     () => requiredDimensions.filter((key) => Boolean(identified[key])).length,
     [identified],
   );
   const isComplete = identifiedCount >= requiredDimensions.length;
 
+  const branches = useMemo(
+    () => buildPersonaTree(identified, verifyStatus),
+    [identified, verifyStatus],
+  );
+
+  const narrative = useMemo(
+    () => generatePersonaNarrative('小李同学', identified),
+    [identified],
+  );
+
+  const conversationLookup = useMemo(() => {
+    const lookup: Record<string, string> = {};
+    turns.forEach((turn) => {
+      const value = identified;
+      Object.keys(value).forEach((dim) => {
+        lookup[`msg-${dim}-root`] = turn.role === 'user' ? turn.content : lookup[`msg-${dim}-root`] ?? turn.content;
+      });
+    });
+    return lookup;
+  }, [turns, identified]);
+
   const submit = () => {
     const message = input.trim();
     if (!message || streaming) return;
+
+    if (activeChallenge) {
+      finishChallenge(message);
+      return;
+    }
+
     setInput('');
     setError(undefined);
     setStreaming(true);
     setTurns((current) => [
       ...current,
-      { role: 'user', content: message },
-      { role: 'assistant', content: '' },
+      { id: `live-user-${current.length}`, role: 'user', content: message },
+      { id: `live-bot-${current.length}`, role: 'assistant', content: '' },
     ]);
 
     cancelRef.current?.();
@@ -185,6 +256,8 @@ export function PersonaBuilder({ userId = mockPersona.userId }: PersonaBuilderPr
         setIdentified(fullDimensions);
         setStreaming(false);
         courseDispatch({ type: 'setPersona', persona: buildPersona(userId, fullDimensions) });
+        const pick = pickChallengeForClaim(message);
+        if (pick) setChallengeQueue((current) => [...current, pick]);
       },
       onError(event) {
         if (event.code === 'sse_reconnecting') {
@@ -197,46 +270,71 @@ export function PersonaBuilder({ userId = mockPersona.userId }: PersonaBuilderPr
     });
   };
 
+  const finishChallenge = (answer: string) => {
+    if (!activeChallenge) return;
+    const outcome = evaluateChallengeAnswer(activeChallenge, answer);
+    const dim = activeChallenge.dimension;
+    setVerifyStatus((current) => ({
+      ...current,
+      [dim]: outcome.kind === 'accepted' ? 'verified' : outcome.kind === 'rejected' ? 'challenged' : current[dim] ?? 'verified',
+    }));
+    setRecentlyUpdated(String(dim));
+    const summary =
+      outcome.kind === 'accepted'
+        ? `✅ 命中关键词，维度「${labelOf(dim)}」置信度 +20%，标记为已验证。`
+        : outcome.kind === 'partial'
+        ? `🟡 回答含部分关键词，维度「${labelOf(dim)}」置信度 +8%，仍需更多证据。`
+        : `⚠️ 回答未命中预期关键词，维度「${labelOf(dim)}」回归到初始 30%，等待复核。`;
+    setTurns((current) => [
+      ...current,
+      { id: `challenge-ans-${activeChallenge.id}`, role: 'challenge-answer', content: answer },
+      { id: `challenge-res-${activeChallenge.id}`, role: 'challenge-result', content: summary },
+    ]);
+    setChallengeAnswer('');
+    setInput('');
+    setActiveChallenge(null);
+    window.setTimeout(() => setRecentlyUpdated(undefined), 2400);
+  };
+
   return (
-    <div className="grid gap-4 lg:grid-cols-[minmax(0,1.1fr)_minmax(340px,0.9fr)]">
+    <div className="grid gap-4 xl:grid-cols-[minmax(0,1.2fr)_minmax(420px,1fr)]">
       <Card title="画像对话" subtitle={`用户：${userId}`}>
         <div className="space-y-4">
+          <PersonaNarrative segment={narrative} />
+
           <div className="rounded-xl border border-slate-200 bg-white p-4">
             <div className="flex items-center justify-between gap-3">
               <div>
-                <div className="text-sm font-semibold text-slate-900">
-                  已识别 {identifiedCount}/6 维
-                </div>
-                <div className="mt-1 text-xs text-slate-500">
-                  达到 6 维后自动启动个性化学习工作流
-                </div>
+                <div className="text-sm font-semibold text-slate-900">已识别 {identifiedCount}/6 维</div>
+                <div className="mt-1 text-xs text-slate-500">达到 6 维后自动启动个性化学习工作流</div>
               </div>
-              <Tag tone={isComplete ? 'green' : 'blue'}>
-                {isComplete ? '画像完整' : '收集中'}
-              </Tag>
+              <Tag tone={isComplete ? 'green' : 'blue'}>{isComplete ? '画像完整' : '收集中'}</Tag>
             </div>
             <div className="mt-3 h-2 rounded-full bg-slate-100">
               <div
-                className={`h-full rounded-full transition-all ${
-                  isComplete ? 'bg-emerald-500' : 'bg-[#003399]'
-                }`}
+                className={`h-full rounded-full transition-all ${isComplete ? 'bg-emerald-500' : 'bg-[#003399]'}`}
                 style={{ width: `${Math.min(100, (identifiedCount / 6) * 100)}%` }}
               />
             </div>
           </div>
 
           <div className="max-h-72 space-y-3 overflow-y-auto rounded-lg bg-slate-50 p-3">
-            {turns.map((turn, index) => (
+            {turns.map((turn) => (
               <div
-                key={`${turn.role}-${index}`}
-                className={`rounded-lg p-3 text-sm leading-6 ${
-                  turn.role === 'user'
-                    ? 'bg-white text-slate-700'
-                    : 'bg-blue-50 text-blue-900'
-                }`}
+                key={turn.id}
+                className={`rounded-lg p-3 text-sm leading-6 ${turnTone(turn.role)}`}
               >
-                {turn.role === 'assistant' && (
-                  <MessageSquareText className="mr-2 inline h-4 w-4" />
+                {turn.role === 'assistant' && <MessageSquareText className="mr-2 inline h-4 w-4" />}
+                {turn.role === 'challenge' && (
+                  <span className="mr-2 inline-flex items-center gap-1 rounded-full bg-rose-50 px-1.5 py-0.5 text-[10px] font-semibold text-rose-600">
+                    <ShieldCheck className="h-3 w-3" />
+                    挑战
+                  </span>
+                )}
+                {turn.role === 'challenge-result' && (
+                  <span className="mr-2 inline-flex items-center gap-1 rounded-full bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700">
+                    判定
+                  </span>
                 )}
                 {turn.content || '正在组织问题…'}
               </div>
@@ -253,19 +351,24 @@ export function PersonaBuilder({ userId = mockPersona.userId }: PersonaBuilderPr
           <div className="flex gap-2">
             <input
               className="min-w-0 flex-1 rounded-md border border-slate-200 px-3 py-2 text-sm"
-              placeholder="补充你的基础、目标或学习偏好"
-              value={input}
-              onChange={(event) => setInput(event.target.value)}
+              placeholder={activeChallenge ? '请回答挑战问题…' : '补充你的基础、目标或学习偏好'}
+              value={activeChallenge ? challengeAnswer : input}
+              onChange={(event) =>
+                activeChallenge ? setChallengeAnswer(event.target.value) : setInput(event.target.value)
+              }
               onKeyDown={(event) => {
-                if (event.key === 'Enter') submit();
+                if (event.key === 'Enter') {
+                  if (activeChallenge) finishChallenge(challengeAnswer.trim() || '我不太确定');
+                  else submit();
+                }
               }}
             />
             <button
               type="button"
-              onClick={submit}
+              onClick={() => (activeChallenge ? finishChallenge(challengeAnswer.trim() || '我不太确定') : submit())}
               disabled={streaming}
               className="inline-flex h-9 w-9 items-center justify-center rounded-md bg-[#003399] text-white disabled:cursor-not-allowed disabled:opacity-60"
-              aria-label="发送画像对话"
+              aria-label={activeChallenge ? '提交挑战答案' : '发送画像对话'}
             >
               <Send className="h-4 w-4" />
             </button>
@@ -273,37 +376,63 @@ export function PersonaBuilder({ userId = mockPersona.userId }: PersonaBuilderPr
         </div>
       </Card>
 
-      <Card title="六维画像" subtitle="A3 要求：对话式画像构建不少于 6 维">
-        <div className="grid gap-3">
-          {requiredDimensions.map((key) => {
-            const value = identified[key];
-            return (
-              <div
-                key={key}
-                className={`rounded-lg border p-3 transition-colors ${
-                  value
-                    ? 'border-emerald-200 bg-emerald-50/60'
-                    : 'border-slate-200 bg-slate-50'
-                }`}
-              >
-                <div className="mb-2 flex items-center justify-between gap-2">
-                  <span className="text-sm font-semibold text-slate-900">
-                    {dimensionLabels[key]}
-                  </span>
-                  {value ? (
-                    <CheckCircle2 className="h-4 w-4 text-emerald-600" aria-label="已识别" />
-                  ) : (
-                    <span className="text-xs text-slate-400">未识别</span>
-                  )}
-                </div>
-                <p className={`text-sm leading-6 ${value ? 'text-slate-700' : 'text-slate-400'}`}>
-                  {value || '等待对话补充'}
-                </p>
-              </div>
-            );
-          })}
+      <Card title="画像树" subtitle="径向布局 · 节点状态实时随对话刷新">
+        <PersonaTreeCanvas
+          studentName="小李"
+          studentInitial="李"
+          branches={branches}
+          highlightKey={recentlyUpdated}
+          onDimensionClick={(node) => setSelectedNode(node)}
+        />
+        <div className="mt-4 grid grid-cols-2 gap-2 text-[11px] text-slate-500">
+          <LegendDot color="#94a3b8" dashed label="未识别" />
+          <LegendDot color="#2563eb" label="已识别（中置信）" />
+          <LegendDot color="#10b981" label="已验证（高置信）" />
+          <LegendDot color="#ec4899" dashed label="待复核" />
         </div>
       </Card>
+
+      <PersonaDimensionDrawer
+        node={selectedNode}
+        conversationLookup={conversationLookup}
+        onClose={() => setSelectedNode(undefined)}
+      />
+    </div>
+  );
+}
+
+function turnTone(role: DialogueTurn['role']): string {
+  switch (role) {
+    case 'user':
+      return 'bg-white text-slate-700 border border-slate-100';
+    case 'assistant':
+      return 'bg-blue-50 text-blue-900';
+    case 'challenge':
+      return 'bg-rose-50 text-rose-900 border border-rose-100';
+    case 'challenge-answer':
+      return 'bg-white text-slate-700 border border-rose-100';
+    case 'challenge-result':
+      return 'bg-amber-50 text-amber-900 border border-amber-100';
+    default:
+      return 'bg-white text-slate-700';
+  }
+}
+
+function labelOf(dim: string): string {
+  return (personaDimensionLabels as Record<string, string>)[dim] ?? dim;
+}
+
+function LegendDot({ color, dashed, label }: { color: string; dashed?: boolean; label: string }) {
+  return (
+    <div className="flex items-center gap-1.5">
+      <span
+        className="inline-block h-3 w-3 rounded-full"
+        style={{
+          backgroundColor: `${color}33`,
+          border: `1.5px ${dashed ? 'dashed' : 'solid'} ${color}`,
+        }}
+      />
+      {label}
     </div>
   );
 }
