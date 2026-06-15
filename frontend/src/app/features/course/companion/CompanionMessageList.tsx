@@ -113,7 +113,7 @@ function EvidenceInline({ chunks }: { chunks: EvidenceChunkDTO[] }) {
             <span className="mr-1 font-medium text-brand-blue-700">
               {chunk.chapter ?? chunk.platform ?? '证据片段'}：
             </span>
-            {chunk.excerpt}
+            {chunk.chunk_text}
           </li>
         ))}
       </ul>
