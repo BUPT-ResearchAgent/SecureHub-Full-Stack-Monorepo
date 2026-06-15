@@ -11,6 +11,8 @@ import { useWorkflowRun } from '../workflow/useWorkflowRun';
 import { workflowById } from '../workflow/workflows';
 import type { WorkflowDefinition } from '../workflow/types';
 import { ResourceShowcaseTray } from './ResourceShowcaseTray';
+import { ScreenplayCueDeck } from '../resources/ScreenplayCueDeck';
+import { getScreenplay } from '@/lib/mock/resource-production.mock';
 
 export function CourseDialogueMode({ course }: { course: CourseCatalogItem }) {
   const [workflowId, setWorkflowId] = useState<WorkflowDefinition['id']>(course.defaultWorkflowId);
@@ -122,6 +124,12 @@ export function CourseDialogueMode({ course }: { course: CourseCatalogItem }) {
           onImageWorkflowRun={runImageAnalysisWorkflow}
           workflowCollapsed={!overlayOpen}
         />
+      )}
+
+      {workflowRun.state.phase === 'running' && (
+        <div className="pointer-events-none absolute left-1/2 top-4 z-20 w-[420px] -translate-x-1/2">
+          <ScreenplayCueDeck screenplay={getScreenplay('doc')} active />
+        </div>
       )}
 
       <ResourceShowcaseTray runState={workflowRun.state} />
