@@ -86,9 +86,16 @@ export function TeacherAssignments() {
               className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition-shadow hover:shadow-md"
             >
               <div className="border-b border-slate-100 px-4 py-3">
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between gap-2">
                   <p className="text-sm font-semibold text-slate-800">{a.title}</p>
-                  <StatusPill status={a.status} />
+                  <div className="flex shrink-0 items-center gap-1.5">
+                    {a.kind === 'persona_dialogue' && (
+                      <span className="inline-flex items-center gap-1 rounded-full bg-violet-100 px-2 py-0.5 text-[10px] font-medium text-violet-700">
+                        画像对话
+                      </span>
+                    )}
+                    <StatusPill status={a.status} />
+                  </div>
                 </div>
                 <p className="mt-1 text-[11px] text-slate-500">
                   {courseCatalog.find((c) => c.id === a.courseId)?.title ?? a.courseId} ·{' '}
@@ -104,17 +111,28 @@ export function TeacherAssignments() {
                   </span>
                 </div>
                 <div className="flex items-center justify-between">
-                  <span className="text-slate-500">提交 / 学生</span>
+                  <span className="text-slate-500">
+                    {a.kind === 'persona_dialogue' ? '已完成 / 班级' : '提交 / 学生'}
+                  </span>
                   <span className="text-slate-700">
                     {a.submittedCount} / {a.studentCount}
                   </span>
                 </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-slate-500">已批改 / 平均分</span>
-                  <span className="text-slate-700">
-                    {a.gradedCount} · {a.averageScore.toFixed(1)}
-                  </span>
-                </div>
+                {a.kind === 'persona_dialogue' ? (
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-500">在进行中 / 未开始</span>
+                    <span className="text-slate-700">
+                      {a.inProgressCount ?? 0} · {Math.max(0, a.studentCount - a.submittedCount - (a.inProgressCount ?? 0))}
+                    </span>
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-500">已批改 / 平均分</span>
+                    <span className="text-slate-700">
+                      {a.gradedCount} · {a.averageScore.toFixed(1)}
+                    </span>
+                  </div>
+                )}
                 <p className="text-slate-500 line-clamp-2">{a.description}</p>
                 <div className="flex justify-end gap-1.5 pt-1">
                   <button

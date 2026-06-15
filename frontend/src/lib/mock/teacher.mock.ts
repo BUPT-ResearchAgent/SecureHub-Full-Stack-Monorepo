@@ -474,6 +474,8 @@ function generateExtraQuizItems(): MockQuizItem[] {
   });
 }
 
+export type MockAssignmentKind = 'quiz' | 'persona_dialogue';
+
 export type MockAssignment = {
   id: string;
   title: string;
@@ -489,6 +491,9 @@ export type MockAssignment = {
   submittedCount: number;
   gradedCount: number;
   averageScore: number;
+  /** 4-B-3 新增：作业类型。默认 quiz；persona_dialogue 为画像对话作业。 */
+  kind?: MockAssignmentKind;
+  inProgressCount?: number;
 };
 
 export const MOCK_ASSIGNMENTS: MockAssignment[] = [
@@ -554,6 +559,24 @@ export const MOCK_ASSIGNMENTS: MockAssignment[] = [
     submittedCount: 29,
     gradedCount: 29,
     averageScore: 81.2,
+  },
+  {
+    id: 'as-persona-001',
+    title: '入学第 1 周 · 画像对话作业',
+    status: 'active',
+    courseId: 'web-security-foundation',
+    classId: 'class-23-1',
+    dueAt: '2026-06-21T15:59:00Z',
+    publishedAt: '2026-06-14T08:00:00Z',
+    description: '与画像助手完成一次 5 分钟的对话，让 AI 识别你的基础、目标和学习偏好。',
+    quizIds: [],
+    totalScore: 0,
+    studentCount: 32,
+    submittedCount: 18,
+    gradedCount: 18,
+    averageScore: 0,
+    kind: 'persona_dialogue',
+    inProgressCount: 7,
   },
   ...generateExtraAssignments(),
 ];

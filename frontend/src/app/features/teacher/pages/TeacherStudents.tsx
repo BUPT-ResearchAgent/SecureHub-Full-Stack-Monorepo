@@ -5,6 +5,8 @@ import { ArrowRight, BookOpen, MessageSquare, Search, Users } from 'lucide-react
 import { useActiveRole } from '../store';
 import { isTeacherRole } from '../roles';
 import { TeacherShell } from '../components/TeacherShell';
+import { ClassPersonaClusters } from '../components/ClassPersonaClusters';
+import { PersonaDimensionEditor } from '../components/PersonaDimensionEditor';
 import {
   MOCK_CLASSES,
   MOCK_RESEARCH_PROJECTS,
@@ -60,6 +62,8 @@ export function TeacherStudents() {
 
   return (
     <TeacherShell title="学生管理" subtitle="按身份视角查看名册 / 学习画像 / 当前项目">
+      <ClassPersonaClusters />
+
       <div className="flex flex-wrap items-center gap-2">
         <div className="relative">
           <Search className="absolute left-2.5 top-2 h-3.5 w-3.5 text-slate-400" />
@@ -140,6 +144,8 @@ export function TeacherStudents() {
           </tbody>
         </table>
       </div>
+
+      <PersonaDimensionEditor />
 
       {selected && (
         <div
