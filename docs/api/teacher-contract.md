@@ -356,4 +356,166 @@ SSE 事件链：
 
 ---
 
-> 维护：本文件改动需要同时同步 `frontend/src/lib/mock/teacher.mock.ts` 与 `frontend/src/app/features/teacher/`。
+## 8. 4-B-3 产品化升级新增端点
+
+> 由 4-B-3 引入。所有端点状态 = `planned`，mock fallback 在 `frontend/src/lib/mock/persona.mock.ts`、`resource-production.mock.ts`、`assessment-product.mock.ts`、`learning-path.mock.ts`。
+
+### 8.1 `GET /api/v1/teacher/class/clusters`
+班级画像聚类（气泡图数据）。
+
+Query：`class_id? · course_id?`
+
+Response：
+```json
+{
+  "clusters": [
+    {
+      "id": "cluster-case-driven",
+      "label": "案例驱动型",
+      "student_count": 18,
+      "axis_x": 0.55,
+      "axis_y": 0.72,
+      "dominant_dimension": "cognitive_style",
+      "student_ids": ["stu-1000"],
+      "color": "#2563eb"
+    }
+  ]
+}
+```
+
+触发的 agent skill：`career_planner.ClusterPersonas`。
+
+### 8.2 `POST /api/v1/teacher/persona/dimensions`
+教师自定义画像维度。
+
+Request：
+```json
+{
+  "course_id": "uuid",
+  "key": "research_interest",
+  "label": "科研兴趣",
+  "description": "...",
+  "challenges": [
+    {"prompt": "...", "expected_keywords": ["..."]}
+  ]
+}
+```
+
+Response：`{"dimension_id": "uuid"}`
+
+### 8.3 `POST /api/v1/teacher/courses/{course_id}/seed-prompt`
+课程级资源生成偏好（种子提示）。
+
+Request：
+```json
+{
+  "body": "## 本课程生成偏好\n- 风格：侧重红队思维\n...",
+  "tone_tags": ["红队思维", "案例驱动"]
+}
+```
+
+Response：`{"updated_at": "..."}`
+
+数据落地：写 `courses.metadata.seed_prompt`（jsonb）。
+
+### 8.4 `POST /api/v1/teacher/resources/{resource_id}/approve`
+教师批准学生生成的优质资源。
+
+Request：`{}`
+
+Response：`{"status": "approved", "approver": "teacher-wang", "approved_at": "..."}`
+
+数据落地：在 `generated_resources.metadata.approval` 写入；学生侧资源工作台顶部展示"教师推荐"badge。
+
+### 8.5 `POST /api/v1/teacher/students/{student_id}/path/insert`
+路径介入：为学生在路径中插入必修节点。
+
+Request：
+```json
+{
+  "node_label": "周五前完成 XX 实验",
+  "reason": "班级统一作业 | 临考冲刺 | 导师重点关注 | 基础查漏",
+  "due_at": "2026-06-21T15:59:00Z"
+}
+```
+
+Response：`{"insertion_id": "uuid", "delivered": true}`
+
+触发的 agent skill：`task_orchestrator.InsertTeacherNode`；学生侧 toast 通知。
+
+### 8.6 `GET /api/v1/teacher/class/health`
+班级学习健康度。
+
+Query：`class_id?`
+
+Response：
+```json
+{
+  "overall": 82,
+  "classification": "healthy | attention | risk",
+  "metrics": [
+    {"key": "activity", "label": "活跃度", "score": 86}
+  ],
+  "trend": [{"recorded_at": "...", "score": 78}]
+}
+```
+
+触发的 agent skill：`outcome_evaluator.ComputeClassHealth`。
+
+### 8.7 `GET /api/v1/teacher/students/at-risk`
+高风险学生预警。
+
+Query：`class_id? · level?`
+
+Response：
+```json
+{
+  "items": [
+    {
+      "student_id": "stu-1018",
+      "student_name": "李伟",
+      "level": "high",
+      "signals": [
+        {"kind": "declining", "label": "评估连续下滑", "detail": "72 → 65 → 54"}
+      ],
+      "last_activity_at": "...",
+      "suggested_action": "约 15 分钟一对一沟通"
+    }
+  ]
+}
+```
+
+触发的 agent skill：`outcome_evaluator.IdentifyAtRiskStudents`。
+
+### 8.8 `POST /api/v1/teacher/students/{student_id}/comment`
+教师评语注入学生画像。
+
+Request：
+```json
+{
+  "body": "学习态度很好，建议在密码学上深入。",
+  "dimension_tags": ["学习态度", "建议加深"],
+  "visible_to_student": true
+}
+```
+
+Response：`{"comment_id": "uuid", "persisted_dimension": "teacher_assessment"}`
+
+数据落地：写 `user_profiles.teacher_assessment` JSONB 子字段；触发 `career_planner.RefreshPersona`。
+
+---
+
+## 9. 4-B-3 新增端点状态汇总
+
+| 端点 | 实现状态 |
+|---|---|
+| §8.1 ~ §8.8 | 全部 planned，mock 已具备 |
+
+后端实现优先级建议（由成员 A 评估）：
+1. P0：§8.3 / §8.6 / §8.7 / §8.8 —— 教师"操控权 + 监督权"的关键
+2. P1：§8.1 / §8.5 / §8.4
+3. P2：§8.2
+
+---
+
+> 维护：本文件改动需要同时同步 `frontend/src/lib/mock/teacher.mock.ts` / `persona.mock.ts` / `resource-production.mock.ts` / `assessment-product.mock.ts` / `learning-path.mock.ts` 与 `frontend/src/app/features/teacher/`。
