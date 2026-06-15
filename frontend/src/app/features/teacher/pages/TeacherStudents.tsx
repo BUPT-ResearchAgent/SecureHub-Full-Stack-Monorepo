@@ -8,6 +8,9 @@ import { TeacherShell } from '../components/TeacherShell';
 import { ClassPersonaClusters } from '../components/ClassPersonaClusters';
 import { PersonaDimensionEditor } from '../components/PersonaDimensionEditor';
 import { PathInterventionPanel } from '../components/PathInterventionPanel';
+import { TeacherCommentInjector } from '../components/TeacherCommentInjector';
+import { CapabilityRadarCard } from '@/app/features/profile/components/CapabilityRadarCard';
+import type { CapabilityDTO } from '@/lib/sse.types';
 import {
   MOCK_CLASSES,
   MOCK_RESEARCH_PROJECTS,
@@ -23,6 +26,30 @@ const CAPS: { key: keyof MockStudent['capability']; label: string }[] = [
   { key: 'governance', label: '安全治理' },
   { key: 'ai_security', label: 'AI 安全' },
 ];
+
+function toCapabilityDTOs(student: MockStudent): CapabilityDTO[] {
+  return CAPS.map((cap) => ({
+    dimension: cap.label,
+    score: student.capability[cap.key],
+    confidence: 0.55 + (student.capability[cap.key] - 0.4) * 0.5,
+    evidence_count: Math.max(1, Math.round(student.capability[cap.key] * 6)),
+  }));
+}
+
+function buildClassMedianOverlay() {
+  const scores = CAPS.reduce<Record<string, number>>((acc, cap) => {
+    const all = MOCK_STUDENTS.map((s) => s.capability[cap.key]);
+    const sorted = [...all].sort((a, b) => a - b);
+    acc[cap.label] = sorted[Math.floor(sorted.length / 2)];
+    return acc;
+  }, {});
+  return {
+    label: '班级中位数',
+    scores,
+    color: '#94a3b8',
+    dashed: true,
+  };
+}
 
 function CapBars({ student }: { student: MockStudent }) {
   return (
@@ -178,9 +205,15 @@ export function TeacherStudents() {
             <section>
               <h3 className="mb-2 flex items-center gap-1 text-xs font-semibold text-slate-700">
                 <Users className="h-3 w-3" />
-                能力雷达（6 维）
+                能力雷达（6 维 · 叠加班级中位数）
               </h3>
-              <CapBars student={selected} />
+              <CapabilityRadarCard
+                capabilities={toCapabilityDTOs(selected)}
+                overlay={buildClassMedianOverlay()}
+              />
+              <div className="mt-2">
+                <CapBars student={selected} />
+              </div>
             </section>
             <section>
               <h3 className="mb-2 flex items-center gap-1 text-xs font-semibold text-slate-700">
@@ -204,6 +237,9 @@ export function TeacherStudents() {
             </section>
             <section>
               <PathInterventionPanel studentId={selected.id} studentName={selected.name} />
+            </section>
+            <section>
+              <TeacherCommentInjector studentId={selected.id} studentName={selected.name} />
             </section>
             {MOCK_RESEARCH_PROJECTS.find((p) => p.studentId === selected.id) && (
               <section>

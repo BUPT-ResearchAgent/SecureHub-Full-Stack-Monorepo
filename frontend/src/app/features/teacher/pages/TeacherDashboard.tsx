@@ -42,6 +42,8 @@ import { useActiveRole } from '../store';
 import { TeacherShell } from '../components/TeacherShell';
 import { isTeacherRole } from '../roles';
 import { ResourceSupervisionStream } from '../components/ResourceSupervisionStream';
+import { ClassHealthGauge } from '../components/ClassHealthGauge';
+import { AtRiskAlertList } from '../components/AtRiskAlertList';
 
 type KpiCard = {
   label: string;
@@ -241,6 +243,10 @@ function CourseTeacherDashboard() {
             <KnowledgeStruggleHeatBar />
           </div>
         </section>
+      </div>
+      <div className="grid gap-4 xl:grid-cols-[1fr_1.3fr]">
+        <ClassHealthGauge />
+        <AtRiskAlertList />
       </div>
       <ResourceSupervisionStream />
       <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
