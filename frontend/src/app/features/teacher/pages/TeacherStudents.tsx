@@ -7,6 +7,7 @@ import { isTeacherRole } from '../roles';
 import { TeacherShell } from '../components/TeacherShell';
 import { ClassPersonaClusters } from '../components/ClassPersonaClusters';
 import { PersonaDimensionEditor } from '../components/PersonaDimensionEditor';
+import { PathInterventionPanel } from '../components/PathInterventionPanel';
 import {
   MOCK_CLASSES,
   MOCK_RESEARCH_PROJECTS,
@@ -200,6 +201,9 @@ export function TeacherStudents() {
                 <li>提交作业《OWASP Top 10 复盘》</li>
                 <li>与学习助手对话 {selected.agentRuns} 次</li>
               </ul>
+            </section>
+            <section>
+              <PathInterventionPanel studentId={selected.id} studentName={selected.name} />
             </section>
             {MOCK_RESEARCH_PROJECTS.find((p) => p.studentId === selected.id) && (
               <section>
