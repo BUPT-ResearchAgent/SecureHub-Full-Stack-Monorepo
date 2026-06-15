@@ -11,7 +11,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
-import { Activity, CheckCircle2, Sparkles } from 'lucide-react';
+import { Activity, Award, CheckCircle2, Sparkles } from 'lucide-react';
 import { toast } from 'sonner';
 import { Card } from '@/app/components/PageShell';
 import { ErrorState } from '@/app/components/StateView';
@@ -52,6 +52,8 @@ export function AssessmentPanel() {
   const [error, setError] = useState('');
   const [events, setEvents] = useState<LoopEvent[]>([]);
   const [animatedScore, setAnimatedScore] = useState(0);
+  const [xpBurst, setXpBurst] = useState(false);
+  const [badgeReveal, setBadgeReveal] = useState(false);
   const timersRef = useRef<number[]>([]);
 
   // 切换课程时清掉旧答题状态。
@@ -59,6 +61,8 @@ export function AssessmentPanel() {
     setAnswers({});
     setEvents([]);
     setAnimatedScore(0);
+    setXpBurst(false);
+    setBadgeReveal(false);
   }, [course.id]);
 
   const selectedCapabilities = useMemo<CapabilityDTO[]>(
@@ -101,6 +105,8 @@ export function AssessmentPanel() {
     setError('');
     setEvents([]);
     setAnimatedScore(0);
+    setXpBurst(false);
+    setBadgeReveal(false);
 
     // 1. 评分前先把每题的判分事件流出去（更像「学习日志」）。
     const correctCount = questions.reduce((sum, question) => {
@@ -151,8 +157,15 @@ export function AssessmentPanel() {
           text: `🔄 outcome_evaluator.UpdateCapability：正在更新能力维度「${firstDim}」`,
         });
         toast.success(`正在更新能力维度 ${firstDim}…`, { duration: 1800 });
+        toast.success('+50 XP · 学习效果评估', { duration: 1600 });
+        setXpBurst(true);
+        if (report.score >= 0.8) setBadgeReveal(true);
       }, 1800);
       timersRef.current.push(capabilityTimer);
+
+      const xpTimer = window.setTimeout(() => setXpBurst(false), 3000);
+      const badgeTimer = window.setTimeout(() => setBadgeReveal(false), 3300);
+      timersRef.current.push(xpTimer, badgeTimer);
 
       // 4. 1.5s 后跳到 /profile?tab=persona&highlight=<dim>。
       const navigateTimer = window.setTimeout(() => {
@@ -179,7 +192,8 @@ export function AssessmentPanel() {
   const score = Math.round((assessment?.score ?? 0) * 100);
 
   return (
-    <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_420px]">
+    <>
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_420px]">
       <Card title="学习效果评估" subtitle="完成题目后回流 outcome_evaluator 更新能力画像">
         <div className="space-y-4">
           {questions.map((question, index) => (
@@ -275,7 +289,63 @@ export function AssessmentPanel() {
         </Card>
         <CapabilityRadarCard capabilities={selectedCapabilities} />
       </div>
-    </div>
+      </div>
+      <AnimatePresence>
+        {xpBurst && (
+          <motion.div
+            initial={{ opacity: 0, y: 18, scale: 0.94 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 12, scale: 0.96 }}
+            transition={{ duration: 0.28, ease: 'easeOut' }}
+            className="fixed bottom-8 right-8 z-50 rounded-2xl border border-amber-200 bg-white px-4 py-3 text-sm font-semibold text-amber-700 shadow-2xl"
+          >
+            <Sparkles className="mr-1.5 inline h-4 w-4" />
+            +50 XP
+          </motion.div>
+        )}
+      </AnimatePresence>
+      <AnimatePresence>
+        {badgeReveal && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-40 grid place-items-center bg-slate-950/35 backdrop-blur-sm"
+          >
+            <div className="pointer-events-none absolute inset-0 overflow-hidden">
+              {Array.from({ length: 18 }, (_, index) => (
+                <motion.span
+                  key={index}
+                  initial={{ opacity: 0, y: -20, x: 0, rotate: 0 }}
+                  animate={{
+                    opacity: [0, 1, 0],
+                    y: [0, 180 + (index % 5) * 18],
+                    x: (index - 9) * 22,
+                    rotate: 160 + index * 18,
+                  }}
+                  transition={{ duration: 1.7, delay: index * 0.025, ease: 'easeOut' }}
+                  className="absolute left-1/2 top-1/3 h-2.5 w-2.5 rounded-sm bg-amber-300"
+                />
+              ))}
+            </div>
+            <motion.div
+              initial={{ y: 18, scale: 0.9 }}
+              animate={{ y: 0, scale: 1 }}
+              exit={{ y: 12, scale: 0.95 }}
+              transition={{ duration: 0.3, ease: 'easeOut' }}
+              className="relative w-[320px] rounded-3xl border border-amber-100 bg-white p-6 text-center shadow-2xl"
+            >
+              <div className="mx-auto grid h-16 w-16 place-items-center rounded-2xl bg-amber-50 text-amber-600">
+                <Award className="h-8 w-8" />
+              </div>
+              <p className="mt-4 text-xs font-medium text-amber-600">徽章解锁</p>
+              <h3 className="mt-1 text-xl font-semibold text-slate-950">满分荣耀</h3>
+              <p className="mt-2 text-sm text-slate-500">评估表现优秀，能力画像已回流更新。</p>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </>
   );
 }
 

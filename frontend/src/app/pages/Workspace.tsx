@@ -21,6 +21,7 @@ import {
   Server,
   ShieldCheck,
   Sparkles,
+  Trophy,
 } from 'lucide-react';
 import { listAgentRuns } from '@/app/features/agents/api';
 import {
@@ -32,6 +33,7 @@ import { getMyProfile, listGeneratedResources } from '@/app/features/profile/api
 import { formatCreatedAt, formatDuration, formatQuality } from '@/app/features/agents/utils';
 import { API_BASE_URL } from '@/lib/api';
 import { ENDPOINT_AUDIT, STATUS_TONE } from '@/lib/api-audit';
+import { MOCK_LEARNING_EVENTS, calculateXp, getLevel, getTodayXp, getWeekXp } from '@/lib/gamification';
 import { courseDemoStoryline } from '@/lib/mock/storyline';
 import type { AgentRunDTO, CapabilityDTO, GeneratedResourceDTO, ResourceType } from '@/lib/sse.types';
 
@@ -80,13 +82,16 @@ export function Workspace() {
         subtitle="A3 多智能体个性化学习的工作台入口 · 课程进度、生成资源、智能体活动与能力画像一屏可见"
       />
 
-      <TodayCourseCard
-        courseId={activeCourse.id}
-        onContinue={() => navigate(`/course?courseId=${activeCourse.id}&view=chat`)}
-        onSwitchCourse={() => navigate('/course')}
-        onAssess={() => navigate(`/course?courseId=${activeCourse.id}&view=structured&tab=assess`)}
-        onViewPath={() => navigate(`/course?courseId=${activeCourse.id}&view=structured&tab=path`)}
-      />
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_280px]">
+        <TodayCourseCard
+          courseId={activeCourse.id}
+          onContinue={() => navigate(`/course?courseId=${activeCourse.id}&view=chat`)}
+          onSwitchCourse={() => navigate('/course')}
+          onAssess={() => navigate(`/course?courseId=${activeCourse.id}&view=structured&tab=assess`)}
+          onViewPath={() => navigate(`/course?courseId=${activeCourse.id}&view=structured&tab=path`)}
+        />
+        <TodayXpCard />
+      </div>
 
       <div className="grid gap-4 xl:grid-cols-3 lg:grid-cols-2">
         <RecentResourcesCard onOpen={() => navigate('/profile?tab=resources')} />
@@ -100,6 +105,44 @@ export function Workspace() {
         </div>
       </div>
     </div>
+  );
+}
+
+function TodayXpCard() {
+  const totalXp = calculateXp(MOCK_LEARNING_EVENTS);
+  const todayXp = getTodayXp(MOCK_LEARNING_EVENTS);
+  const weekXp = getWeekXp(MOCK_LEARNING_EVENTS);
+  const level = getLevel(totalXp);
+  const remaining = Math.max(0, level.nextLevelXp - level.currentXp);
+  const progress = Math.min(100, Math.round((level.currentXp / level.nextLevelXp) * 100));
+
+  return (
+    <motion.section
+      initial={{ opacity: 0, y: 6 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.3, ease: 'easeOut', delay: 0.04 }}
+      className="rounded-2xl border border-amber-100 bg-white p-4 shadow-sm"
+    >
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <p className="text-xs font-medium text-slate-500">今日 XP</p>
+          <p className="mt-1 text-3xl font-semibold text-slate-950">+{todayXp}</p>
+        </div>
+        <div className="grid h-11 w-11 place-items-center rounded-2xl bg-amber-50 text-amber-600">
+          <Trophy className="h-5 w-5" />
+        </div>
+      </div>
+      <div className="mt-4 space-y-2">
+        <div className="flex items-center justify-between text-xs text-slate-500">
+          <span>本周 +{weekXp} XP</span>
+          <span>Lv {level.level} · {level.title}</span>
+        </div>
+        <div className="h-2 overflow-hidden rounded-full bg-slate-100">
+          <div className="h-full rounded-full bg-amber-500" style={{ width: `${progress}%` }} />
+        </div>
+        <p className="text-[11px] text-slate-400">距离下一级还差 {remaining} XP</p>
+      </div>
+    </motion.section>
   );
 }
 

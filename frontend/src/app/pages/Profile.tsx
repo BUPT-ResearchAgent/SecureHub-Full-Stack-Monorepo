@@ -12,6 +12,7 @@ import { PersonaPanel } from '../features/profile/components/PersonaPanel';
 import { ProfileEditDrawer } from '../features/profile/components/ProfileEditDrawer';
 import { ProfileWorkbenchBar } from '../features/profile/components/ProfileWorkbenchBar';
 import { GeneratedResourceHistory } from '../features/profile/components/GeneratedResourceHistory';
+import { GamificationCard } from '../features/profile/components/GamificationCard';
 import { SubmitChecklistPanel } from '../features/profile/components/SubmitChecklistPanel';
 import { useAuth } from '../features/auth/store';
 import { getMyProfile } from '../features/profile/api';
@@ -53,6 +54,9 @@ export function Profile() {
     dispatch({ type: 'addAsset', asset: createMockAsset('document', workspace.user.displayName) });
     toast.success('已模拟上传资产');
   };
+
+  const displayName = user?.display_name || workspace.user.displayName || '用户';
+  const avatarText = displayName.trim().slice(0, 1) || '学';
 
   const exportProfileData = () => {
     const fileName = `profile-workspace-${new Date().toISOString().slice(0, 10)}.json`;
@@ -116,6 +120,7 @@ export function Profile() {
                   <ErrorState message={profileError} onRetry={loadProfile} />
                 ) : (
                   <>
+                    <GamificationCard displayName={displayName} avatarText={avatarText} />
                     <ProfileWorkbenchBar workspace={workspace} onSave={save} onReset={reset} />
                     <PersonaPanel
                       workspace={workspace}
