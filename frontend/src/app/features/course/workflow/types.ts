@@ -43,7 +43,7 @@ export type WorkflowEdge = {
 };
 
 export type WorkflowDefinition = {
-  id: 'course_learning' | 'tutor_routing' | 'resource_generate' | 'assessment_run';
+  id: 'course_learning' | 'tutor_routing' | 'resource_generate' | 'assessment_run' | 'image_analysis';
   name: string;
   description: string;
   nodes: WorkflowNode[];

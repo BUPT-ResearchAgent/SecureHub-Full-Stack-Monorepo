@@ -248,6 +248,29 @@ export function createMockReplaySteps(workflowId: WorkflowDefinition['id']): Wor
     ];
   }
 
+  if (workflowId === 'image_analysis') {
+    return [
+      nodePatch(120, 'career_planner', 'running', 'RouteMultimodalIntent'),
+      nodePatch(900, 'career_planner', 'success', 'RouteMultimodalIntent', successExtra(780, 0.84)),
+      edgeStep(1050, 'career-doc', 'active'),
+      edgeStep(1300, 'career-doc', 'done'),
+      nodePatch(1400, 'doc_archivist', 'running', 'OcrAndStructure'),
+      nodePatch(3000, 'doc_archivist', 'success', 'OcrAndStructure', successExtra(1600, 0.86)),
+      edgeStep(3200, 'doc-topic', 'active'),
+      edgeStep(3500, 'doc-topic', 'done'),
+      nodePatch(3600, 'topic_explorer', 'running', 'AnalyzeCodeOrConcept'),
+      nodePatch(5000, 'topic_explorer', 'success', 'AnalyzeCodeOrConcept', successExtra(1400, 0.88)),
+      edgeStep(5200, 'topic-outcome', 'active'),
+      edgeStep(5400, 'doc-outcome', 'active'),
+      edgeStep(5600, 'topic-outcome', 'done'),
+      edgeStep(5700, 'doc-outcome', 'done'),
+      nodePatch(5800, 'outcome_evaluator', 'running', 'QualityCheck'),
+      nodePatch(6900, 'outcome_evaluator', 'success', 'QualityCheck', successExtra(1100, 0.88)),
+      { at: 7000, type: 'quality', score: 0.88 },
+      { at: 7300, type: 'phase', phase: 'done' },
+    ];
+  }
+
   if (workflowId === 'assessment_run') {
     return [
       nodePatch(120, 'competition_advisor', 'running', 'GenerateQuiz'),

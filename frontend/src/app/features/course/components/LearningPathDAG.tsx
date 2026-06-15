@@ -1,50 +1,50 @@
-import ReactFlow, { Background, Controls, MiniMap, type Edge, type Node } from 'reactflow';
-import 'reactflow/dist/style.css';
+// Status: partial-real
+// 4-B-3 升级：从单条路径升级为「3 候选路径 + 难度热力 + 导师标注 + 动态重规划 + 资源推送时间轴」。
+// 入口处仍保持向后兼容（仍可通过 store.path 显示原有数据）。
+
+import { useMemo, useState } from 'react';
 import { Card, Tag } from '@/app/components/PageShell';
-import { useCourseDispatch, useCourseState } from '../store';
+import { useCourseState } from '../store';
+import { CandidatePathSelector } from '../path/CandidatePathSelector';
+import { CandidatePathGraph } from '../path/CandidatePathGraph';
+import { PathReplanAnimation } from '../path/PathReplanAnimation';
+import { PushTimeline } from '../path/PushTimeline';
+import { buildCandidatePaths } from '@/lib/mock/learning-path.mock';
 
 export interface LearningPathDAGProps {
   courseId?: string;
 }
 
 export function LearningPathDAG({ courseId }: LearningPathDAGProps) {
-  const { path, currentKpId } = useCourseState();
-  const dispatch = useCourseDispatch();
-  const currentPath = path;
-  const nodes: Node[] = (currentPath?.nodes ?? []).map((node, index) => ({
-    id: node.id,
-    position: { x: index * 210, y: index % 2 === 0 ? 40 : 150 },
-    data: { label: node.label },
-    className: node.id === currentKpId ? 'border-2 border-blue-500 rounded-md' : 'rounded-md',
-  }));
-  const edges: Edge[] = (currentPath?.edges ?? []).map((edge) => ({
-    id: edge.id,
-    source: edge.source,
-    target: edge.target,
-    animated: edge.target === currentKpId,
-  }));
+  const { path } = useCourseState();
+  const candidatePaths = useMemo(() => buildCandidatePaths(), []);
+  const [selectedId, setSelectedId] = useState<string>(candidatePaths[0].id);
+
+  const selectedPath = candidatePaths.find((p) => p.id === selectedId) ?? candidatePaths[0];
 
   return (
-    <Card title="学习路径图谱" subtitle={`当前课程：${courseId ?? currentPath?.courseId ?? 'Web 安全基础'}`}>
-      <div className="h-[420px] overflow-hidden rounded-lg border border-slate-200">
-        <ReactFlow
-          nodes={nodes}
-          edges={edges}
-          fitView
-          onNodeClick={(_, node) => dispatch({ type: 'setCurrentKp', kpId: node.id })}
-        >
-          <MiniMap pannable zoomable />
-          <Controls />
-          <Background />
-        </ReactFlow>
-      </div>
-      <div className="mt-4 flex flex-wrap gap-2">
-        {(currentPath?.milestones ?? []).map((milestone) => (
-          <Tag key={milestone.id} tone="blue">
-            第 {milestone.week} 周：{milestone.title}
-          </Tag>
-        ))}
-      </div>
-    </Card>
+    <div className="space-y-4">
+      <Card
+        title="学习路径图谱"
+        subtitle={`当前课程：${courseId ?? path?.courseId ?? 'Web 安全基础'} · AI 为你准备了 3 条候选路径`}
+      >
+        <CandidatePathSelector
+          paths={candidatePaths}
+          selectedId={selectedId}
+          onSelect={(id) => setSelectedId(id)}
+        />
+        <div className="mt-4">
+          <CandidatePathGraph path={selectedPath} />
+        </div>
+        <div className="mt-3 flex flex-wrap gap-2">
+          <Tag tone="blue">共 {selectedPath.nodes.length} 个节点</Tag>
+          <Tag tone="green">推荐给：{selectedPath.recommendedForPersona.join(' / ')}</Tag>
+        </div>
+      </Card>
+
+      <PathReplanAnimation />
+
+      <PushTimeline />
+    </div>
   );
 }

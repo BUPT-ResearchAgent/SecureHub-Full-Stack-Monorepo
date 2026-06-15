@@ -20,6 +20,46 @@ const Careers = lazy(() => import('@/app/pages/Careers').then((module) => ({ def
 const Tasks = lazy(() => import('@/app/pages/Tasks').then((module) => ({ default: module.Tasks })));
 const Profile = lazy(() => import('@/app/pages/Profile').then((module) => ({ default: module.Profile })));
 
+const TeacherLayout = lazy(() =>
+  import('@/app/features/teacher/TeacherLayout').then((m) => ({ default: m.TeacherLayout })),
+);
+const TeacherDashboard = lazy(() =>
+  import('@/app/features/teacher/pages/TeacherDashboard').then((m) => ({ default: m.TeacherDashboard })),
+);
+const TeacherCourses = lazy(() =>
+  import('@/app/features/teacher/pages/TeacherCourses').then((m) => ({ default: m.TeacherCourses })),
+);
+const TeacherMaterials = lazy(() =>
+  import('@/app/features/teacher/pages/TeacherMaterials').then((m) => ({ default: m.TeacherMaterials })),
+);
+const TeacherQuizBank = lazy(() =>
+  import('@/app/features/teacher/pages/TeacherQuizBank').then((m) => ({ default: m.TeacherQuizBank })),
+);
+const TeacherAssignments = lazy(() =>
+  import('@/app/features/teacher/pages/TeacherAssignments').then((m) => ({ default: m.TeacherAssignments })),
+);
+const TeacherStudents = lazy(() =>
+  import('@/app/features/teacher/pages/TeacherStudents').then((m) => ({ default: m.TeacherStudents })),
+);
+const TeacherResearch = lazy(() =>
+  import('@/app/features/teacher/pages/TeacherResearch').then((m) => ({ default: m.TeacherResearch })),
+);
+const TeacherCareerMentoring = lazy(() =>
+  import('@/app/features/teacher/pages/TeacherCareerMentoring').then((m) => ({ default: m.TeacherCareerMentoring })),
+);
+const TeacherNotices = lazy(() =>
+  import('@/app/features/teacher/pages/TeacherNotices').then((m) => ({ default: m.TeacherNotices })),
+);
+const TeacherProfile = lazy(() =>
+  import('@/app/features/teacher/pages/TeacherProfile').then((m) => ({ default: m.TeacherProfile })),
+);
+const Showcase = lazy(() =>
+  import('@/app/features/showcase/ShowcaseCatalog').then((m) => ({ default: m.ShowcaseCatalog })),
+);
+const ShowcasePlay = lazy(() =>
+  import('@/app/features/showcase/ShowcasePlay').then((m) => ({ default: m.ShowcasePlay })),
+);
+
 function lazyPage(children: ReactNode) {
   return <Suspense fallback={<LoadingState text="页面加载中…" />}>{children}</Suspense>;
 }
@@ -51,6 +91,26 @@ export default function App() {
             <Route path="/profile" element={lazyPage(<Profile />)} />
             <Route path="/home" element={<Navigate to="/workspace" replace />} />
           </Route>
+          <Route
+            element={
+              <ProtectedRoute>
+                {lazyPage(<TeacherLayout />)}
+              </ProtectedRoute>
+            }
+          >
+            <Route path="/teacher" element={lazyPage(<TeacherDashboard />)} />
+            <Route path="/teacher/courses" element={lazyPage(<TeacherCourses />)} />
+            <Route path="/teacher/materials" element={lazyPage(<TeacherMaterials />)} />
+            <Route path="/teacher/quiz-bank" element={lazyPage(<TeacherQuizBank />)} />
+            <Route path="/teacher/assignments" element={lazyPage(<TeacherAssignments />)} />
+            <Route path="/teacher/students" element={lazyPage(<TeacherStudents />)} />
+            <Route path="/teacher/research" element={lazyPage(<TeacherResearch />)} />
+            <Route path="/teacher/career-mentoring" element={lazyPage(<TeacherCareerMentoring />)} />
+            <Route path="/teacher/notices" element={lazyPage(<TeacherNotices />)} />
+            <Route path="/teacher/profile" element={lazyPage(<TeacherProfile />)} />
+          </Route>
+          <Route path="/showcase" element={<ProtectedRoute>{lazyPage(<Showcase />)}</ProtectedRoute>} />
+          <Route path="/showcase/play/:sceneId" element={<ProtectedRoute>{lazyPage(<ShowcasePlay />)}</ProtectedRoute>} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
         <Toaster richColors position="top-right" />

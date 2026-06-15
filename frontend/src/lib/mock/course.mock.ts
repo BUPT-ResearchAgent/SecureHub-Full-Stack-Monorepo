@@ -3,10 +3,21 @@ import type { SSEHandlers } from '@/lib/sse';
 import type { ResourceType, SSEEvent } from '@/lib/sse.types';
 import type { AssessmentReport } from '@/app/features/course/types';
 import { mockAgentRuns } from './agents.mock';
-import { mockEvidenceChunks } from './evidence.mock';
+import { getMockEvidenceForCourse } from './courses.mock';
 import { mockResourceContent, mockResourceTitle } from './resources.mock';
 import { replaySSEEvents } from './sse-replay';
 import { demoCurrentKpId } from './storyline';
+
+let currentCourseHint: string | undefined;
+
+/**
+ * 4-B-1：让 mock 回放感知到当前课程，从而在 SSE 里推送对应主题的 evidence。
+ * LearningCompanionPanel / CourseEntryCard 在切换课程时调用一次即可；
+ * 没设置时统一回退到 Web 安全课程。
+ */
+export function setMockCourseContext(courseId: string | undefined | null) {
+  currentCourseHint = courseId ?? undefined;
+}
 
 export const mockCourse = {
   id: '00000000-0000-0000-0000-000000000101',
@@ -57,7 +68,7 @@ function buildStream(type: ResourceType): SSEEvent[] {
     { event: 'progress', data: { node_name: 'retrieve', agent_id: run.agent_name, skill_id: run.skill_name, percentage: 32, status: 'running' } },
     { event: 'progress', data: { node_name: 'compose', agent_id: run.agent_name, skill_id: run.skill_name, percentage: 48, status: 'running' } },
     { event: 'progress', data: { node_name: 'quality_check', agent_id: 'outcome_evaluator', skill_id: 'QualityCheck', percentage: 76, status: 'running' } },
-    { event: 'evidence', data: mockEvidenceChunks },
+    { event: 'evidence', data: getMockEvidenceForCourse(currentCourseHint) },
     ...tokenEvents(mockResourceContent[type]),
     {
       event: 'artifact',
@@ -101,7 +112,7 @@ export function replayPersonaChat(message: string, handlers: SSEHandlers): () =>
   ].join('');
   return replaySSEEvents([
     { event: 'progress', data: { node_name: 'persona_dialogue', agent_id: 'career_planner', skill_id: 'BuildLearningPersona', percentage: 25, status: 'running' } },
-    { event: 'evidence', data: mockEvidenceChunks.slice(0, 2) },
+    { event: 'evidence', data: getMockEvidenceForCourse(currentCourseHint).slice(0, 2) },
     ...tokenEvents(content).slice(0, 12),
     { event: 'trace', data: { ...mockAgentRuns[0], run_id: 'mock-persona-run', status: 'success' } },
     { event: 'done', data: { run_id: 'mock-persona-run', final_output_ref: 'user_profiles/mock', quality_score: 0.87 } },
@@ -112,7 +123,7 @@ export function replayTutorAsk(question: string, handlers: SSEHandlers): () => v
   const content = `当前学习：SQL 注入基础。针对“${question}”，可以先判断用户输入是否被拼进查询，再用参数化查询修复；证据面板会保留 OWASP、PortSwigger 和视频转写来源。`;
   return replaySSEEvents([
     { event: 'progress', data: { node_name: 'route', agent_id: 'career_planner', skill_id: 'RouteTutorQuestion', percentage: 20, status: 'running' } },
-    { event: 'evidence', data: mockEvidenceChunks },
+    { event: 'evidence', data: getMockEvidenceForCourse(currentCourseHint) },
     ...tokenEvents(content).slice(0, 16),
     { event: 'trace', data: { run_id: 'mock-tutor-run', workflow_name: 'course_learning', agent_name: 'career_planner', skill_name: 'RouteTutorQuestion', status: 'success', duration_ms: 1260, quality_score: 0.84, created_at: new Date().toISOString() } },
     { event: 'done', data: { run_id: 'mock-tutor-run', final_output_ref: 'agent_messages/mock-tutor', quality_score: 0.84 } },

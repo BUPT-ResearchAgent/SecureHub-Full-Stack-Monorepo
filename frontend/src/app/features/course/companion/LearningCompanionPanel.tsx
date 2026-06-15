@@ -1,16 +1,19 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Bot, PanelRightOpen } from 'lucide-react';
+import { toast } from 'sonner';
 import { useEvidence } from '@/app/components/EvidenceDrawer';
 import { cn } from '@/app/components/ui/utils';
 import { useAgentTraceDispatch } from '@/app/features/agents/store';
+import { analyzeImage } from '@/lib/api';
 import { isMockMode } from '@/lib/mock';
-import { mockEvidenceChunks } from '@/lib/mock/evidence.mock';
+import { getMockEvidenceForCourse } from '@/lib/mock/courses.mock';
 import type { AgentRunDTO } from '@/lib/sse.types';
 import type { CourseCatalogItem } from '../catalog/courseCatalog.types';
 import { streamPersonaChat } from '../api';
 import { CompanionComposer } from './CompanionComposer';
-import { CompanionMessageList, type CompanionMessage } from './CompanionMessageList';
+import { CompanionMessageList } from './CompanionMessageList';
 import { getCompanionPreset } from './companionPresets';
+import type { CompanionAttachment, CompanionMessage } from './types';
 
 const userId = '00000000-0000-0000-0000-000000000001';
 
@@ -31,6 +34,7 @@ export function LearningCompanionPanel({
   onExternalWorkflowBegin,
   onWorkflowTrace,
   onShowWorkflow,
+  onImageWorkflowRun,
   workflowCollapsed,
   className,
 }: {
@@ -40,6 +44,7 @@ export function LearningCompanionPanel({
   onWorkflowTrace: (run: AgentRunDTO) => void;
   /** Chat-first：右侧编排图折叠时，header 显示「显示编排图」入口。 */
   onShowWorkflow?: () => void;
+  onImageWorkflowRun?: () => void;
   workflowCollapsed?: boolean;
   className?: string;
 }) {
@@ -50,7 +55,9 @@ export function LearningCompanionPanel({
   const traceDispatch = useAgentTraceDispatch();
   const streamCancelRef = useRef<(() => void) | undefined>();
   const timersRef = useRef<number[]>([]);
+  const objectUrlsRef = useRef<string[]>([]);
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const [attachments, setAttachments] = useState<CompanionAttachment[]>([]);
   const [messages, setMessages] = useState<CompanionMessage[]>(() => [
     {
       id: 'assistant-intro',
@@ -68,6 +75,9 @@ export function LearningCompanionPanel({
     timersRef.current = [];
     setIsGenerating(false);
     setDraft('');
+    setAttachments([]);
+    objectUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
+    objectUrlsRef.current = [];
     setMessages([
       {
         id: `assistant-intro-${course.id}`,
@@ -87,6 +97,7 @@ export function LearningCompanionPanel({
     () => () => {
       streamCancelRef.current?.();
       timersRef.current.forEach((timer) => window.clearTimeout(timer));
+      objectUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
     },
     [],
   );
@@ -100,18 +111,8 @@ export function LearningCompanionPanel({
     );
   };
 
-  const runMockAnswer = (assistantId: string) => {
-    timersRef.current.forEach((timer) => window.clearTimeout(timer));
-    timersRef.current = [];
-    onMockWorkflowRun();
-
-    const evidenceTimer = window.setTimeout(() => {
-      evidence.pushEvidence(mockEvidenceChunks);
-      updateAssistant(assistantId, (message) => ({ ...message, evidence: mockEvidenceChunks }));
-    }, 1400);
-    timersRef.current.push(evidenceTimer);
-
-    const tokens = splitTokens(preset.mockAnswer);
+  const streamAssistantText = (assistantId: string, content: string, startAt = 1900) => {
+    const tokens = splitTokens(content);
     tokens.forEach((token, index) => {
       const timer = window.setTimeout(() => {
         updateAssistant(assistantId, (message) => ({
@@ -120,26 +121,113 @@ export function LearningCompanionPanel({
           status: index === tokens.length - 1 ? 'done' : 'generating',
         }));
         if (index === tokens.length - 1) setIsGenerating(false);
-      }, 1900 + index * 140);
+      }, startAt + index * 140);
       timersRef.current.push(timer);
+    });
+  };
+
+  const runMockAnswer = (assistantId: string) => {
+    timersRef.current.forEach((timer) => window.clearTimeout(timer));
+    timersRef.current = [];
+    onMockWorkflowRun();
+
+    const courseEvidence = getMockEvidenceForCourse(course.id);
+    const evidenceTimer = window.setTimeout(() => {
+      evidence.pushEvidence(courseEvidence);
+      updateAssistant(assistantId, (message) => ({ ...message, evidence: courseEvidence }));
+    }, 1400);
+    timersRef.current.push(evidenceTimer);
+
+    streamAssistantText(assistantId, preset.mockAnswer);
+  };
+
+  const runImageAnswer = (assistantId: string, imageAttachments: CompanionAttachment[]) => {
+    onImageWorkflowRun?.();
+    const files = imageAttachments.map((item) => item.file).filter((file): file is File => Boolean(file));
+    analyzeImage(files, { courseId: course.id, kpId: course.currentKnowledgePoint })
+      .then((task) => {
+        if (task.evidence?.length) {
+          evidence.pushEvidence(task.evidence);
+          updateAssistant(assistantId, (message) => ({ ...message, evidence: task.evidence ?? message.evidence }));
+        }
+        const content = task.result ?? `截图分析任务已提交，任务编号：${task.task_id}。`;
+        streamAssistantText(assistantId, content, 1200);
+      })
+      .catch((error) => {
+        setIsGenerating(false);
+        updateAssistant(assistantId, (message) => ({
+          ...message,
+          status: 'error',
+          content: error instanceof Error ? error.message : '截图分析失败，请稍后重试。',
+        }));
+      });
+  };
+
+  const addAttachments = (files: File[]) => {
+    setAttachments((current) => {
+      const slots = Math.max(0, 3 - current.length);
+      if (!slots) {
+        toast.info('最多同时上传 3 张截图');
+        return current;
+      }
+      const nextFiles = files.filter((file) => file.type.startsWith('image/')).slice(0, slots);
+      if (nextFiles.length < files.length) toast.info('最多同时上传 3 张截图，已自动保留前 3 张');
+      const next = nextFiles.map((file) => {
+        const url = URL.createObjectURL(file);
+        objectUrlsRef.current.push(url);
+        return {
+          id: messageId('image'),
+          name: file.name || '截图.png',
+          type: file.type,
+          size: file.size,
+          url,
+          file,
+        };
+      });
+      return [...current, ...next];
+    });
+  };
+
+  const removeAttachment = (attachmentId: string) => {
+    setAttachments((current) => {
+      const target = current.find((item) => item.id === attachmentId);
+      if (target) {
+        URL.revokeObjectURL(target.url);
+        objectUrlsRef.current = objectUrlsRef.current.filter((url) => url !== target.url);
+      }
+      return current.filter((item) => item.id !== attachmentId);
     });
   };
 
   const submitQuestion = (rawQuestion: string) => {
     const question = rawQuestion.trim();
-    if (!question || isGenerating) return;
+    const imageAttachments = attachments;
+    if ((!question && imageAttachments.length === 0) || isGenerating) return;
     streamCancelRef.current?.();
     timersRef.current.forEach((timer) => window.clearTimeout(timer));
     timersRef.current = [];
 
     const assistantId = messageId('assistant');
     setDraft('');
+    setAttachments([]);
     setIsGenerating(true);
     setMessages((current) => [
       ...current,
-      { id: messageId('user'), role: 'user', content: question, status: 'done', evidence: [] },
+      {
+        id: messageId('user'),
+        role: 'user',
+        content: question || '请分析这几张截图',
+        status: 'done',
+        evidence: [],
+        attachments: imageAttachments,
+      },
       { id: assistantId, role: 'assistant', content: '', status: 'generating', evidence: [] },
     ]);
+
+    if (imageAttachments.length > 0) {
+      runImageAnswer(assistantId, imageAttachments);
+      return;
+    }
 
     if (isMockMode()) {
       runMockAnswer(assistantId);
@@ -261,9 +349,12 @@ export function LearningCompanionPanel({
           placeholder={preset.composerPlaceholder}
           isGenerating={isGenerating}
           contextHint={`正在学习：${course.currentKnowledgePoint}`}
+          attachments={attachments}
           onChange={setDraft}
           onSend={() => submitQuestion(draft)}
           onStop={stop}
+          onAddFiles={addAttachments}
+          onRemoveAttachment={removeAttachment}
         />
       </div>
     </section>

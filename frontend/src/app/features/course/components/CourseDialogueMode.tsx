@@ -11,6 +11,8 @@ import { useWorkflowRun } from '../workflow/useWorkflowRun';
 import { workflowById } from '../workflow/workflows';
 import type { WorkflowDefinition } from '../workflow/types';
 import { ResourceShowcaseTray } from './ResourceShowcaseTray';
+import { ScreenplayCueDeck } from '../resources/ScreenplayCueDeck';
+import { getScreenplay } from '@/lib/mock/resource-production.mock';
 
 export function CourseDialogueMode({ course }: { course: CourseCatalogItem }) {
   const [workflowId, setWorkflowId] = useState<WorkflowDefinition['id']>(course.defaultWorkflowId);
@@ -24,6 +26,7 @@ export function CourseDialogueMode({ course }: { course: CourseCatalogItem }) {
   const mockControlsEnabled = isMockMode();
   const { collapsed, mode, toggle, setCollapsed } = useWorkflowPanelCollapsed();
   const [overlayOpen, setOverlayOpen] = useState(false);
+  const [autoRunWorkflowId, setAutoRunWorkflowId] = useState<WorkflowDefinition['id'] | null>(null);
 
   const showWorkflow = useCallback(() => {
     if (mode === 'overlay') {
@@ -44,6 +47,19 @@ export function CourseDialogueMode({ course }: { course: CourseCatalogItem }) {
   useEffect(() => {
     setOverlayOpen(false);
   }, [course.id]);
+
+  useEffect(() => {
+    if (!autoRunWorkflowId || workflowId !== autoRunWorkflowId) return;
+    workflowRun.run();
+    setAutoRunWorkflowId(null);
+    showWorkflow();
+  }, [autoRunWorkflowId, showWorkflow, workflowId, workflowRun.run]);
+
+  const runImageAnalysisWorkflow = useCallback(() => {
+    setWorkflowId('image_analysis');
+    setAutoRunWorkflowId('image_analysis');
+    showWorkflow();
+  }, [showWorkflow]);
 
   const canvas = (
     <AgentWorkflowCanvas
@@ -77,6 +93,7 @@ export function CourseDialogueMode({ course }: { course: CourseCatalogItem }) {
             onExternalWorkflowBegin={workflowRun.beginExternalRun}
             onWorkflowTrace={workflowRun.applyTrace}
             onShowWorkflow={showWorkflow}
+            onImageWorkflowRun={runImageAnalysisWorkflow}
             workflowCollapsed={collapsed}
           />
 
@@ -104,8 +121,15 @@ export function CourseDialogueMode({ course }: { course: CourseCatalogItem }) {
           onExternalWorkflowBegin={workflowRun.beginExternalRun}
           onWorkflowTrace={workflowRun.applyTrace}
           onShowWorkflow={showWorkflow}
+          onImageWorkflowRun={runImageAnalysisWorkflow}
           workflowCollapsed={!overlayOpen}
         />
+      )}
+
+      {workflowRun.state.phase === 'running' && (
+        <div className="pointer-events-none absolute left-1/2 top-4 z-20 w-[420px] -translate-x-1/2">
+          <ScreenplayCueDeck screenplay={getScreenplay('doc')} active />
+        </div>
       )}
 
       <ResourceShowcaseTray runState={workflowRun.state} />

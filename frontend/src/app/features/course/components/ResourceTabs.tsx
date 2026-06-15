@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { PlayCircle } from 'lucide-react';
+import { History, PlayCircle } from 'lucide-react';
 import { ErrorBoundary } from '@/app/components/ErrorBoundary';
 import { ErrorState, InsufficientEvidenceState, LoadingState, ReconnectingState } from '@/app/components/StateView';
 import { useEvidence } from '@/app/components/EvidenceDrawer';
@@ -16,6 +16,17 @@ import { PptResourceView } from './PptResourceView';
 import { QuizResourceView } from './QuizResourceView';
 import { ReadingsResourceView } from './ReadingsResourceView';
 import { VideoResourceView } from './VideoResourceView';
+import { ResourceVariants } from '../resources/ResourceVariants';
+import { ResourceReplayDrawer } from '../resources/ResourceReplayDrawer';
+import { ResourceIterationCard } from '../resources/ResourceIterationCard';
+import { AgentDebatePanel } from '../resources/AgentDebatePanel';
+import {
+  buildAgentDebate,
+  buildReplayTimeline,
+  buildResourceVersions,
+  getResourceVariants,
+} from '@/lib/mock/resource-production.mock';
+import type { ResourceVariantKind, ResourceVersion } from '@/lib/types/resource-variant.types';
 
 const resourceTypes: ResourceType[] = ['doc', 'ppt', 'mindmap', 'quiz', 'lab', 'video', 'readings'];
 
@@ -63,6 +74,12 @@ export function ResourceTabs() {
   const [active, setActive] = useState<ResourceType>('doc');
   const [resources, setResources] = useState<Partial<Record<ResourceType, ResourceItem>>>(() => initialResourceMap(storedResources));
   const [progressText, setProgressText] = useState('');
+  const [replayOpen, setReplayOpen] = useState(false);
+  const [debateOpen, setDebateOpen] = useState(false);
+  const [variantSelections, setVariantSelections] = useState<Partial<Record<ResourceType, ResourceVariantKind>>>({});
+  const [versionsByType, setVersionsByType] = useState<Partial<Record<ResourceType, ResourceVersion[]>>>({});
+  const [activeVersionByType, setActiveVersionByType] = useState<Partial<Record<ResourceType, number>>>({});
+  const [iterating, setIterating] = useState(false);
   const resource = resources[active] ?? fallbackResource(active);
   const isGenerating = resource.status === 'generating';
   const isReconnecting = resource.errorCode === 'sse_reconnecting';
@@ -230,14 +247,94 @@ export function ResourceTabs() {
         <ErrorState message={resource.errorMessage ?? '资源生成失败'} onRetry={startGeneration} />
       )}
 
+      {resource.status === 'ready' && !variantSelections[active] && (
+        <ResourceVariants
+          variants={getResourceVariants(active)}
+          selectedKind={variantSelections[active]}
+          onSelect={(variant) => {
+            setVariantSelections((current) => ({ ...current, [active]: variant.kind }));
+            setVersionsByType((current) => ({
+              ...current,
+              [active]: buildResourceVersions(resource.content || variant.content),
+            }));
+            setActiveVersionByType((current) => ({ ...current, [active]: 1 }));
+          }}
+        />
+      )}
+
       <div className="relative">
-        <div className="absolute right-4 top-4 z-10">
+        <div className="absolute right-4 top-4 z-10 flex items-center gap-2">
           <ResourceQualityBadge score={resource.qualityScore} />
+          {resource.status === 'ready' && (
+            <>
+              <button
+                type="button"
+                onClick={() => setReplayOpen(true)}
+                className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-2 py-1 text-[11px] text-slate-700 hover:border-brand-blue-300 hover:text-brand-blue-700"
+              >
+                <History className="h-3 w-3" />
+                查看生成过程
+              </button>
+              <button
+                type="button"
+                onClick={() => setDebateOpen((current) => !current)}
+                className="rounded-full border border-slate-200 bg-white px-2 py-1 text-[11px] text-slate-700 hover:border-brand-blue-300 hover:text-brand-blue-700"
+              >
+                {debateOpen ? '隐藏辩论' : '查看智能体辩论'}
+              </button>
+            </>
+          )}
         </div>
         <ErrorBoundary resetKey={active}>
           {renderResource()}
         </ErrorBoundary>
       </div>
+
+      {debateOpen && resource.status === 'ready' && (
+        <AgentDebatePanel debate={buildAgentDebate(active)} autoPlay />
+      )}
+
+      {resource.status === 'ready' && variantSelections[active] && (
+        <ResourceIterationCard
+          versions={versionsByType[active] ?? buildResourceVersions(resource.content)}
+          activeVersion={activeVersionByType[active] ?? 1}
+          pending={iterating}
+          onSubmit={(prompt) => {
+            setIterating(true);
+            const existing = versionsByType[active] ?? buildResourceVersions(resource.content);
+            window.setTimeout(() => {
+              const nextVersion = existing.length + 1;
+              const newVersion: ResourceVersion = {
+                version: nextVersion,
+                createdAt: new Date().toISOString(),
+                initiator: 'student-iteration',
+                prompt,
+                content: `${resource.content}\n\n## 学生反馈迭代（v${nextVersion}）\n\n${prompt}`,
+                qualityScore: Math.min(0.95, (existing[existing.length - 1].qualityScore ?? 0.8) + 0.04),
+                diff: [
+                  { kind: 'keep', text: existing[existing.length - 1].content },
+                  { kind: 'add', text: `\n\n## 学生反馈迭代（v${nextVersion}）\n\n${prompt}` },
+                ],
+              };
+              setVersionsByType((current) => ({
+                ...current,
+                [active]: [...existing, newVersion],
+              }));
+              setActiveVersionByType((current) => ({ ...current, [active]: nextVersion }));
+              setIterating(false);
+            }, 1100);
+          }}
+          onSwitchVersion={(version) => {
+            setActiveVersionByType((current) => ({ ...current, [active]: version }));
+          }}
+        />
+      )}
+
+      <ResourceReplayDrawer
+        open={replayOpen}
+        onClose={() => setReplayOpen(false)}
+        timeline={buildReplayTimeline(resource.id, active)}
+      />
     </div>
   );
 }
