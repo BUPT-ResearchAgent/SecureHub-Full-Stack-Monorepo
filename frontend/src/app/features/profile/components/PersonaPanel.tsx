@@ -7,7 +7,9 @@ import type { ProfileAction } from '../store';
 import type { CapabilityScore, ProfileWorkspace } from '../types';
 import { computeProfileStats, formatDateTime } from '../utils';
 import { CapabilityRadarCard } from './CapabilityRadarCard';
+import { CapabilityTimeline } from './CapabilityTimeline';
 import { TagEditor } from './TagEditor';
+import { buildCapabilityTimeline } from '@/lib/mock/assessment-product.mock';
 
 export function PersonaPanel({
   workspace,
@@ -129,6 +131,8 @@ export function PersonaPanel({
           <TagEditor tags={user.tags} dispatch={dispatch} />
         </Card>
       </div>
+
+      <CapabilityTimeline timeline={buildCapabilityTimeline()} />
 
       <div className="grid gap-4 lg:grid-cols-[1.2fr_0.8fr]">
         <Card title="画像来源说明" subtitle="用于演示画像生成的本地证据">

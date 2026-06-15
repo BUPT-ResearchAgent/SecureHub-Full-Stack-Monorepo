@@ -21,6 +21,17 @@ import { getMockQuizItemsForCourse } from '@/lib/mock/courses.mock';
 import type { CapabilityDTO } from '@/lib/sse.types';
 import { runAssessment } from '../api';
 import { useCourseDispatch, useCourseState } from '../store';
+import { ImplicitAssessmentCard } from '../assessment/ImplicitAssessmentCard';
+import { WeaknessDiagnosisDrawer } from '../assessment/WeaknessDiagnosisDrawer';
+import { PeerComparisonCard } from '../assessment/PeerComparisonCard';
+import { LearningForecast } from '../assessment/LearningForecast';
+import {
+  buildImplicitAssessment,
+  buildLearningForecast,
+  buildPeerComparison,
+  buildWeaknessDiagnosis,
+} from '@/lib/mock/assessment-product.mock';
+import { Stethoscope } from 'lucide-react';
 
 const userId = '00000000-0000-0000-0000-000000000001';
 const courseId = '00000000-0000-0000-0000-000000000101';
@@ -54,6 +65,7 @@ export function AssessmentPanel() {
   const [animatedScore, setAnimatedScore] = useState(0);
   const [xpBurst, setXpBurst] = useState(false);
   const [badgeReveal, setBadgeReveal] = useState(false);
+  const [diagnosisOpen, setDiagnosisOpen] = useState(false);
   const timersRef = useRef<number[]>([]);
 
   // 切换课程时清掉旧答题状态。
@@ -288,8 +300,35 @@ export function AssessmentPanel() {
           </div>
         </Card>
         <CapabilityRadarCard capabilities={selectedCapabilities} />
+        {hasSubmitted && (
+          <button
+            type="button"
+            onClick={() => setDiagnosisOpen(true)}
+            className="inline-flex w-full items-center justify-center gap-1.5 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-medium text-rose-700 hover:bg-rose-100"
+          >
+            <Stethoscope className="h-3.5 w-3.5" />
+            打开错题病灶分析
+          </button>
+        )}
       </div>
       </div>
+      {hasSubmitted && (
+        <>
+          <ImplicitAssessmentCard
+            assessment={buildImplicitAssessment(assessment?.score ?? 0)}
+            explicitScore={assessment?.score ?? 0}
+          />
+          <div className="grid gap-4 xl:grid-cols-2">
+            <PeerComparisonCard comparison={buildPeerComparison()} />
+            <LearningForecast forecast={buildLearningForecast()} />
+          </div>
+        </>
+      )}
+      <WeaknessDiagnosisDrawer
+        diagnosis={buildWeaknessDiagnosis()}
+        open={diagnosisOpen}
+        onClose={() => setDiagnosisOpen(false)}
+      />
       <AnimatePresence>
         {xpBurst && (
           <motion.div
