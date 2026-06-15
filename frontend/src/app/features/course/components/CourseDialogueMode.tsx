@@ -24,6 +24,7 @@ export function CourseDialogueMode({ course }: { course: CourseCatalogItem }) {
   const mockControlsEnabled = isMockMode();
   const { collapsed, mode, toggle, setCollapsed } = useWorkflowPanelCollapsed();
   const [overlayOpen, setOverlayOpen] = useState(false);
+  const [autoRunWorkflowId, setAutoRunWorkflowId] = useState<WorkflowDefinition['id'] | null>(null);
 
   const showWorkflow = useCallback(() => {
     if (mode === 'overlay') {
@@ -44,6 +45,19 @@ export function CourseDialogueMode({ course }: { course: CourseCatalogItem }) {
   useEffect(() => {
     setOverlayOpen(false);
   }, [course.id]);
+
+  useEffect(() => {
+    if (!autoRunWorkflowId || workflowId !== autoRunWorkflowId) return;
+    workflowRun.run();
+    setAutoRunWorkflowId(null);
+    showWorkflow();
+  }, [autoRunWorkflowId, showWorkflow, workflowId, workflowRun.run]);
+
+  const runImageAnalysisWorkflow = useCallback(() => {
+    setWorkflowId('image_analysis');
+    setAutoRunWorkflowId('image_analysis');
+    showWorkflow();
+  }, [showWorkflow]);
 
   const canvas = (
     <AgentWorkflowCanvas
@@ -77,6 +91,7 @@ export function CourseDialogueMode({ course }: { course: CourseCatalogItem }) {
             onExternalWorkflowBegin={workflowRun.beginExternalRun}
             onWorkflowTrace={workflowRun.applyTrace}
             onShowWorkflow={showWorkflow}
+            onImageWorkflowRun={runImageAnalysisWorkflow}
             workflowCollapsed={collapsed}
           />
 
@@ -104,6 +119,7 @@ export function CourseDialogueMode({ course }: { course: CourseCatalogItem }) {
           onExternalWorkflowBegin={workflowRun.beginExternalRun}
           onWorkflowTrace={workflowRun.applyTrace}
           onShowWorkflow={showWorkflow}
+          onImageWorkflowRun={runImageAnalysisWorkflow}
           workflowCollapsed={!overlayOpen}
         />
       )}

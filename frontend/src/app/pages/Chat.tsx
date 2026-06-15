@@ -25,10 +25,8 @@ import {
   PopoverTrigger,
 } from '@/app/components/ui/popover';
 import { CompanionComposer } from '@/app/features/course/companion/CompanionComposer';
-import {
-  CompanionMessageList,
-  type CompanionMessage,
-} from '@/app/features/course/companion/CompanionMessageList';
+import { CompanionMessageList } from '@/app/features/course/companion/CompanionMessageList';
+import type { CompanionMessage } from '@/app/features/course/companion/types';
 import { CitationPanel } from '@/app/features/chat/components/CitationPanel';
 import { generateMockAnswer } from '@/app/features/chat/api';
 import { CHAT_AGENTS, getChatAgent } from '@/app/features/chat/mockData';
