@@ -6,7 +6,7 @@ services:
       POSTGRES_PASSWORD: securehub
       POSTGRES_DB: securehub
     ports:
-      - "5432:5432"
+      - "15432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -33,6 +33,7 @@ services:
         required: false
     volumes:
       - ./frontend:/app/frontend
+      - frontend_node_modules:/app/frontend/node_modules
     command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
     ports:
       - "${FRONTEND_PORT:-5173}:5173"
@@ -62,6 +63,7 @@ services:
       DEBUG: "true"
       DATABASE_URL: "postgresql+asyncpg://securehub:securehub@postgres:5432/securehub"
       REDIS_URL: "redis://redis:6379/0"
+      UV_PROJECT_ENVIRONMENT: "/tmp/securehub-backend-venv"
     depends_on:
       postgres:
         condition: service_healthy
@@ -70,3 +72,4 @@ services:
 
 volumes:
   pgdata:
+  frontend_node_modules:

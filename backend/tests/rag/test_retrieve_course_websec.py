@@ -1,41 +1,44 @@
 # Status: real
 
-"""RAG 检索基础回归：fixture 兜底模式可返回有效证据且满足格式契约。"""
-
-from __future__ import annotations
-
-import asyncio
-
 import pytest
 
-from app.rag.retriever import EvidenceHit, retrieve
+from app.db.seeds.seed_course_websec import run as seed_course_websec
+from app.services.knowledge.retrieval_service import RetrievalService
 
 
-def test_retrieve_falls_back_to_empty_on_no_db():
-    """当数据库不可用时，retrieve 返回空列表（不 crash）。"""
-    hits = asyncio.run(retrieve("SQL injection", domain="course_websec", top_k=5))
-    assert isinstance(hits, list)
-    assert len(hits) == 0  # 无 DB 时返回空列表
+@pytest.mark.anyio
+async def test_retrieve_course_websec_returns_evidence_fields(sqlite_session) -> None:
+    await seed_course_websec(sqlite_session)
+    await sqlite_session.commit()
 
-
-def test_evidence_hit_enforces_required_fields():
-    hit = EvidenceHit(
-        chunk_id="test-id",
+    hits = await RetrievalService(sqlite_session).retrieve(
+        "SQL 注入 参数化查询",
         domain="course_websec",
-        chunk_text="SQL injection occurs when...",
+        top_k=5,
     )
-    assert hit.chunk_id == "test-id"
-    assert hit.domain == "course_websec"
-    assert len(hit.chunk_text) > 0
+
+    assert len(hits) >= 3
+    assert hits[0].score > 0
+    assert "SQL" in hits[0].snippet or "参数化" in hits[0].snippet
+    for hit in hits:
+        assert hit.metadata["source_url"]
+        assert hit.metadata["platform"]
+        assert hit.metadata["author"]
+        assert "rights_note" in hit.metadata
+        assert hit.metadata["asset_type"] in {"markdown_full", "manual_import"}
 
 
-def test_evidence_hit_defaults():
-    hit = EvidenceHit(
-        chunk_id="test-id",
+@pytest.mark.anyio
+async def test_retrieve_course_websec_supports_platform_filter(sqlite_session) -> None:
+    await seed_course_websec(sqlite_session)
+    await sqlite_session.commit()
+
+    hits = await RetrievalService(sqlite_session).retrieve(
+        "CSRF Token SameSite",
         domain="course_websec",
-        chunk_text="test",
+        top_k=5,
+        filters={"platform": "portswigger"},
     )
-    assert hit.reliability == 0.0
-    assert hit.score == 0.0
-    assert hit.metadata == {}
-    assert hit.source is None
+
+    assert hits
+    assert all(hit.metadata["platform"] == "portswigger" for hit in hits)

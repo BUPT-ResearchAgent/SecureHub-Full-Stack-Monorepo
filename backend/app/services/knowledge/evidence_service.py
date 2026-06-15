@@ -1,4 +1,4 @@
-# Status: planned
+# Status: real
 
 """Per task brief §6.1 — EvidenceService converts ``ChunkHit`` rows from
 RetrievalService into ``EvidenceCard`` payloads the frontend
@@ -31,4 +31,22 @@ class EvidenceService:
         self.session = session
 
     async def build(self, hits: Sequence[ChunkHit]) -> Sequence[EvidenceCard]:
-        raise NotImplementedError("planned: P0 — implements §6.1 evidence building")
+        cards: list[EvidenceCard] = []
+        for hit in hits:
+            source = (
+                hit.metadata.get("source_url")
+                or hit.metadata.get("object_key")
+                or str(hit.document_id)
+            )
+            cards.append(
+                EvidenceCard(
+                    chunk_id=hit.chunk_id,
+                    document_id=hit.document_id,
+                    source=str(source),
+                    title=hit.title,
+                    excerpt=hit.snippet,
+                    reliability=float(hit.metadata.get("reliability") or 0.5),
+                    metadata=dict(hit.metadata),
+                )
+            )
+        return cards

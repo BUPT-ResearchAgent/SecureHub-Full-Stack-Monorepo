@@ -224,25 +224,24 @@ function LayoutFrame() {
     <div className="flex h-screen bg-slate-50 overflow-hidden">
       <aside
         className={`bg-white border-r border-slate-200 text-slate-700 transition-all duration-300 flex flex-col ${
-          collapsed ? 'w-16' : 'w-72'
+          collapsed ? 'w-16' : 'w-40'
         }`}
       >
-        <div className="h-16 flex items-center justify-between px-4 border-b border-slate-200 shrink-0">
-          {!collapsed && (
+        <div className="h-16 grid grid-cols-[1fr_auto_1fr] items-center px-3 border-b border-slate-200 shrink-0">
+          {!collapsed ? (
             <button
               onClick={() => navigate('/')}
-              className="flex items-center gap-2 hover:opacity-80 transition-opacity"
+              className="flex items-center gap-2 hover:opacity-80 transition-opacity col-start-1"
             >
-              <div className="w-8 h-8 bg-[#003399] rounded-lg flex items-center justify-center">
+              <div className="w-8 h-8 bg-[#003399] rounded-lg flex items-center justify-center shrink-0">
                 <span className="text-white font-bold text-sm">安</span>
               </div>
-              <span className="font-semibold text-[#003399]">安枢智梯 CyberLadder</span>
+              <span className="font-semibold text-[#003399] text-sm truncate">安枢智梯</span>
             </button>
-          )}
-          {collapsed && (
+          ) : (
             <button
               onClick={() => navigate('/')}
-              className="w-full flex justify-center hover:opacity-80"
+              className="col-start-2 hover:opacity-80"
             >
               <div className="w-8 h-8 bg-[#003399] rounded-lg flex items-center justify-center">
                 <span className="text-white font-bold text-sm">安</span>
@@ -251,13 +250,13 @@ function LayoutFrame() {
           )}
           <button
             onClick={() => setCollapsed(!collapsed)}
-            className="p-1.5 hover:bg-slate-100 rounded-lg transition-colors text-slate-400"
+            className="col-start-3 p-1.5 hover:bg-slate-100 rounded-lg transition-colors text-slate-400 justify-self-end"
           >
             <Menu className="w-4 h-4" />
           </button>
         </div>
 
-        <nav className="flex-1 overflow-y-auto py-3">
+        <nav className="flex-1 overflow-y-auto py-2">
           <ul className="space-y-0.5 px-2">
             {navItems.map((item) => {
               const isActive = location.pathname.startsWith(item.path);
@@ -273,7 +272,7 @@ function LayoutFrame() {
                         navigate(`${item.path}?tab=${item.children[0].key}`);
                       }
                     }}
-                    className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-md transition-colors ${
+                    className={`w-full flex items-center gap-2.5 px-2.5 py-2 rounded-md transition-colors ${
                       isActive
                         ? 'bg-[#003399]/10 text-[#003399]'
                         : 'text-slate-500 hover:bg-slate-100 hover:text-slate-700'
@@ -283,7 +282,7 @@ function LayoutFrame() {
                     <item.icon className={`w-5 h-5 shrink-0 ${isActive ? 'text-[#003399]' : ''}`} />
                     {!collapsed && (
                       <>
-                        <span className="text-base flex-1 text-left">{item.label}</span>
+                        <span className="text-sm flex-1 text-left">{item.label}</span>
                         {isOpen ? (
                           <ChevronDown className="w-4 h-4 opacity-50" />
                         ) : (
@@ -295,9 +294,9 @@ function LayoutFrame() {
                   {!collapsed && (
                     <div
                       className="overflow-hidden transition-all duration-300 ease-in-out"
-                      style={{ maxHeight: isOpen ? `${item.children.length * 44}px` : '0px' }}
+                      style={{ maxHeight: isOpen ? `${item.children.length * 40}px` : '0px' }}
                     >
-                      <ul className="mt-0.5 mb-1 ml-7 pl-3 border-l border-slate-200 space-y-0.5">
+                      <ul className="mt-0.5 mb-1 ml-5 pl-2 border-l border-slate-200 space-y-0.5">
                         {item.children.map((child) => {
                           const search = new URLSearchParams(location.search);
                           const activeTab = search.get('tab') || item.children[0].key;
@@ -306,7 +305,7 @@ function LayoutFrame() {
                             <li key={child.key}>
                               <NavLink
                                 to={`${item.path}?tab=${child.key}`}
-                                className={`block px-3 py-2 rounded-md text-sm transition-colors ${
+                                className={`block px-2 py-1.5 rounded-md text-sm transition-colors ${
                                   childActive
                                     ? 'bg-[#003399]/10 text-[#003399]'
                                     : 'text-slate-400 hover:text-slate-700 hover:bg-slate-100'
@@ -381,9 +380,11 @@ function LayoutFrame() {
           </div>
         </header>
 
-        <main className="flex-1 overflow-y-auto">
-          <div className="max-w-[1280px] mx-auto px-6 py-6">
-            <Outlet />
+        <main className="flex-1 flex flex-col min-h-0">
+          <div className="flex-1 overflow-y-auto">
+            <div className="max-w-[1280px] mx-auto px-4 py-1">
+              <Outlet />
+            </div>
           </div>
           <BrandFooter />
         </main>

@@ -20,18 +20,18 @@ export function BrandFooter() {
 
   return (
     <>
-      <footer className="border-t border-slate-200 bg-white/80 px-6 py-4 text-xs text-slate-500 backdrop-blur">
-        <div className="mx-auto flex max-w-[1280px] flex-col gap-3 md:flex-row md:items-center md:justify-between">
+      <footer className="border-t border-slate-200 bg-white/80 px-4 py-2 text-[11px] text-slate-500 backdrop-blur">
+        <div className="mx-auto flex max-w-[1280px] items-center justify-between gap-2">
           <div>
             由 <strong className="font-semibold text-slate-700">科大讯飞 iFLYTEK Spark 大模型</strong> 驱动 · 备用 DeepSeek / Qwen
           </div>
           <button
             type="button"
             onClick={() => setOpen(true)}
-            className="inline-flex items-center gap-1 self-start rounded-md px-2 py-1 text-slate-600 hover:bg-slate-100 hover:text-slate-900 md:self-auto"
+            className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] text-slate-500 hover:bg-slate-100 hover:text-slate-700"
             aria-label="查看开源致谢与协议"
           >
-            开源致谢：React · Vite · Tailwind · shadcn/ui · Radix · markmap · reveal.js · Mermaid · Recharts · React Flow
+            开源致谢：React · Vite · Tailwind · shadcn/ui 等
             <ChevronDown className="h-3.5 w-3.5" />
           </button>
         </div>
