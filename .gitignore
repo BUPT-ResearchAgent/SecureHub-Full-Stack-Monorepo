@@ -48,6 +48,8 @@ Thumbs.db
 .vscode/
 .vercel
 .env*
+.pnpm-store/
+frontend/.pnpm-store/
 
 # Others
-# Plan/
+Plan/

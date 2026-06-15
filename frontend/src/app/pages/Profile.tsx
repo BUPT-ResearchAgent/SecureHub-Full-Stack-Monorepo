@@ -47,7 +47,7 @@ export function Profile() {
   };
 
   const uploadAsset = () => {
-    dispatch({ type: 'addAsset', asset: createMockAsset('document', workspace.user.displayName) });
+    dispatch({ type: 'addAsset', asset: createMockAsset('document') });
     toast.success('已模拟上传资产');
   };
 

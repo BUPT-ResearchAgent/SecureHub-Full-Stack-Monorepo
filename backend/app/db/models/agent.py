@@ -1,6 +1,6 @@
 # Status: [planned]
 
-"""Compatibility shim — real model lives in ``app.db.models.agent.agent``."""
+"""Compatibility import for the agent runtime model package."""
 
 from app.db.models.agent.agent import Agent
 

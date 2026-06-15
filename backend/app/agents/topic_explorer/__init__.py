@@ -1,4 +1,4 @@
-# Status: [planned]
+# Status: real
 
 from app.agents.topic_explorer.agent import TopicExplorerAgent
 
