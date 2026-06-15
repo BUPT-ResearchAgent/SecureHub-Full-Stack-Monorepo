@@ -7,6 +7,7 @@ import { MOCK_STUDENTS, MOCK_TEACHERS } from '@/lib/mock/teacher.mock';
 import { useActiveRole } from '../store';
 import { isTeacherRole, ROLE_META } from '../roles';
 import { TeacherShell } from '../components/TeacherShell';
+import { SeedPromptEditor } from '../components/SeedPromptEditor';
 
 export function TeacherCourses() {
   const [role] = useActiveRole();
@@ -94,6 +95,8 @@ export function TeacherCourses() {
           );
         })}
       </div>
+
+      {owned[0] && <SeedPromptEditor courseId={owned[0].id} />}
 
       <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
         <div className="flex items-center gap-2 text-sm text-slate-800">

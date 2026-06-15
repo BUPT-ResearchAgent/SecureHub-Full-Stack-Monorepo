@@ -22,6 +22,7 @@ import {
   type MockMaterial,
 } from '@/lib/mock/teacher.mock';
 import { courseCatalog } from '@/app/features/course/catalog/courseCatalog';
+import { StudentResourceApprovals } from '../components/StudentResourceApprovals';
 
 const PIPELINE_STEPS: { agent: string; skill: string; title: string }[] = [
   { agent: 'doc_archivist', skill: 'ParseDocument', title: '解析文档结构' },
@@ -37,8 +38,11 @@ type PipelineSlot = {
   detail?: string;
 };
 
+type MaterialsTab = 'library' | 'student-generated';
+
 export function TeacherMaterials() {
   const [role] = useActiveRole();
+  const [tab, setTab] = useState<MaterialsTab>('library');
   const [keyword, setKeyword] = useState('');
   const [courseFilter, setCourseFilter] = useState('all');
   const [items, setItems] = useState<MockMaterial[]>(MOCK_MATERIALS);
@@ -70,6 +74,28 @@ export function TeacherMaterials() {
         </button>
       }
     >
+      <div className="flex items-center gap-1 rounded-full bg-slate-100 p-1 text-xs">
+        {([
+          { key: 'library', label: '教材库' },
+          { key: 'student-generated', label: '学生生成' },
+        ] as { key: MaterialsTab; label: string }[]).map((t) => (
+          <button
+            key={t.key}
+            type="button"
+            onClick={() => setTab(t.key)}
+            className={`rounded-full px-3 py-1 ${
+              tab === t.key ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500'
+            }`}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {tab === 'student-generated' && <StudentResourceApprovals />}
+
+      {tab === 'library' && (
+      <>
       <div className="flex flex-wrap items-center gap-2">
         <div className="relative">
           <Search className="absolute left-2.5 top-2 h-3.5 w-3.5 text-slate-400" />
@@ -153,6 +179,8 @@ export function TeacherMaterials() {
           </article>
         ))}
       </div>
+      </>
+      )}
 
       {uploadOpen && (
         <UploadDialog

@@ -41,6 +41,7 @@ import { ROLE_META, type TeacherRole } from '../roles';
 import { useActiveRole } from '../store';
 import { TeacherShell } from '../components/TeacherShell';
 import { isTeacherRole } from '../roles';
+import { ResourceSupervisionStream } from '../components/ResourceSupervisionStream';
 
 type KpiCard = {
   label: string;
@@ -241,6 +242,7 @@ function CourseTeacherDashboard() {
           </div>
         </section>
       </div>
+      <ResourceSupervisionStream />
       <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
         <h2 className="text-sm font-semibold text-slate-800">待办流</h2>
         <div className="mt-1">
