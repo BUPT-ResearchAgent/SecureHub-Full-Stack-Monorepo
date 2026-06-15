@@ -23,6 +23,7 @@ import {
 import { EvidenceDrawer, EvidenceProvider, useEvidence } from './EvidenceDrawer';
 import { BrandFooter } from './BrandFooter';
 import { BackendStatusPanel } from './BackendStatusPanel';
+import { PresenterMode } from './PresenterMode';
 import { GlobalSearch } from './GlobalSearch';
 import {
   DropdownMenu,
@@ -33,6 +34,7 @@ import {
   DropdownMenuTrigger,
 } from '@/app/components/ui/dropdown-menu';
 import { useAuth } from '@/app/features/auth/store';
+import { RoleSwitcher } from '@/app/features/teacher/RoleSwitcher';
 
 export type NavChild = { key: string; label: string };
 export type NavItem = {
@@ -333,6 +335,7 @@ function LayoutFrame() {
           </div>
 
           <div className="flex items-center gap-2">
+            <RoleSwitcher />
             <button
               onClick={(event) => evidence.toggle(event.currentTarget)}
               className="flex items-center gap-2 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-100 rounded-lg transition-colors"
@@ -392,6 +395,7 @@ function LayoutFrame() {
 
       <EvidenceDrawer />
       <BackendStatusPanel />
+      <PresenterMode />
     </div>
   );
 }
