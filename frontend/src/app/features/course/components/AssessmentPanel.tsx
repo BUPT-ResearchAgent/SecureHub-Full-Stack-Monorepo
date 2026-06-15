@@ -16,36 +16,14 @@ import { toast } from 'sonner';
 import { Card } from '@/app/components/PageShell';
 import { ErrorState } from '@/app/components/StateView';
 import { CapabilityRadarCard } from '@/app/features/profile/components/CapabilityRadarCard';
+import { useSelectedCourse } from '@/app/features/course/catalog/useSelectedCourse';
+import { getMockQuizItemsForCourse } from '@/lib/mock/courses.mock';
 import type { CapabilityDTO } from '@/lib/sse.types';
 import { runAssessment } from '../api';
 import { useCourseDispatch, useCourseState } from '../store';
 
 const userId = '00000000-0000-0000-0000-000000000001';
 const courseId = '00000000-0000-0000-0000-000000000101';
-
-const questions = [
-  {
-    id: 'quiz-sqli-1',
-    title: '参数化查询的核心作用是什么？',
-    correct: '把用户输入作为数据绑定',
-    kp: 'SQL 注入识别',
-    options: ['把用户输入作为数据绑定', '隐藏数据库报错', '删除所有特殊字符'],
-  },
-  {
-    id: 'quiz-sqli-2',
-    title: '时间盲注通常观察什么现象？',
-    correct: '响应延迟变化',
-    kp: 'SQL 注入识别',
-    options: ['响应延迟变化', '页面颜色变化', '浏览器自动刷新'],
-  },
-  {
-    id: 'quiz-sqli-3',
-    title: '修复 SQL 注入后还应保留什么材料？',
-    correct: '修复前后对比与回归测试记录',
-    kp: '实操复盘',
-    options: ['修复前后对比与回归测试记录', '只保留最终截图', '删除所有日志'],
-  },
-];
 
 type LoopEvent = {
   id: string;
@@ -57,12 +35,31 @@ export function AssessmentPanel() {
   const navigate = useNavigate();
   const { assessment, currentKpId } = useCourseState();
   const dispatch = useCourseDispatch();
+  const { course } = useSelectedCourse();
+  const questions = useMemo(
+    () =>
+      getMockQuizItemsForCourse(course.id).map((item) => ({
+        id: item.id,
+        title: item.prompt,
+        correct: item.answer,
+        kp: item.kp,
+        options: item.options,
+      })),
+    [course.id],
+  );
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [events, setEvents] = useState<LoopEvent[]>([]);
   const [animatedScore, setAnimatedScore] = useState(0);
   const timersRef = useRef<number[]>([]);
+
+  // 切换课程时清掉旧答题状态。
+  useEffect(() => {
+    setAnswers({});
+    setEvents([]);
+    setAnimatedScore(0);
+  }, [course.id]);
 
   const selectedCapabilities = useMemo<CapabilityDTO[]>(
     () => assessment?.updatedCapabilities ?? [],

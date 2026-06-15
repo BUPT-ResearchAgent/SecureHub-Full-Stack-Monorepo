@@ -1,5 +1,6 @@
 import { useCallback, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
+import { setMockCourseContext } from '@/lib/mock/course.mock';
 import {
   defaultCourseId,
   getCourseById,
@@ -52,9 +53,10 @@ export function useSelectedCourse(): UseSelectedCourseResult {
   const course = getCourseById(effectiveId) ?? getCourseById(defaultCourseId)!;
   const fellBackToDefault = Boolean(rawFromUrl) && !courseFromUrl;
 
-  // 同步 URL 与 localStorage（仅在缺失/不一致时写，避免无限回环）。
+  // 同步 URL、localStorage 与 mock 回放上下文（仅在缺失/不一致时写，避免无限回环）。
   useEffect(() => {
     writeStored(course.id);
+    setMockCourseContext(course.id);
     if (rawFromUrl === course.id) return;
     const next = new URLSearchParams(params);
     next.set('courseId', course.id);

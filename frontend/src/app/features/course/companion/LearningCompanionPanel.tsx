@@ -4,7 +4,7 @@ import { useEvidence } from '@/app/components/EvidenceDrawer';
 import { cn } from '@/app/components/ui/utils';
 import { useAgentTraceDispatch } from '@/app/features/agents/store';
 import { isMockMode } from '@/lib/mock';
-import { mockEvidenceChunks } from '@/lib/mock/evidence.mock';
+import { getMockEvidenceForCourse } from '@/lib/mock/courses.mock';
 import type { AgentRunDTO } from '@/lib/sse.types';
 import type { CourseCatalogItem } from '../catalog/courseCatalog.types';
 import { streamPersonaChat } from '../api';
@@ -105,9 +105,10 @@ export function LearningCompanionPanel({
     timersRef.current = [];
     onMockWorkflowRun();
 
+    const courseEvidence = getMockEvidenceForCourse(course.id);
     const evidenceTimer = window.setTimeout(() => {
-      evidence.pushEvidence(mockEvidenceChunks);
-      updateAssistant(assistantId, (message) => ({ ...message, evidence: mockEvidenceChunks }));
+      evidence.pushEvidence(courseEvidence);
+      updateAssistant(assistantId, (message) => ({ ...message, evidence: courseEvidence }));
     }, 1400);
     timersRef.current.push(evidenceTimer);
 
