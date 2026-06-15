@@ -14,11 +14,14 @@ export function PersonaPanel({
   dispatch,
   onEdit,
   capabilities,
+  highlightDimension,
 }: {
   workspace: ProfileWorkspace;
   dispatch: Dispatch<ProfileAction>;
   onEdit: () => void;
   capabilities?: CapabilityDTO[];
+  /** 来自 /profile?highlight=xxx，用于评估闭环回流时让对应雷达维度脉冲提示。 */
+  highlightDimension?: string;
 }) {
   const [regenerating, setRegenerating] = useState(false);
   const stats = computeProfileStats(workspace);
@@ -117,7 +120,10 @@ export function PersonaPanel({
       </div>
 
       <div className="grid gap-4 xl:grid-cols-[1fr_0.9fr]">
-        <CapabilityRadarCard capabilities={capabilities ?? workspace.capabilities.map(capabilityScoreToDTO)} />
+        <CapabilityRadarCard
+          capabilities={capabilities ?? workspace.capabilities.map(capabilityScoreToDTO)}
+          highlightDimension={highlightDimension}
+        />
 
         <Card title="兴趣与标签" subtitle="支持新增、删除和一键添加推荐标签">
           <TagEditor tags={user.tags} dispatch={dispatch} />

@@ -1,6 +1,6 @@
 import { Download, RotateCcw, Save, UploadCloud, User } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import { PageShell } from '../components/PageShell';
 import { ErrorState, LoadingState } from '../components/StateView';
@@ -27,6 +27,9 @@ export function Profile() {
   const [profile, setProfile] = useState<ProfileDTO | null>(null);
   const [profileLoading, setProfileLoading] = useState(true);
   const [profileError, setProfileError] = useState('');
+  // 评估闭环：AssessmentPanel 提交后跳过来时带 ?highlight=xxx，让对应雷达维度脉冲。
+  const [searchParams] = useSearchParams();
+  const highlightDimension = searchParams.get('highlight') ?? undefined;
 
   const loadProfile = () => {
     setProfileLoading(true);
@@ -119,6 +122,7 @@ export function Profile() {
                       dispatch={dispatch}
                       onEdit={() => setEditOpen(true)}
                       capabilities={profile?.capabilities ?? []}
+                      highlightDimension={highlightDimension}
                     />
                   </>
                 )}
