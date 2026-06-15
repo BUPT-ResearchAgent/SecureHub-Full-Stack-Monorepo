@@ -1,6 +1,6 @@
 # Status: [planned]
 
-"""Compatibility shim — real model lives in ``app.db.models.knowledge.course``."""
+"""Compatibility import for the unified knowledge model package."""
 
 from app.db.models.knowledge.course import Course
 

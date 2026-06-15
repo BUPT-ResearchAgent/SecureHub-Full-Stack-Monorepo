@@ -1,6 +1,4 @@
 export { Landing } from './Landing';
-export { Login } from './Login';
-export { Register } from './Register';
 export { Workspace } from './Workspace';
 export { Practice } from './Practice';
 export { Research } from './Research';

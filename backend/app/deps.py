@@ -54,11 +54,7 @@ async def current_user(
 
 
 async def current_user_id(user: Annotated[User | None, Depends(current_user)]) -> UUID:
-    """Real JWT user id when a token is supplied; otherwise seeded demo user.
-
-    Existing P0 demo endpoints still support no-token calls. New auth endpoints
-    use RequiredCurrentUserDep / RequiredCurrentUserIdDep and do not fall back.
-    """
+    """Real JWT user id when a token is supplied; otherwise seeded demo user."""
     if user is not None:
         return user.id
     return DEMO_USER_ID

@@ -1,4 +1,4 @@
-# Status: [planned]
+# Status: real
 
 from app.agents.doc_archivist.agent import DocArchivistAgent
 

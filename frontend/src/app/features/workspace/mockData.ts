@@ -8,12 +8,7 @@ import type {
   WorkspaceTask,
 } from './types';
 
-export const WORKSPACE_STORAGE_KEY_PREFIX = 'workspace-demo';
-export const WORKSPACE_STORAGE_KEY = WORKSPACE_STORAGE_KEY_PREFIX;
-
-export function getWorkspaceStorageKey(userId?: string | null) {
-  return `${WORKSPACE_STORAGE_KEY_PREFIX}:${userId || 'anonymous'}`;
-}
+export const WORKSPACE_STORAGE_KEY = 'workspace-dashboard-demo';
 
 const nowIso = () => new Date().toISOString();
 const isoDate = (date: Date) => date.toISOString().slice(0, 10);
@@ -743,7 +738,6 @@ export function createDefaultDashboard(): WorkspaceDashboard {
 
   return {
     id: 'workspace-demo',
-    ownerUserId: 'demo',
     userName: '陈同学',
     today,
     dailyBrief: {

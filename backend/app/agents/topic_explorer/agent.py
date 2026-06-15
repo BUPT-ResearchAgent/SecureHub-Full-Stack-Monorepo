@@ -1,4 +1,4 @@
-# Status: [planned]
+# Status: real
 
 from app.agents.base import AgentCapability, BaseAgent
 from app.agents.topic_explorer.skills import generate_hands_on_lab, generate_research_topic, recommend_readings

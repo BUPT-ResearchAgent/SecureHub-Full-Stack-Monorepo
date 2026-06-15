@@ -1,4 +1,4 @@
-# Status: [planned]
+# Status: real
 
 from app.agents.base import AgentCapability, BaseAgent
 from app.agents.task_orchestrator.skills import decompose_wbs, generate_learning_path
