@@ -7,6 +7,7 @@ from app.api.v1.endpoints import (
     courses,
     ctftime,
     health,
+    llm,
     placeholder,
     policy,
     profile,
@@ -48,3 +49,4 @@ api_router.include_router(agents.router, tags=["agents"])
 api_router.include_router(rag.router, tags=["rag"])
 api_router.include_router(tutor.router, tags=["tutor"])
 api_router.include_router(assessment.router, tags=["assessment"])
+api_router.include_router(llm.router, tags=["llm"])
