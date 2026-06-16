@@ -157,7 +157,13 @@ export function ResourceTabs() {
           tokenBuffer.push(targetType, token.content);
         },
         onArtifact(artifact) {
-          updateResource(targetType, (previous) => ({ ...previous, id: artifact.resource_id, title: artifact.title }));
+          const artifactType = artifact.resource_type ?? targetType;
+          updateResource(artifactType, (previous) => ({
+            ...previous,
+            id: artifact.resource_id,
+            type: artifactType,
+            title: artifact.title,
+          }));
         },
         onTrace(run) {
           traceDispatch({ type: 'upsertRun', run });
