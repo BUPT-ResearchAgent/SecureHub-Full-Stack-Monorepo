@@ -4,9 +4,22 @@
 
 from __future__ import annotations
 
+import asyncio
+import json
+
 from fastapi.testclient import TestClient
 
 from app.main import app
+from app.schemas.agent import AgentTraceDTO
+from app.schemas.assessment import AssessmentRunResponse
+from app.schemas.course import CoursePlanResponse
+from app.schemas.evidence import EvidenceChunkDTO
+from app.services.agent import (
+    build_learning_persona,
+    generate_learning_path,
+    generate_resource,
+    run_assessment,
+)
 
 USER_ID = "00000000-0000-0000-0000-000000000001"
 COURSE_ID = "00000000-0000-0000-0000-000000000101"
@@ -116,3 +129,92 @@ def test_assessment_run_endpoint():
     assert "score" in body
     assert "feedback" in body
     assert "updated_capabilities" in body
+
+
+def test_llm_health_endpoint_fixture_mode():
+    client = TestClient(app)
+    response = client.get("/api/v1/llm/health")
+    assert response.status_code == 200
+    assert response.json() == {
+        "provider": "fixture",
+        "model": "fixture-canned",
+        "mode": "fixture",
+        "live_enabled": False,
+        "status": "available",
+        "last_error": None,
+        "rate_limit_state": {"used": 0, "limit": 0},
+    }
+
+
+def test_agent_fixture_services_match_frozen_dtos():
+    async def collect() -> tuple[dict, dict, list[dict], list[dict]]:
+        plan = await generate_learning_path(
+            user_id=USER_ID,
+            course_id=COURSE_ID,
+            target_node_id=KP_ID,
+        )
+        assessment = await run_assessment(
+            user_id=USER_ID,
+            course_id=COURSE_ID,
+            answers=[],
+        )
+        persona_events = [
+            event
+            async for event in build_learning_persona(
+                user_id=USER_ID,
+                message="I want to learn SQL injection.",
+                dialogue_turns=[],
+            )
+        ]
+        resource_events = [
+            event
+            async for event in generate_resource(
+                user_id=USER_ID,
+                course_id=COURSE_ID,
+                kp_id=KP_ID,
+                type="doc",
+            )
+        ]
+        return plan, assessment, persona_events, resource_events
+
+    plan, assessment, persona_events, resource_events = asyncio.run(collect())
+
+    CoursePlanResponse(**plan)
+    AssessmentRunResponse(**assessment)
+
+    evidence = next(event for event in resource_events if event["event"] == "evidence")
+    EvidenceChunkDTO(**{key: value for key, value in evidence.items() if key != "event"})
+
+    trace = next(event for event in persona_events if event["event"] == "trace")
+    AgentTraceDTO(**{key: value for key, value in trace.items() if key != "event"})
+    assert trace["provider"] == "fixture"
+    assert trace["model"] == "fixture-canned"
+
+    assert {event["event"] for event in resource_events} >= {
+        "progress",
+        "evidence",
+        "token",
+        "artifact",
+        "trace",
+        "done",
+    }
+
+
+def test_resource_generate_sse_contains_contract_payloads():
+    client = TestClient(app)
+    response = client.post(
+        "/api/v1/courses/course-websec/resources/generate?type=doc",
+        json={"type": "doc", "user_id": USER_ID, "kp_id": KP_ID},
+    )
+    assert response.status_code == 200
+    assert "event: evidence" in response.text
+    assert "event: artifact" in response.text
+    assert "event: trace" in response.text
+
+    payloads = [
+        json.loads(line.removeprefix("data: "))
+        for line in response.text.splitlines()
+        if line.startswith("data: ")
+    ]
+    assert any(payload.get("platform") == "owasp" for payload in payloads)
+    assert any(payload.get("provider") == "fixture" for payload in payloads)
