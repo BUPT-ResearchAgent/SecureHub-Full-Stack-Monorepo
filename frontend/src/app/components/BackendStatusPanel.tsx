@@ -1,8 +1,9 @@
 // Status: partial-real
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { RefreshCw, Server, X } from 'lucide-react';
+import { BrainCircuit, RefreshCw, Server, X } from 'lucide-react';
 import { API_BASE_URL } from '@/lib/api';
 import { setMockMode } from '@/lib/mock';
+import type { LLMHealthDTO } from '@/lib/api-types';
 import {
   ENDPOINT_AUDIT,
   OWNER_LABEL,
@@ -11,7 +12,7 @@ import {
 } from '@/lib/api-audit';
 
 type ProbeStatus = 'pending' | 'ok' | 'fail';
-type PanelTab = 'probe' | 'contract';
+type PanelTab = 'probe' | 'contract' | 'llm';
 
 type EndpointProbe = {
   id: string;
@@ -27,6 +28,8 @@ const endpoints: EndpointProbe[] = [
   { id: 'profile', label: 'GET /api/v1/profile/me', method: 'GET', path: '/api/v1/profile/me' },
   { id: 'rag-search', label: 'POST /api/v1/rag/search', method: 'OPTIONS', path: '/api/v1/rag/search' },
 ];
+
+const panelEventName = 'securehub-open-backend-status';
 
 function statusIcon(status: ProbeStatus): string {
   if (status === 'ok') return '✅';
@@ -46,6 +49,42 @@ async function probe(endpoint: EndpointProbe): Promise<ProbeStatus> {
   }
 }
 
+async function probeLLMHealth(): Promise<LLMHealthDTO> {
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/v1/llm/health`, {
+      method: 'GET',
+      headers: { Accept: 'application/json' },
+    });
+    if (!response.ok) {
+      return {
+        provider: 'deepseek',
+        model: 'unknown',
+        mode: 'fixture',
+        live_enabled: false,
+        status: 'error',
+        last_error: `LLM 健康检查失败：HTTP ${response.status}`,
+        rate_limit_state: null,
+      };
+    }
+    return await response.json() as LLMHealthDTO;
+  } catch (error) {
+    return {
+      provider: 'deepseek',
+      model: 'unknown',
+      mode: 'fixture',
+      live_enabled: false,
+      status: 'error',
+      last_error: error instanceof Error ? error.message : 'LLM 健康检查网络失败',
+      rate_limit_state: null,
+    };
+  }
+}
+
+export function openBackendStatusLLMTab() {
+  if (typeof window === 'undefined') return;
+  window.dispatchEvent(new CustomEvent(panelEventName, { detail: { tab: 'llm' } }));
+}
+
 /**
  * Chat-first 重构：默认折叠态从 340px 卡片缩为 32px 圆形浮按钮，
  * 不再压在右下角抢占底部注意力；只有 hover/点击展开后才弹出完整自检卡片。
@@ -58,6 +97,15 @@ export function BackendStatusPanel() {
   const [statuses, setStatuses] = useState<Record<string, ProbeStatus>>(() =>
     Object.fromEntries(endpoints.map((endpoint) => [endpoint.id, 'pending'])),
   );
+  const [llmHealth, setLlmHealth] = useState<LLMHealthDTO>({
+    provider: 'deepseek',
+    model: 'unknown',
+    mode: 'fixture',
+    live_enabled: false,
+    status: 'unknown',
+    last_error: null,
+    rate_limit_state: null,
+  });
   const [lastChecked, setLastChecked] = useState<string>('');
 
   const runProbe = useCallback(async (endpoint: EndpointProbe) => {
@@ -70,9 +118,20 @@ export function BackendStatusPanel() {
 
   const runAll = useCallback(async () => {
     setStatuses(Object.fromEntries(endpoints.map((endpoint) => [endpoint.id, 'pending'])));
-    const results = await Promise.all(endpoints.map(async (endpoint) => [endpoint.id, await probe(endpoint)] as const));
+    const [results, llm] = await Promise.all([
+      Promise.all(endpoints.map(async (endpoint) => [endpoint.id, await probe(endpoint)] as const)),
+      probeLLMHealth(),
+    ]);
     setStatuses(Object.fromEntries(results));
+    setLlmHealth(llm);
     if (results.some(([, status]) => status === 'fail')) setMockMode(true);
+    setLastChecked(new Date().toLocaleTimeString('zh-CN', { hour12: false }));
+  }, []);
+
+  const runLLM = useCallback(async () => {
+    setLlmHealth((current) => ({ ...current, status: 'unknown', last_error: null }));
+    const llm = await probeLLMHealth();
+    setLlmHealth(llm);
     setLastChecked(new Date().toLocaleTimeString('zh-CN', { hour12: false }));
   }, []);
 
@@ -84,6 +143,17 @@ export function BackendStatusPanel() {
     }, 30000);
     return () => window.clearInterval(timer);
   }, [runAll]);
+
+  useEffect(() => {
+    const handleOpen = (event: Event) => {
+      const detail = (event as CustomEvent<{ tab?: PanelTab }>).detail;
+      setCollapsed(false);
+      setTab(detail?.tab ?? 'llm');
+      void runLLM();
+    };
+    window.addEventListener(panelEventName, handleOpen);
+    return () => window.removeEventListener(panelEventName, handleOpen);
+  }, [runLLM]);
 
   const auditSummary = useMemo(() => {
     const acc = { real: 0, 'partial-real': 0, mock: 0, planned: 0 };
@@ -98,11 +168,18 @@ export function BackendStatusPanel() {
   const failureCount = Object.values(statuses).filter((status) => status === 'fail').length;
   const pendingCount = Object.values(statuses).filter((status) => status === 'pending').length;
   const dotTone =
-    failureCount > 0
+    llmHealth.status === 'error'
+      ? 'bg-red-500'
+      : llmHealth.mode === 'fallback'
+      ? 'bg-orange-500'
+      : llmHealth.mode === 'fixture'
+      ? 'bg-slate-400'
+      : failureCount > 0
       ? 'bg-red-500'
       : pendingCount > 0
       ? 'bg-amber-400 animate-pulse'
       : 'bg-emerald-500';
+  const llmTone = llmHealthTone(llmHealth);
 
   // 折叠态：极小浮按钮，右下角，不遮挡 composer。
   if (collapsed) {
@@ -112,7 +189,13 @@ export function BackendStatusPanel() {
         data-presenter-hide
         onClick={() => setCollapsed(false)}
         title={
-          failureCount > 0
+          llmHealth.status === 'error'
+            ? `LLM 状态：错误，${llmHealth.last_error ?? '请展开查看'}`
+            : llmHealth.mode === 'fallback'
+            ? 'LLM 状态：已降级 fallback'
+            : llmHealth.mode === 'fixture'
+            ? 'LLM 状态：fixture 演示数据'
+            : failureCount > 0
             ? `后端就绪自检：${failureCount} 个端点失败`
             : pendingCount > 0
             ? '后端就绪自检：检测中'
@@ -153,6 +236,7 @@ export function BackendStatusPanel() {
       <div role="tablist" aria-label="自检视图切换" className="flex gap-1 border-y border-slate-100 bg-slate-50 px-2 py-1.5">
         {[
           { key: 'probe' as const, label: '端点自检' },
+          { key: 'llm' as const, label: 'LLM' },
           { key: 'contract' as const, label: `契约对比 (${ENDPOINT_AUDIT.length})` },
         ].map((option) => {
           const selected = tab === option.key;
@@ -208,9 +292,83 @@ export function BackendStatusPanel() {
             </button>
           </div>
         </div>
+      ) : tab === 'llm' ? (
+        <LLMTab health={llmHealth} tone={llmTone} onRefresh={runLLM} lastChecked={lastChecked} />
       ) : (
         <ContractTab summary={auditSummary} />
       )}
+    </div>
+  );
+}
+
+function llmHealthTone(health: LLMHealthDTO) {
+  if (health.status === 'error') return { className: 'border-red-200 bg-red-50 text-red-700', label: '模型不可用', dot: 'bg-red-500' };
+  if (health.mode === 'fallback') return { className: 'border-orange-200 bg-orange-50 text-orange-700', label: '备用模型', dot: 'bg-orange-500' };
+  if (health.mode === 'fixture') return { className: 'border-slate-200 bg-slate-100 text-slate-600', label: '演示数据', dot: 'bg-slate-400' };
+  if (health.status === 'available') return { className: 'border-emerald-200 bg-emerald-50 text-emerald-700', label: '真实模型', dot: 'bg-emerald-500' };
+  if (health.status === 'degraded') return { className: 'border-amber-200 bg-amber-50 text-amber-700', label: '服务降级', dot: 'bg-amber-400' };
+  return { className: 'border-amber-200 bg-amber-50 text-amber-700', label: '检测中', dot: 'bg-amber-400' };
+}
+
+function LLMTab({
+  health,
+  tone,
+  onRefresh,
+  lastChecked,
+}: {
+  health: LLMHealthDTO;
+  tone: ReturnType<typeof llmHealthTone>;
+  onRefresh: () => void;
+  lastChecked: string;
+}) {
+  return (
+    <div className="space-y-3 px-4 py-3 text-xs">
+      <div className={`rounded-lg border px-3 py-3 ${tone.className}`}>
+        <div className="flex items-center justify-between gap-3">
+          <span className="inline-flex items-center gap-2 font-semibold">
+            <BrainCircuit className="h-4 w-4" />
+            {health.provider || 'deepseek'} · {health.mode}
+          </span>
+          <span className={`h-2 w-2 rounded-full ${tone.dot}`} aria-hidden />
+        </div>
+        <p className="mt-2 leading-5">
+          {health.last_error ?? (health.live_enabled ? 'LLM 健康检查通过，当前课程生成会使用真实模型链路。' : '未配置真实 LLM 凭据，当前使用演示数据。')}
+        </p>
+      </div>
+      <dl className="grid grid-cols-2 gap-2 text-slate-600">
+        <div className="rounded-md bg-slate-50 px-2 py-1.5">
+          <dt className="text-slate-400">模型</dt>
+          <dd className="mt-0.5 font-mono">{health.model || 'unknown'}</dd>
+        </div>
+        <div className="rounded-md bg-slate-50 px-2 py-1.5">
+          <dt className="text-slate-400">状态</dt>
+          <dd className="mt-0.5">{health.status}</dd>
+        </div>
+        <div className="rounded-md bg-slate-50 px-2 py-1.5">
+          <dt className="text-slate-400">模式</dt>
+          <dd className="mt-0.5">{health.mode}</dd>
+        </div>
+        <div className="rounded-md bg-slate-50 px-2 py-1.5">
+          <dt className="text-slate-400">限额</dt>
+          <dd className="mt-0.5">
+            {health.rate_limit_state?.limit == null
+              ? '-'
+              : `${health.rate_limit_state.used ?? 0}/${health.rate_limit_state.limit}`}
+          </dd>
+        </div>
+      </dl>
+      <div className="flex items-center justify-between border-t border-slate-100 pt-3 text-slate-500">
+        <span>{lastChecked ? `上次检测 ${lastChecked}` : '尚未完成检测'}</span>
+        <button
+          type="button"
+          onClick={onRefresh}
+          title="重新检测 LLM 健康状态"
+          className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-brand-blue-600 hover:bg-blue-50"
+        >
+          <RefreshCw className="h-3.5 w-3.5" />
+          重新检测
+        </button>
+      </div>
     </div>
   );
 }

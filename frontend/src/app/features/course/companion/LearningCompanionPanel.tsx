@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Bot, PanelRightOpen } from 'lucide-react';
 import { toast } from 'sonner';
 import { useEvidence } from '@/app/components/EvidenceDrawer';
@@ -7,6 +7,7 @@ import { useAgentTraceDispatch } from '@/app/features/agents/store';
 import { analyzeImage } from '@/lib/api';
 import { isMockMode } from '@/lib/mock';
 import { getMockEvidenceForCourse } from '@/lib/mock/courses.mock';
+import { useRafTokenBuffer } from '@/lib/raf-token-buffer';
 import type { AgentRunDTO } from '@/lib/sse.types';
 import type { CourseCatalogItem } from '../catalog/courseCatalog.types';
 import { streamPersonaChat } from '../api';
@@ -68,9 +69,27 @@ export function LearningCompanionPanel({
     },
   ]);
 
+  const updateAssistant = (
+    assistantId: string,
+    update: (message: CompanionMessage) => CompanionMessage,
+  ) => {
+    setMessages((current) =>
+      current.map((message) => (message.id === assistantId ? update(message) : message)),
+    );
+  };
+
+  const flushTokenBuffer = useCallback((assistantId: string, content: string) => {
+    updateAssistant(assistantId, (message) => ({
+      ...message,
+      content: `${message.content}${content}`,
+    }));
+  }, []);
+  const tokenBuffer = useRafTokenBuffer(flushTokenBuffer);
+
   // 课程切换：重置消息流 + 清理已排程的 mock 步骤。
   useEffect(() => {
     streamCancelRef.current?.();
+    tokenBuffer.cancel();
     timersRef.current.forEach((timer) => window.clearTimeout(timer));
     timersRef.current = [];
     setIsGenerating(false);
@@ -87,7 +106,7 @@ export function LearningCompanionPanel({
         evidence: [],
       },
     ]);
-  }, [course.id, preset.greeting]);
+  }, [course.id, preset.greeting, tokenBuffer]);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
@@ -96,20 +115,12 @@ export function LearningCompanionPanel({
   useEffect(
     () => () => {
       streamCancelRef.current?.();
+      tokenBuffer.cancel();
       timersRef.current.forEach((timer) => window.clearTimeout(timer));
       objectUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
     },
-    [],
+    [tokenBuffer],
   );
-
-  const updateAssistant = (
-    assistantId: string,
-    update: (message: CompanionMessage) => CompanionMessage,
-  ) => {
-    setMessages((current) =>
-      current.map((message) => (message.id === assistantId ? update(message) : message)),
-    );
-  };
 
   const streamAssistantText = (assistantId: string, content: string, startAt = 1900) => {
     const tokens = splitTokens(content);
@@ -204,6 +215,7 @@ export function LearningCompanionPanel({
     const imageAttachments = attachments;
     if ((!question && imageAttachments.length === 0) || isGenerating) return;
     streamCancelRef.current?.();
+    tokenBuffer.cancel();
     timersRef.current.forEach((timer) => window.clearTimeout(timer));
     timersRef.current = [];
 
@@ -246,20 +258,19 @@ export function LearningCompanionPanel({
         }));
       },
       onToken(token) {
-        updateAssistant(assistantId, (message) => ({
-          ...message,
-          content: `${message.content}${token.content}`,
-        }));
+        tokenBuffer.push(assistantId, token.content);
       },
       onTrace(run) {
         traceDispatch({ type: 'upsertRun', run });
         onWorkflowTrace(run);
       },
       onDone() {
+        tokenBuffer.flush();
         setIsGenerating(false);
         updateAssistant(assistantId, (message) => ({ ...message, status: 'done' }));
       },
       onError(error) {
+        tokenBuffer.flush();
         setIsGenerating(false);
         updateAssistant(assistantId, (message) => ({
           ...message,
@@ -272,6 +283,7 @@ export function LearningCompanionPanel({
 
   const stop = () => {
     streamCancelRef.current?.();
+    tokenBuffer.cancel();
     timersRef.current.forEach((timer) => window.clearTimeout(timer));
     timersRef.current = [];
     setIsGenerating(false);
