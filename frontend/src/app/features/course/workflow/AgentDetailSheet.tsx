@@ -110,7 +110,7 @@ export function AgentDetailSheet({
                         <p className="text-xs font-semibold text-slate-700">{chunk.platform ?? '未知来源'}</p>
                         <span className="text-xs text-slate-500">{chunk.reliability == null ? '可信度待评估' : `可信度 ${Math.round(chunk.reliability * 100)}%`}</span>
                       </div>
-                      <p className="mt-2 text-xs leading-relaxed text-slate-600">{chunk.excerpt}</p>
+                      <p className="mt-2 text-xs leading-relaxed text-slate-600">{chunk.chunk_text}</p>
                     </article>
                   ))
                 ) : (

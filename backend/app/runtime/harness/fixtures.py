@@ -22,7 +22,7 @@ _DEFAULT_EVIDENCE: list[dict[str, Any]] = [
         "chunk_id": "fixture-chunk-sqli-1",
         "document_id": "fixture-doc-sqli",
         "domain": "course_websec",
-        "source": "OWASP Top 10 - A03 Injection",
+        "source": "https://owasp.org/Top10/A03_2021-Injection/",
         "excerpt": (
             "SQL Injection occurs when untrusted data is sent to an interpreter as part of a "
             "command or query. The attacker's hostile data can trick the interpreter into "
@@ -30,26 +30,42 @@ _DEFAULT_EVIDENCE: list[dict[str, Any]] = [
         ),
         "reliability": 0.95,
         "score": 0.92,
-        "metadata": {"platform": "owasp", "kp": "sql_injection"},
+        "metadata": {
+            "platform": "owasp",
+            "kp": "sql_injection",
+            "title": "OWASP Top 10 - A03 Injection",
+            "source_url": "https://owasp.org/Top10/A03_2021-Injection/",
+            "rights_note": "CC BY-SA 4.0",
+            "asset_type": "web_article",
+            "collection_mode": "manual",
+        },
     },
     {
         "chunk_id": "fixture-chunk-sqli-2",
         "document_id": "fixture-doc-portswigger",
         "domain": "course_websec",
-        "source": "PortSwigger Web Security Academy - SQL Injection",
+        "source": "https://portswigger.net/web-security/sql-injection",
         "excerpt": (
             "Most instances of SQL injection can be prevented by using parameterized queries "
             "(also known as prepared statements) instead of string concatenation within the query."
         ),
         "reliability": 0.93,
         "score": 0.89,
-        "metadata": {"platform": "portswigger", "kp": "sql_injection"},
+        "metadata": {
+            "platform": "portswigger",
+            "kp": "sql_injection",
+            "title": "PortSwigger Web Security Academy - SQL Injection",
+            "source_url": "https://portswigger.net/web-security/sql-injection",
+            "rights_note": "PortSwigger Academy reference — link back to source",
+            "asset_type": "web_article",
+            "collection_mode": "manual",
+        },
     },
     {
         "chunk_id": "fixture-chunk-sqli-3",
         "document_id": "fixture-doc-cwe89",
         "domain": "course_websec",
-        "source": "CWE-89 Improper Neutralization of Special Elements used in an SQL Command",
+        "source": "https://cwe.mitre.org/data/definitions/89.html",
         "excerpt": (
             "Without sufficient removal or quoting of SQL syntax in user-controllable inputs, "
             "the generated SQL query can cause those inputs to be interpreted as SQL instead of "
@@ -57,20 +73,36 @@ _DEFAULT_EVIDENCE: list[dict[str, Any]] = [
         ),
         "reliability": 0.9,
         "score": 0.85,
-        "metadata": {"platform": "mitre", "kp": "sql_injection"},
+        "metadata": {
+            "platform": "mitre",
+            "kp": "sql_injection",
+            "title": "CWE-89 Improper Neutralization of Special Elements used in an SQL Command",
+            "source_url": "https://cwe.mitre.org/data/definitions/89.html",
+            "rights_note": "Public common weakness enumeration reference",
+            "asset_type": "web_article",
+            "collection_mode": "manual",
+        },
     },
     {
         "chunk_id": "fixture-chunk-sqli-4",
         "document_id": "fixture-doc-bobby",
         "domain": "course_websec",
-        "source": "Little Bobby Tables - Defensive coding example",
+        "source": "internal://securehub/lab/sqli-bobby",
         "excerpt": (
             "Parameterized statements and stored procedures, paired with allowlist input "
             "validation, defeat the vast majority of SQL injection vectors."
         ),
         "reliability": 0.85,
         "score": 0.8,
-        "metadata": {"platform": "blog", "kp": "sql_injection"},
+        "metadata": {
+            "platform": "manual",
+            "kp": "sql_injection",
+            "title": "Little Bobby Tables - Defensive coding example",
+            "source_url": None,
+            "rights_note": "internal teaching note",
+            "asset_type": "markdown",
+            "collection_mode": "manual",
+        },
     },
 ]
 

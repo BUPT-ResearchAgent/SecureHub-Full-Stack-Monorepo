@@ -54,17 +54,20 @@ function citationToChunk(citation: ChatCitation): EvidenceChunkDTO {
   return {
     chunk_id: citation.id,
     document_id: `chat-${citation.id}`,
-    source_url: citation.url,
+    chunk_text: citation.excerpt,
+    score: citation.reliability / 100,
     platform: citation.type === 'internal' ? 'securehub' : citation.type,
+    rights_note: '演示引用，仅用于本地问答面板',
+    source_url: citation.url,
+    title: citation.title,
     author: citation.source,
     published_at: null,
     fetched_at: null,
-    rights_note: '演示引用，仅用于本地问答面板',
     asset_type: citation.type,
-    excerpt: citation.excerpt,
     page_no: null,
     chapter: citation.title,
     timestamp: null,
+    license: null,
     reliability: citation.reliability / 100,
   };
 }

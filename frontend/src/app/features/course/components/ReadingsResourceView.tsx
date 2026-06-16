@@ -49,8 +49,8 @@ function fallbackReadings(resource: ResourceItem): ReadingGroup[] {
     const platform = chunk.platform ?? 'securehub';
     acc[platform] = acc[platform] ?? [];
     acc[platform].push({
-      title: chunk.chapter ?? `${platformLabel(platform)} 阅读材料`,
-      summary: chunk.excerpt,
+      title: chunk.title ?? chunk.chapter ?? `${platformLabel(platform)} 阅读材料`,
+      summary: chunk.chunk_text,
       url: chunk.source_url ?? '#',
       chunkId: chunk.chunk_id,
     });

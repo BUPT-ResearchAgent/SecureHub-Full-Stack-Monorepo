@@ -211,14 +211,17 @@ export function EvidenceDrawer() {
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div className="flex flex-wrap items-center gap-1.5">
                     <SourceBadge platform={chunk.platform} />
-                    <CollectionModeBadge mode={chunk.metadata?.collection_mode} />
+                    <CollectionModeBadge mode={chunk.collection_mode ?? undefined} />
                   </div>
                   <span className="rounded-md bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">
                     可信度 {formatReliability(chunk.reliability)}
                   </span>
                 </div>
 
-                <p className="mt-3 text-sm leading-6 text-slate-700">{chunk.excerpt}</p>
+                {chunk.title && (
+                  <h3 className="mt-3 text-sm font-semibold text-slate-900">{chunk.title}</h3>
+                )}
+                <p className="mt-2 text-sm leading-6 text-slate-700">{chunk.chunk_text}</p>
 
                 <dl className="mt-3 grid gap-2 text-xs text-slate-500">
                   <div className="flex justify-between gap-3">
@@ -242,7 +245,12 @@ export function EvidenceDrawer() {
                 </dl>
 
                 {chunk.rights_note && (
-                  <p className="mt-3 rounded-lg bg-slate-50 p-2 text-xs leading-5 text-slate-500">{chunk.rights_note}</p>
+                  <p className="mt-3 rounded-lg bg-slate-50 p-2 text-xs leading-5 text-slate-500">
+                    {chunk.rights_note}
+                    {chunk.license && chunk.license !== chunk.rights_note ? (
+                      <span className="ml-1 text-slate-400">· {chunk.license}</span>
+                    ) : null}
+                  </p>
                 )}
 
                 {chunk.source_url && (

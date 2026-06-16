@@ -306,24 +306,24 @@ JSON shape:
 
 ### evidence
 Event name: `evidence`
-JSON shape:
+`data` 字段是 `EvidenceChunkDTO[]` —— 字段集 / 必填等级 / 枚举值由 **`docs/api/evidence-contract.md` v1**（2026-06-16 frozen）统一定义；
+本节只描述事件信封 + 触发时机。任何 evidence 相关字段改动**必须**走 evidence-contract 的双 review 流程，不允许直接在本文件修改字段。
+
+最小示例（`platform=owasp` 用于演示，完整字段列表见 evidence-contract.md §2）：
 ```json
 [
   {
     "chunk_id": "00000000-0000-0000-0000-000000000501",
     "document_id": "00000000-0000-0000-0000-000000000601",
-    "source_url": "https://owasp.org/www-community/attacks/SQL_Injection",
+    "chunk_text": "SQL 注入通常发生在未受信任输入被拼接进查询语句时。",
+    "score": 0.91,
     "platform": "owasp",
-    "author": "OWASP",
-    "published_at": null,
-    "fetched_at": "2026-06-09T00:00:00Z",
     "rights_note": "CC BY-SA 4.0",
+    "source_url": "https://owasp.org/www-community/attacks/SQL_Injection",
+    "title": "OWASP SQL Injection 攻击说明",
     "asset_type": "web_article",
-    "excerpt": "SQL injection occurs when untrusted input is included in a query.",
-    "page_no": null,
-    "chapter": "SQL 注入基础",
-    "timestamp": null,
-    "reliability": 0.9
+    "collection_mode": "scrapling",
+    "reliability": 0.92
   }
 ]
 ```
@@ -376,7 +376,7 @@ JSON shape:
 例子: RAG 召回不足时不调用 LLM，直接提示用户稍后重试或切换知识点。
 
 ## 3. 通用 DTO（与 backend/app/schemas/*.py B7 必须 1:1 对齐）
-- EvidenceChunkDTO: 字段包含 `chunk_id`, `document_id`, `source_url`, `platform`, `author`, `published_at`, `fetched_at`, `rights_note`, `asset_type`, `excerpt`, `page_no`, `chapter`, `timestamp`, `reliability`；B7 中必填字段集合为 `chunk_id`, `document_id`, `excerpt`，其余字段可为 `null`。
+- EvidenceChunkDTO: 字段集 + 必填等级 + 枚举值由 **`docs/api/evidence-contract.md` v1** 统一定义；摘要：必填集 `chunk_id` / `document_id` / `chunk_text` / `score` / `platform` / `rights_note`；条件必填 `source_url`（仅 `platform == "manual"` 时允许为 `null`）；其余可选展示字段含 `title`、`author`、`published_at`、`fetched_at`、`collection_mode`、`asset_type`、`page_no`、`chapter`、`timestamp`、`license`、`reliability`。本契约文件不再重复字段表。
 - LearningPathNodeDTO: `node_id`, `title`, `status`, `prerequisites`
 - LearningPathDTO: `course_id`, `path`
 - GeneratedResourceDTO: `id`, `resource_type`, `title`, `content`, `object_key`, `evidence_chunk_ids`, `quality_score`, `status`
@@ -387,3 +387,4 @@ JSON shape:
 
 ## 4. Changelog
 - 2026-06-09 初稿冻结
+- 2026-06-16 evidence 字段集解耦：§2 evidence 事件 + §3 EvidenceChunkDTO 摘要均改为指向 `docs/api/evidence-contract.md` v1；本文件不再重复字段表，evidence 字段改动一律走 evidence-contract 双 review。

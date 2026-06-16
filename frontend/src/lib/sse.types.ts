@@ -24,25 +24,50 @@ export type GeneratedResourceDTO = {
   quality_score?: number | null;
 };
 
+/**
+ * Closed enum for `EvidenceChunkDTO.collection_mode`.
+ * See `docs/api/evidence-contract.md §4.2`.
+ */
+export type EvidenceCollectionMode =
+  | 'manual'
+  | 'api'
+  | 'scrapling'
+  | 'mediacrawler'
+  | 'mindspider_reference';
+
+/**
+ * Wire-format evidence chunk — see `docs/api/evidence-contract.md` (v1, 2026-06-16).
+ *
+ * - Required: chunk_id, document_id, chunk_text, score, platform, rights_note.
+ * - Conditionally required: `source_url` is required unless `platform === 'manual'`.
+ * - All other fields optional.
+ *
+ * Backend Pydantic mirror: `backend/app/schemas/evidence.py::EvidenceChunkDTO`.
+ */
 export type EvidenceChunkDTO = {
+  // identity
   chunk_id: string;
   document_id: string;
-  source_url?: string | null;
-  platform?: string | null;
+  // body
+  chunk_text: string;
+  score: number;
+  // source identity
+  platform: string;
+  rights_note: string;
+  // source link (conditional; null only when platform === 'manual')
+  source_url: string | null;
+  // optional display
+  title?: string | null;
   author?: string | null;
   published_at?: string | null;
   fetched_at?: string | null;
-  rights_note?: string | null;
+  collection_mode?: EvidenceCollectionMode | null;
   asset_type?: string | null;
-  excerpt: string;
   page_no?: number | null;
   chapter?: string | null;
   timestamp?: number | null;
+  license?: string | null;
   reliability?: number | null;
-  metadata?: {
-    collection_mode?: 'manual' | 'api' | 'scrapling' | 'mediacrawler' | 'mindspider_reference';
-    [key: string]: unknown;
-  };
 };
 
 export type AgentRunDTO = {

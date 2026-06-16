@@ -33,12 +33,18 @@ export function TodayTasksPanel({
   onOpenBrief,
   onStartWork,
   onNavigate,
+  showHeader = true,
+  showRhythm = true,
 }: {
   dashboard: WorkspaceDashboard;
   dispatch: Dispatch<WorkspaceAction>;
   onOpenBrief: () => void;
   onStartWork: () => void;
   onNavigate: (path: string, message: string) => void;
+  /** 嵌入到「今日要务」整合视图时关闭，避免与 TodayCourseCard / TodayXpCard hero 重复。 */
+  showHeader?: boolean;
+  /** 嵌入到整合视图时由外层 RightStack 独立渲染 WeeklyRhythmCard。 */
+  showRhythm?: boolean;
 }) {
   const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null);
   const unfinished = dashboard.tasks.filter((task) => !task.completed).length;
@@ -53,16 +59,12 @@ export function TodayTasksPanel({
     toast.success('已延后处理，并加入明日关注');
   };
 
-  return (
-    <div className="space-y-5">
-      <WorkspaceHeader dashboard={dashboard} onOpenBrief={onOpenBrief} onStartWork={onStartWork} />
-
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,2fr)_minmax(280px,1fr)]">
-        <Card
-          title="今日要务"
-          subtitle="勾选后会联动顶部统计和本周节奏"
-          right={<Tag tone={unfinished ? 'blue' : 'green'}>{unfinished} 项待完成</Tag>}
-        >
+  const tasksCard = (
+    <Card
+      title="今日要务"
+      subtitle="勾选后会联动顶部统计和本周节奏"
+      right={<Tag tone={unfinished ? 'blue' : 'green'}>{unfinished} 项待完成</Tag>}
+    >
           <ul className="divide-y divide-slate-100">
             {dashboard.tasks.map((task) => (
               <li key={task.id} id={`workspace-task-${task.id}`} className="scroll-mt-24 py-4 first:pt-0 last:pb-0">
@@ -140,10 +142,23 @@ export function TodayTasksPanel({
               </li>
             ))}
           </ul>
-        </Card>
+    </Card>
+  );
 
-        <WeeklyRhythmCard dashboard={dashboard} />
-      </div>
+  return (
+    <div className="space-y-5">
+      {showHeader && (
+        <WorkspaceHeader dashboard={dashboard} onOpenBrief={onOpenBrief} onStartWork={onStartWork} />
+      )}
+
+      {showRhythm ? (
+        <div className="grid gap-4 xl:grid-cols-[minmax(0,2fr)_minmax(280px,1fr)]">
+          {tasksCard}
+          <WeeklyRhythmCard dashboard={dashboard} />
+        </div>
+      ) : (
+        tasksCard
+      )}
     </div>
   );
 }

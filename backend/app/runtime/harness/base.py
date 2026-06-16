@@ -446,16 +446,13 @@ class Harness:
             for card in evidence
         ]
 
+        from app.schemas.evidence import evidence_card_to_dto
+
         await ctx.emit(
             "evidence",
             {
                 "chunks": [
-                    {
-                        "chunk_id": card.chunk_id,
-                        "source": card.source or "unknown",
-                        "excerpt": card.excerpt,
-                        "score": card.score,
-                    }
+                    evidence_card_to_dto(card).model_dump(mode="json")
                     for card in ctx.last_evidence
                 ],
             },
@@ -606,16 +603,17 @@ class Harness:
         )
 
     async def _emit_evidence(self, ctx: HarnessContext, evidence: list[EvidenceCard]) -> None:
-        for card in evidence:
-            await ctx.emit(
-                {
-                    "event": "evidence",
-                    "chunk_id": card.chunk_id,
-                    "source": card.source or "unknown",
-                    "excerpt": card.excerpt,
-                    "reliability": card.reliability,
-                }
-            )
+        from app.schemas.evidence import evidence_card_to_dto
+
+        await ctx.emit(
+            {
+                "event": "evidence",
+                "chunks": [
+                    evidence_card_to_dto(card).model_dump(mode="json")
+                    for card in evidence
+                ],
+            }
+        )
 
     async def _emit_done(
         self,
