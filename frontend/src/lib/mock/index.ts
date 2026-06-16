@@ -14,18 +14,27 @@ export function setMockMode(enabled: boolean): void {
   window.localStorage.removeItem('securehub-mock');
 }
 
-export async function withMockFallback<T>(real: () => Promise<T>, mock: () => T): Promise<T> {
+function shouldFallbackToMock(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return true;
+  const status = (error as { status?: unknown }).status;
+  if (typeof status === 'number') {
+    return status >= 500 || status === 0;
+  }
+  return true;
+}
+
+export async function withMockFallback<T>(real: () => Promise<T>, mock: () => T | Promise<T>): Promise<T> {
   if (isMockMode()) {
-    return mock();
+    return await mock();
   }
 
   try {
     return await real();
   } catch (error) {
-    if (import.meta.env.DEV) {
-      console.warn('开发环境后端请求失败，已降级为演示数据。', error);
-      return mock();
+    if (!shouldFallbackToMock(error)) {
+      throw error;
     }
-    throw error;
+    console.warn('真实后端请求失败，已降级为演示数据。', error);
+    return await mock();
   }
 }

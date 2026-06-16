@@ -1,5 +1,5 @@
 // Status: mock
-import type { GeneratedResourceDTO, ProfileDTO } from '@/lib/sse.types';
+import type { GeneratedResourceDTO, ProfileDTO, ResourceType } from '@/lib/sse.types';
 
 export const mockProfile: ProfileDTO = {
   user_id: '00000000-0000-0000-0000-000000000001',
@@ -21,7 +21,15 @@ export const mockProfile: ProfileDTO = {
   updated_at: '2026-06-09T00:00:00Z',
 };
 
-export const mockGeneratedResources: GeneratedResourceDTO[] = [
+const rawGeneratedResources: Array<{
+  id: string;
+  user_id: string;
+  course_id: string;
+  resource_type: ResourceType;
+  title: string;
+  created_at: string;
+  quality_score: number;
+}> = [
   {
     id: 'history-doc-001',
     user_id: mockProfile.user_id,
@@ -104,3 +112,9 @@ export const mockGeneratedResources: GeneratedResourceDTO[] = [
     quality_score: 0.81,
   },
 ];
+
+export const mockGeneratedResources: GeneratedResourceDTO[] = rawGeneratedResources.map((resource) => ({
+  ...resource,
+  status: 'ready',
+  evidence_chunk_ids: ['fixture-chunk-sqli-1'],
+}));

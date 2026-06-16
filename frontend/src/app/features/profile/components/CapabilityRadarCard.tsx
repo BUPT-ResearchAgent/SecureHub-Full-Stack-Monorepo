@@ -10,6 +10,7 @@ import { motion } from 'motion/react';
 import { Activity, ShieldCheck } from 'lucide-react';
 import { Card, Tag } from '@/app/components/PageShell';
 import { EmptyState } from '@/app/components/StateView';
+import { normalizePersonaDimension, personaDimensionMatches } from '@/lib/persona-dimension-map';
 import type { CapabilityDTO } from '@/lib/sse.types';
 
 function percent(value: number): number {
@@ -36,9 +37,9 @@ export function CapabilityRadarCard({
   overlay,
   showRadar = true,
 }: CapabilityRadarCardProps) {
-  const [activeHighlight, setActiveHighlight] = useState<string | undefined>(highlightDimension);
+  const [activeHighlight, setActiveHighlight] = useState<string | undefined>(() => normalizePersonaDimension(highlightDimension));
   useEffect(() => {
-    setActiveHighlight(highlightDimension);
+    setActiveHighlight(normalizePersonaDimension(highlightDimension));
     if (!highlightDimension) return;
     const timer = window.setTimeout(() => setActiveHighlight(undefined), 4500);
     return () => window.clearTimeout(timer);
@@ -57,7 +58,7 @@ export function CapabilityRadarCard({
             {capabilities.map((capability) => {
               const score = percent(capability.score);
               const confidence = percent(capability.confidence);
-              const isActive = activeHighlight === capability.dimension;
+              const isActive = personaDimensionMatches(activeHighlight, capability.dimension);
               return (
                 <li key={capability.dimension} className="relative">
                   {isActive && (

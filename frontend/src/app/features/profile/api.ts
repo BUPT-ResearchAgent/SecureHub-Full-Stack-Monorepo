@@ -27,10 +27,20 @@ export function getMyProfile(userId: string): Promise<ProfileDTO> {
   );
 }
 
+function adaptGeneratedResource(resource: GeneratedResourceDTO, userId: string): GeneratedResourceDTO {
+  return {
+    ...resource,
+    user_id: resource.user_id ?? userId,
+  };
+}
+
 export function listGeneratedResources(userId: string): Promise<GeneratedResourceDTO[]> {
   const query = new URLSearchParams({ user_id: userId });
   return withMockFallback(
-    () => apiGet<GeneratedResourceDTO[]>(`/api/v1/generated-resources?${query.toString()}`),
+    async () => {
+      const resources = await apiGet<GeneratedResourceDTO[]>(`/api/v1/generated-resources?${query.toString()}`);
+      return resources.map((resource) => adaptGeneratedResource(resource, userId));
+    },
     () => mockGeneratedResources.map((resource) => ({ ...resource, user_id: userId })),
   );
 }

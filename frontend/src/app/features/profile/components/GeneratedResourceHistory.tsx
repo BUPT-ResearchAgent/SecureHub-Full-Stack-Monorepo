@@ -82,7 +82,7 @@ export function GeneratedResourceHistory({ userId }: { userId: string }) {
                 {resourceLabels[resource.resource_type]}
               </span>
               <span className="min-w-0 truncate font-medium text-slate-900">{resource.title}</span>
-              <span className="text-xs text-slate-500">{formatDate(resource.created_at)}</span>
+              <span className="text-xs text-slate-500">{resource.created_at ? formatDate(resource.created_at) : '-'}</span>
               <span
                 className={`inline-flex w-fit rounded-full px-2 py-0.5 text-xs font-medium ${qualityClass(resource.quality_score)}`}
                 aria-label={`质量分 ${qualityLabel}`}

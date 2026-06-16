@@ -18,6 +18,7 @@ import { ErrorState } from '@/app/components/StateView';
 import { CapabilityRadarCard } from '@/app/features/profile/components/CapabilityRadarCard';
 import { useSelectedCourse } from '@/app/features/course/catalog/useSelectedCourse';
 import { getMockQuizItemsForCourse } from '@/lib/mock/courses.mock';
+import { normalizePersonaDimension } from '@/lib/persona-dimension-map';
 import type { CapabilityDTO } from '@/lib/sse.types';
 import { runAssessment } from '../api';
 import { useCourseDispatch, useCourseState } from '../store';
@@ -152,7 +153,7 @@ export function AssessmentPanel() {
       dispatch({ type: 'setAssessment', assessment: report });
 
       // 2. evidence_floor 通过 → 3. 触发 outcome_evaluator.UpdateCapability
-      const firstDim = report.updatedCapabilities?.[0]?.dimension ?? 'web_security';
+      const firstDim = normalizePersonaDimension(report.updatedCapabilities?.[0]?.dimension) ?? 'Web 安全';
       const gateTimer = window.setTimeout(() => {
         pushEvent({
           id: 'gate-evidence',

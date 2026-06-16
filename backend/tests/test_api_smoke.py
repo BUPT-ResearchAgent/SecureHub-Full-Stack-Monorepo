@@ -1,12 +1,16 @@
 # Status: real
 
-"""API smoke test：验证关键 endpoint 注册成功且 200 OK。"""
+"""API smoke tests for critical endpoints."""
 
 from __future__ import annotations
 
 from fastapi.testclient import TestClient
 
 from app.main import app
+
+USER_ID = "00000000-0000-0000-0000-000000000001"
+COURSE_ID = "00000000-0000-0000-0000-000000000101"
+KP_ID = "00000000-0000-0000-0000-000000000201"
 
 
 def test_health():
@@ -39,13 +43,13 @@ def test_rag_search_returns_fixture():
     client = TestClient(app)
     response = client.post(
         "/api/v1/rag/search",
-        json={"domain": "course_websec", "query": "SQL 注入", "top_k": 3},
+        json={"domain": "course_websec", "query": "SQL injection", "top_k": 3},
     )
     assert response.status_code == 200
     body = response.json()
     assert "hits" in body
     assert len(body["hits"]) >= 3
-    assert body["fallback"] is True  # no DB in test
+    assert body["fallback"] is True
 
 
 def test_courses_list():
@@ -60,22 +64,55 @@ def test_course_plan_endpoint():
     client = TestClient(app)
     response = client.post(
         "/api/v1/courses/course-websec/plan",
-        json={"user_id": "demo", "selected_kp_ids": []},
+        json={"user_id": USER_ID, "target_node_id": KP_ID, "options": {"depth": 3}},
     )
     assert response.status_code == 200
     body = response.json()
+    assert body["course_id"] == COURSE_ID
     assert "path" in body
-    assert body["status"] == "ok"
 
 
-def test_profile_chat_endpoint():
+def test_profile_chat_endpoint_sse():
     client = TestClient(app)
     response = client.post(
         "/api/v1/profile/chat",
-        json={"user_id": "demo", "message": "我想从零学 Web 安全"},
+        json={"user_id": "demo", "message": "I want to learn web security."},
+    )
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/event-stream")
+    assert "event: " in response.text
+
+
+def test_tutor_ask_endpoint_sse():
+    client = TestClient(app)
+    response = client.post(
+        "/api/v1/tutor/ask",
+        json={"user_id": USER_ID, "course_id": COURSE_ID, "question": "Why use parameterized queries?"},
+    )
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/event-stream")
+    assert "event: " in response.text
+
+
+def test_resource_generate_endpoint_sse():
+    client = TestClient(app)
+    response = client.post(
+        "/api/v1/courses/course-websec/resources/generate?type=readings",
+        json={"type": "readings", "user_id": USER_ID, "kp_id": KP_ID},
+    )
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/event-stream")
+    assert "event: " in response.text
+
+
+def test_assessment_run_endpoint():
+    client = TestClient(app)
+    response = client.post(
+        "/api/v1/assessment/run",
+        json={"user_id": USER_ID, "course_id": COURSE_ID, "answers": [{"quiz_item_id": "q1", "answer": "A"}]},
     )
     assert response.status_code == 200
     body = response.json()
-    assert "persona" in body
-    # fixture 默认会落 6+ dimensions
-    assert isinstance(body["persona"].get("dimensions"), dict)
+    assert "score" in body
+    assert "feedback" in body
+    assert "updated_capabilities" in body

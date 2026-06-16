@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { History, PlayCircle } from 'lucide-react';
 import { ErrorBoundary } from '@/app/components/ErrorBoundary';
-import { ErrorState, InsufficientEvidenceState, LoadingState, ReconnectingState } from '@/app/components/StateView';
+import { LLMErrorState, LoadingState } from '@/app/components/StateView';
 import { useEvidence } from '@/app/components/EvidenceDrawer';
 import { useAgentTraceDispatch } from '@/app/features/agents/store';
 import { mockResources } from '../mockData';
+import { useRafTokenBuffer } from '@/lib/raf-token-buffer';
 import { useCourseDispatch, useCourseState } from '../store';
 import type { ResourceItem, ResourceType } from '../types';
 import { resourceTypeIcon, resourceTypeLabel } from '../utils';
@@ -83,6 +84,16 @@ export function ResourceTabs() {
   const resource = resources[active] ?? fallbackResource(active);
   const isGenerating = resource.status === 'generating';
   const isReconnecting = resource.errorCode === 'sse_reconnecting';
+  const tokenBuffer = useRafTokenBuffer((type, content) => {
+    const resourceType = type as ResourceType;
+    setResources((current) => {
+      const previous = current[resourceType] ?? fallbackResource(resourceType);
+      return {
+        ...current,
+        [resourceType]: { ...previous, content: `${previous.content}${content}` },
+      };
+    });
+  });
 
   const selectedResourceTypes = useMemo(() => resourceTypes, []);
 
@@ -110,6 +121,7 @@ export function ResourceTabs() {
 
   const startGeneration = (targetType: ResourceType = active) => {
     cancelRef.current?.();
+    tokenBuffer.cancel();
     setProgressText('正在校验输入');
     updateResource(targetType, (previous) => ({
       ...previous,
@@ -142,7 +154,7 @@ export function ResourceTabs() {
           }));
         },
         onToken(token) {
-          updateResource(targetType, (previous) => ({ ...previous, content: `${previous.content}${token.content}` }));
+          tokenBuffer.push(targetType, token.content);
         },
         onArtifact(artifact) {
           updateResource(targetType, (previous) => ({ ...previous, id: artifact.resource_id, title: artifact.title }));
@@ -151,6 +163,7 @@ export function ResourceTabs() {
           traceDispatch({ type: 'upsertRun', run });
         },
         onDone(done) {
+          tokenBuffer.flush();
           setProgressText('');
           updateResource(targetType, (previous) => ({
             ...previous,
@@ -171,6 +184,7 @@ export function ResourceTabs() {
             }));
             return;
           }
+          tokenBuffer.flush();
           setProgressText('');
           updateResource(targetType, (previous) => ({
             ...previous,
@@ -238,13 +252,10 @@ export function ResourceTabs() {
         </button>
       </div>
 
-      {isReconnecting && <ReconnectingState text={resource.errorMessage} />}
+      {isReconnecting && <LLMErrorState code={resource.errorCode} message={resource.errorMessage} />}
       {isGenerating && !isReconnecting && <LoadingState text={progressText || '正在生成中…'} />}
-      {resource.status === 'failed' && resource.errorCode === 'InsufficientEvidence' && (
-        <InsufficientEvidenceState onRetry={startGeneration} />
-      )}
-      {resource.status === 'failed' && resource.errorCode !== 'InsufficientEvidence' && (
-        <ErrorState message={resource.errorMessage ?? '资源生成失败'} onRetry={startGeneration} />
+      {resource.status === 'failed' && (
+        <LLMErrorState code={resource.errorCode} message={resource.errorMessage ?? '资源生成失败'} onRetry={() => startGeneration()} />
       )}
 
       {resource.status === 'ready' && !variantSelections[active] && (

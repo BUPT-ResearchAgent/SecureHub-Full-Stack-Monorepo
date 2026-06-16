@@ -15,8 +15,8 @@ ResourceStatus = Literal["generating", "ready", "failed"]
 
 class ResourceGenerateRequest(BaseModel):
     type: ResourceType
-    kp_id: str
-    user_id: str
+    kp_id: UUID
+    user_id: UUID
     options: JsonObject | None = None
 
 
