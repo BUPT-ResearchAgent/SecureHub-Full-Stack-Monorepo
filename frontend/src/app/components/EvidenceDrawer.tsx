@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { ExternalLink, X } from 'lucide-react';
 import type { EvidenceChunkDTO } from '@/lib/sse.types';
+import { getEvidenceText } from '@/lib/evidence-text';
 import { CollectionModeBadge } from '@/app/features/sources/components/CollectionModeBadge';
 import { SourceBadge } from '@/app/features/sources/components/SourceBadge';
 import { SourcePanel } from '@/app/features/sources/components/SourcePanel';
@@ -221,7 +222,7 @@ export function EvidenceDrawer() {
                 {chunk.title && (
                   <h3 className="mt-3 text-sm font-semibold text-slate-900">{chunk.title}</h3>
                 )}
-                <p className="mt-2 text-sm leading-6 text-slate-700">{chunk.chunk_text}</p>
+                <p className="mt-2 text-sm leading-6 text-slate-700">{getEvidenceText(chunk)}</p>
 
                 <dl className="mt-3 grid gap-2 text-xs text-slate-500">
                   <div className="flex justify-between gap-3">

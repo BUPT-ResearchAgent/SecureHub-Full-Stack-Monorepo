@@ -1,5 +1,6 @@
 import { ExternalLink, ShieldCheck } from 'lucide-react';
 import type { EvidenceChunkDTO } from '@/lib/sse.types';
+import { getEvidenceText } from '@/lib/evidence-text';
 import { CollectionModeBadge } from '@/app/features/sources/components/CollectionModeBadge';
 import { SourceBadge } from '@/app/features/sources/components/SourceBadge';
 
@@ -49,7 +50,7 @@ export function CitationPanel({ chunks }: { chunks: EvidenceChunkDTO[] }) {
                 <p className="mt-1 text-xs text-slate-500">
                   {chunk.author ?? '未标注作者'} · {formatDate(chunk.published_at)}
                 </p>
-                <p className="mt-2 text-xs leading-relaxed text-slate-600">{chunk.chunk_text}</p>
+                <p className="mt-2 text-xs leading-relaxed text-slate-600">{getEvidenceText(chunk)}</p>
                 {chunk.rights_note && (
                   <p className="mt-2 rounded-md bg-slate-50 p-2 text-[11px] leading-5 text-slate-500">{chunk.rights_note}</p>
                 )}

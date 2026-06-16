@@ -1,3 +1,5 @@
+// EvidenceChunkDTO is defined in api-types:
+// `chunk_text` is the primary text field, `excerpt` is legacy fallback only.
 export type {
   AgentRunDTO,
   CapabilityDTO,
