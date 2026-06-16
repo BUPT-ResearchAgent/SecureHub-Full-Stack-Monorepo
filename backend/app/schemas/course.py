@@ -3,6 +3,7 @@
 """Course and learning path DTOs for the A3 main path."""
 
 from typing import Literal
+from uuid import UUID
 
 from pydantic import BaseModel
 
@@ -25,5 +26,16 @@ class LearningPathNodeDTO(BaseModel):
 
 
 class LearningPathDTO(BaseModel):
-    course_id: str
+    course_id: UUID | str
+    path: list[LearningPathNodeDTO]
+
+
+class CoursePlanRequest(BaseModel):
+    user_id: UUID
+    target_node_id: UUID
+    options: dict[str, object] | None = None
+
+
+class CoursePlanResponse(BaseModel):
+    course_id: UUID | str
     path: list[LearningPathNodeDTO]

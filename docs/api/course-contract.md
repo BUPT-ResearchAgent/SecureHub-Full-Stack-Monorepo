@@ -4,7 +4,7 @@
 ## 0. 公共约定
 - 所有 ID 用 UUID（字符串）
 - 所有时间字段 ISO 8601 UTC
-- 错误统一 `{detail: str, code?: str}`
+- 错误统一 `{detail:{message,code}}`
 - 分页统一 `?page=1&page_size=20`，响应 `{items, total, page, page_size}`
 
 ## 1. REST endpoints
@@ -36,7 +36,7 @@ Error codes: 400 / 422 / 503
 Notes: `code` 对演示数据固定为 `course_websec_intro`；列表默认只返回 enabled 课程。
 
 ### 1.2 POST /api/v1/courses/{cid}/plan
-Status: planned
+Status: partial-real
 Owner: member-a
 Request shape:
 ```json
@@ -64,7 +64,7 @@ Error codes: 400 / 404 / 422 / 503
 Notes: 路径必须来自 `knowledge_nodes` / `knowledge_edges`，不能由 LLM 裸生成。
 
 ### 1.3 POST /api/v1/courses/{cid}/resources/generate?type=doc|ppt|mindmap|quiz|lab|video|readings   (SSE)
-Status: planned
+Status: partial-real
 Owner: member-a
 Request shape:
 ```json
@@ -76,7 +76,7 @@ Request shape:
 }
 ```
 Response shape: SSE event stream，事件类型见 §2
-Error codes: 400 / 404 / 422 / 502 / 503
+Error codes: 400 / 404 / 422 / 429 / 502 / 504 / 500
 Notes: `evidence_chunk_ids` 非空，否则返回 422 `InsufficientEvidence`；第一个 `token` 事件前必须先发送 `evidence`。
 
 ### 1.4 GET  /api/v1/agent-runs?workflow=&user_id=&limit=
@@ -138,7 +138,7 @@ Error codes: 400 / 404 / 422 / 503
 Notes: 前端 Agent Trace 只依赖本接口和 SSE `trace`，不直接读数据库。
 
 ### 1.6 POST /api/v1/profile/chat                                                                    (SSE)
-Status: planned
+Status: partial-real
 Owner: member-a
 Request shape:
 ```json
@@ -149,7 +149,7 @@ Request shape:
 }
 ```
 Response shape: SSE event stream，事件类型见 §2
-Error codes: 400 / 422 / 502 / 503
+Error codes: 400 / 422 / 429 / 502 / 504 / 500
 Notes: 画像构建完成后必须能更新 `ProfileDTO.dimensions` 和 `CapabilityDTO[]`。
 
 ### 1.7 GET  /api/v1/profile/me
@@ -255,7 +255,7 @@ Error codes: 400 / 422 / 503
 Notes: `top_k` 默认 5，上限 50；`domain` 必须过滤，禁止跨 domain 裸搜。
 
 ### 1.10 POST /api/v1/tutor/ask                                                                       (P1, SSE)
-Status: planned
+Status: partial-real
 Owner: member-a
 Request shape:
 ```json
@@ -267,11 +267,11 @@ Request shape:
 }
 ```
 Response shape: SSE event stream，事件类型见 §2
-Error codes: 400 / 404 / 422 / 502 / 503
+Error codes: 400 / 404 / 422 / 429 / 502 / 504 / 500
 Notes: career_planner 只做路由，不新增 tutor agent；答案仍需 `evidence`。
 
 ### 1.11 POST /api/v1/assessment/run                                                                 (P1)
-Status: planned
+Status: partial-real
 Owner: member-a
 Request shape:
 ```json
@@ -291,7 +291,7 @@ Response shape:
   ]
 }
 ```
-Error codes: 400 / 404 / 422 / 503
+Error codes: 400 / 404 / 422 / 429 / 502 / 504 / 500
 Notes: 必须写 `learning_events`，再由 outcome_evaluator 更新 `user_capabilities`。
 
 ## 2. SSE 事件契约（7 种，frozen）
@@ -386,5 +386,6 @@ JSON shape:
 - CapabilityDTO: `dimension`, `score`, `confidence`, `evidence_count`
 
 ## 4. Changelog
+- 2026-06-16 backend B worker: §2.1 endpoints moved to real-first adapters with ImportError fallbacks; profile/tutor/resource generation use SSE; errors normalize to `{detail:{message,code}}`.
 - 2026-06-09 初稿冻结
 - 2026-06-16 evidence 字段集解耦：§2 evidence 事件 + §3 EvidenceChunkDTO 摘要均改为指向 `docs/api/evidence-contract.md` v1；本文件不再重复字段表，evidence 字段改动一律走 evidence-contract 双 review。
