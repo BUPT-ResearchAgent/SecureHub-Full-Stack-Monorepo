@@ -1,5 +1,7 @@
 # Status: real
 
+import os
+
 import pytest
 from fastapi.testclient import TestClient
 from pgvector.sqlalchemy import Vector
@@ -10,6 +12,24 @@ from sqlalchemy.ext.compiler import compiles
 from app.db import models  # noqa: F401
 from app.db.base import Base
 from app.main import app
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    config.addinivalue_line(
+        "markers",
+        "llm_live: manual tests that call real LLM providers and may consume API quota",
+    )
+
+
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    if config.getoption("-m"):
+        return
+    if os.getenv("ENABLE_LLM_LIVE_TESTS", "false").lower() in {"1", "true", "yes", "on"}:
+        return
+    skip_live = pytest.mark.skip(reason="set ENABLE_LLM_LIVE_TESTS=true and run pytest -m llm_live")
+    for item in items:
+        if "llm_live" in item.keywords:
+            item.add_marker(skip_live)
 
 
 @compiles(JSONB, "sqlite")

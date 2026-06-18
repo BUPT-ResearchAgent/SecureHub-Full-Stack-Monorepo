@@ -10,6 +10,7 @@ Seeds:
 - 1 placeholder ``documents`` row per knowledge point + 4 ``chunks`` per
   document = 60 chunks total. Embeddings stay ``NULL`` with
   ``embedding_status='pending'`` for the embedding pipeline to fill in.
+- 5 SQL injection ``quiz_items`` bound to the SQL injection knowledge node.
 """
 
 import asyncio
@@ -18,6 +19,7 @@ from hashlib import sha256
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.db.models.learning.quiz_item import QuizItem
 from app.db.models.knowledge.chunk import Chunk
 from app.db.seeds._constants import (
     COURSE_WEBSEC_CODE,
@@ -133,6 +135,69 @@ TOPIC_HINTS: dict[str, list[str]] = {
     ],
 }
 
+SQL_INJECTION_QUIZ_ITEMS: list[dict[str, object]] = [
+    {
+        "id": stable_id("quiz:websec:sql-injection:definition"),
+        "type": "single_choice",
+        "question": "SQL 注入的核心成因是什么？",
+        "options": [
+            "把未受信任输入拼接进 SQL 语句，导致查询结构可被改变",
+            "数据库使用了索引，导致查询速度过快",
+            "页面使用了 HTTPS，导致 Cookie 自动携带",
+            "浏览器执行了用户提交的 JavaScript",
+        ],
+        "answer": "把未受信任输入拼接进 SQL 语句，导致查询结构可被改变",
+        "difficulty": 2,
+    },
+    {
+        "id": stable_id("quiz:websec:sql-injection:parameterized-query"),
+        "type": "single_choice",
+        "question": "下列哪项是防御 SQL 注入最稳定的主要方式？",
+        "options": [
+            "参数化查询 / 预编译语句",
+            "只在前端限制输入长度",
+            "隐藏数据库报错信息即可",
+            "把所有请求都改成 POST",
+        ],
+        "answer": "参数化查询 / 预编译语句",
+        "difficulty": 2,
+    },
+    {
+        "id": stable_id("quiz:websec:sql-injection:impact"),
+        "type": "multi_choice",
+        "question": "SQL 注入可能造成哪些影响？",
+        "options": [
+            "绕过认证",
+            "读取敏感数据",
+            "修改数据库记录",
+            "自动阻止所有 XSS",
+        ],
+        "answer": "绕过认证;读取敏感数据;修改数据库记录",
+        "difficulty": 3,
+    },
+    {
+        "id": stable_id("quiz:websec:sql-injection:xss-difference"),
+        "type": "single_choice",
+        "question": "SQL 注入与 XSS 的主要区别是什么？",
+        "options": [
+            "SQL 注入主要影响后端数据库查询，XSS 主要影响浏览器端脚本执行上下文",
+            "SQL 注入只发生在图片上传，XSS 只发生在数据库备份",
+            "SQL 注入不需要用户输入，XSS 不需要页面渲染",
+            "两者没有区别，只是名称不同",
+        ],
+        "answer": "SQL 注入主要影响后端数据库查询，XSS 主要影响浏览器端脚本执行上下文",
+        "difficulty": 3,
+    },
+    {
+        "id": stable_id("quiz:websec:sql-injection:least-privilege"),
+        "type": "short_answer",
+        "question": "为什么最小权限数据库账号能降低 SQL 注入的影响范围？",
+        "options": None,
+        "answer": "即使查询被注入，应用账号也只能执行必要的读写操作，不能随意改表、删库或访问无关敏感数据。",
+        "difficulty": 4,
+    },
+]
+
 
 def _source_profile(slug: str) -> dict[str, object]:
     default = {
@@ -171,6 +236,7 @@ async def _seed(session: AsyncSession) -> dict[str, int]:
     edge_count = 0
     doc_count = 0
     chunk_count = 0
+    quiz_count = 0
 
     # ---- course ----
     course = await courses.get_by_code(COURSE_WEBSEC_CODE)
@@ -274,6 +340,7 @@ async def _seed(session: AsyncSession) -> dict[str, int]:
             "fetched_at": fetched_at.isoformat(),
             "license": profile["license"],
             "rights_note": profile["rights_note"],
+            "collection_mode": "manual",
             "asset_type": "markdown_full",
             "kp_slug": slug,
             "level": level,
@@ -344,6 +411,7 @@ async def _seed(session: AsyncSession) -> dict[str, int]:
                     "fetched_at": fetched_at.isoformat(),
                     "license": profile["license"],
                     "rights_note": profile["rights_note"],
+                    "collection_mode": "manual",
                     "asset_type": "markdown_full",
                     "chapter": name,
                     "reliability": 0.9,
@@ -377,6 +445,7 @@ async def _seed(session: AsyncSession) -> dict[str, int]:
                         "fetched_at": fetched_at.isoformat(),
                         "license": profile["license"],
                         "rights_note": profile["rights_note"],
+                        "collection_mode": "manual",
                         "asset_type": "markdown_full",
                         "chapter": name,
                         "reliability": 0.9,
@@ -386,12 +455,41 @@ async def _seed(session: AsyncSession) -> dict[str, int]:
         await chunks.bulk_create(chunk_rows)
         chunk_count += len(chunk_rows)
 
+    # ---- SQL injection quiz items ----
+    sql_node_pk = seed_node_ids["sql-injection"]
+    for item in SQL_INJECTION_QUIZ_ITEMS:
+        quiz_id = item["id"]
+        existing_quiz = await session.get(QuizItem, quiz_id)
+        if existing_quiz is None:
+            session.add(
+                QuizItem(
+                    id=quiz_id,
+                    kp_id=sql_node_pk,
+                    type=str(item["type"]),
+                    question=str(item["question"]),
+                    options=item["options"],
+                    answer=str(item["answer"]),
+                    difficulty=int(item["difficulty"]),
+                    generated_by_skill=None,
+                )
+            )
+            quiz_count += 1
+        else:
+            existing_quiz.kp_id = sql_node_pk
+            existing_quiz.type = str(item["type"])
+            existing_quiz.question = str(item["question"])
+            existing_quiz.options = item["options"]
+            existing_quiz.answer = str(item["answer"])
+            existing_quiz.difficulty = int(item["difficulty"])
+            await session.flush()
+
     return {
         "courses": course_count,
         "nodes": node_count,
         "edges": edge_count,
         "documents": doc_count,
         "chunks": chunk_count,
+        "quiz_items": quiz_count,
     }
 
 

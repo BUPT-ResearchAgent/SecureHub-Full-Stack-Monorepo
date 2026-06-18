@@ -44,13 +44,14 @@ jobs:
       XFYUN_API_KEY: ""
       XFYUN_API_SECRET: ""
       MIN_EVIDENCE: "3"
+      ENABLE_LLM_LIVE_TESTS: "false"
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v3
       - run: uv sync --frozen
       - run: uv run python -c "from app.main import app; print(app.title)"
       - run: uv run alembic upgrade head
-      - run: uv run pytest --collect-only -q
+      - run: uv run pytest -m "not llm_live" -q
 
   frontend:
     runs-on: ubuntu-latest

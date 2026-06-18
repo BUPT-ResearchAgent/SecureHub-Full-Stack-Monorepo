@@ -83,6 +83,7 @@ class RetrievalService:
                         "fetched_at": metadata.get("fetched_at"),
                         "rights_note": metadata.get("rights_note"),
                         "license": metadata.get("license"),
+                        "collection_mode": metadata.get("collection_mode"),
                         "asset_type": metadata.get("asset_type") or document.source_type,
                         "chapter": metadata.get("chapter"),
                         "page_no": metadata.get("page_no"),
