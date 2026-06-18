@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 import json
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 
 
 SUPPORTED_MEDIACRAWLER_PLATFORMS = frozenset({"bili", "bilibili", "xhs", "zhihu"})
@@ -107,7 +108,9 @@ def _normalize_xhs(
 ) -> NormalizedMediaSource:
     title = _string_or_none(item.get("title")) or "小红书学习笔记"
     desc = _string_or_none(item.get("desc")) or ""
-    url = _string_or_none(item.get("note_url")) or f"https://www.xiaohongshu.com/explore/{item.get('note_id')}"
+    url = _strip_url_query(
+        _string_or_none(item.get("note_url")) or f"https://www.xiaohongshu.com/explore/{item.get('note_id')}"
+    )
     author = _string_or_none(item.get("nickname")) or "小红书公开作者"
     published_at = _timestamp_to_iso(item.get("time"))
     metadata = _base_metadata(
@@ -327,3 +330,8 @@ def _string_or_none(value: object) -> str | None:
         return None
     text = str(value).strip()
     return text or None
+
+
+def _strip_url_query(url: str) -> str:
+    parts = urlsplit(url)
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, "", ""))

@@ -41,6 +41,13 @@ from app.repositories.storage.storage_objects import StorageObjectRepository
 
 CHUNKS_PER_DOC = 4
 DOMAIN = "course_websec"
+COURSE_RETRIEVAL_ALIASES = [
+    "course-websec",
+    "WEB-SEC-101",
+    COURSE_WEBSEC_CODE,
+    "Web 安全基础",
+    "学习路径",
+]
 
 SOURCE_PROFILES: dict[str, dict[str, object]] = {
     "sql-injection": {
@@ -166,8 +173,9 @@ async def _seed(session: AsyncSession) -> dict[str, int]:
     chunk_count = 0
 
     # ---- course ----
-    if await courses.get_by_code(COURSE_WEBSEC_CODE) is None:
-        await courses.create(
+    course = await courses.get_by_code(COURSE_WEBSEC_CODE)
+    if course is None:
+        course = await courses.create(
             course_id=COURSE_WEBSEC_ID,
             code=COURSE_WEBSEC_CODE,
             title=COURSE_WEBSEC_TITLE,
@@ -175,30 +183,52 @@ async def _seed(session: AsyncSession) -> dict[str, int]:
             description=COURSE_WEBSEC_DESCRIPTION,
         )
         course_count = 1
+    else:
+        course.title = COURSE_WEBSEC_TITLE
+        course.domain = DOMAIN
+        course.description = COURSE_WEBSEC_DESCRIPTION
+        await session.flush()
+    course_pk = course.id
 
     # ---- nodes ----
+    existing_nodes_by_name = {
+        row.name: row for row in await graph.list_nodes(domain=DOMAIN, course_id=course_pk)
+    }
+    seed_node_ids = {}
     for slug, name, level in WEBSEC_NODES:
         nid = node_id(slug)
-        if await graph.get_node(nid) is None:
-            await graph.create_node(
+        existing_node = await graph.get_node(nid)
+        if existing_node is None:
+            existing_node = existing_nodes_by_name.get(name)
+        if existing_node is None:
+            existing_node = await graph.create_node(
                 node_id=nid,
                 domain=DOMAIN,
                 name=name,
-                course_id=COURSE_WEBSEC_ID,
+                course_id=course_pk,
                 description=f"《Web 安全基础》知识点：{name}",
                 node_type="concept",
                 level=level,
                 metadata={"slug": slug},
             )
             node_count += 1
+        else:
+            existing_node.domain = DOMAIN
+            existing_node.course_id = course_pk
+            existing_node.description = existing_node.description or f"《Web 安全基础》知识点：{name}"
+            existing_node.node_type = existing_node.node_type or "concept"
+            existing_node.level = existing_node.level or level
+            existing_node.metadata_ = dict(existing_node.metadata_ or {}) | {"slug": slug}
+            await session.flush()
+        seed_node_ids[slug] = existing_node.id
 
     # ---- edges ----
     existing_edges = {
         (e.source_id, e.target_id, e.edge_type) for e in await graph.list_edges()
     }
     for src_slug, tgt_slug in WEBSEC_EDGES:
-        src_id = node_id(src_slug)
-        tgt_id = node_id(tgt_slug)
+        src_id = seed_node_ids[src_slug]
+        tgt_id = seed_node_ids[tgt_slug]
         if (src_id, tgt_id, "prerequisite") in existing_edges:
             continue
         await graph.create_edge(
@@ -214,6 +244,7 @@ async def _seed(session: AsyncSession) -> dict[str, int]:
     for slug, name, level in WEBSEC_NODES:
         did = document_id(slug)
         profile = _source_profile(slug)
+        document_url = f"https://demo.securehub.local/websec/{slug}.md"
         markdown_body = "\n\n".join([f"# {name}", *_chunk_texts(slug, name)])
         markdown_bytes = markdown_body.encode("utf-8")
         markdown_hash = sha256(markdown_bytes).hexdigest()
@@ -255,7 +286,7 @@ async def _seed(session: AsyncSession) -> dict[str, int]:
                 domain=DOMAIN,
                 source_type="manual_import",
                 title=f"{name} · 教学讲义",
-                url=str(profile["url"]),
+                url=document_url,
                 content_hash=markdown_hash,
                 raw_text=markdown_body,
                 metadata=source_metadata,
@@ -267,7 +298,7 @@ async def _seed(session: AsyncSession) -> dict[str, int]:
         else:
             existing_document.source_type = "manual_import"
             existing_document.title = f"{name} · 教学讲义"
-            existing_document.url = str(profile["url"])
+            existing_document.url = document_url
             existing_document.content_hash = markdown_hash
             existing_document.raw_text = markdown_body
             existing_document.metadata_ = source_metadata
@@ -299,8 +330,12 @@ async def _seed(session: AsyncSession) -> dict[str, int]:
                 row.token_count = len(chunk_text.split())
                 row.embedding_status = row.embedding_status or "pending"
                 row.metadata_ = {
+                    "course_id": str(course_pk),
+                    "course_slug": "course-websec",
+                    "course_code": COURSE_WEBSEC_CODE,
+                    "course_aliases": COURSE_RETRIEVAL_ALIASES,
                     "kp_slug": slug,
-                    "kp_ids": [str(node_id(slug))],
+                    "kp_ids": [str(seed_node_ids[slug])],
                     "section": i + 1,
                     "platform": profile["platform"],
                     "source_url": profile["url"],
@@ -328,8 +363,12 @@ async def _seed(session: AsyncSession) -> dict[str, int]:
                     embedding=None,
                     embedding_status="pending",
                     metadata_={
+                        "course_id": str(course_pk),
+                        "course_slug": "course-websec",
+                        "course_code": COURSE_WEBSEC_CODE,
+                        "course_aliases": COURSE_RETRIEVAL_ALIASES,
                         "kp_slug": slug,
-                        "kp_ids": [str(node_id(slug))],
+                        "kp_ids": [str(seed_node_ids[slug])],
                         "section": i + 1,
                         "platform": profile["platform"],
                         "source_url": profile["url"],
