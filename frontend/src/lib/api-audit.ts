@@ -41,11 +41,12 @@ export const ENDPOINT_AUDIT: EndpointAudit[] = [
     status: 'partial-real',
     summary: '课程目录列表（默认只返回 enabled 课程）',
     realFields: ['id', 'code', 'title', 'description', 'progress'],
-    fallbackMock: 'mockCourse + courseCatalog',
-    lastVerified: '2026-06-14',
+    fallbackMock: 'mockCourse + courseCatalog / Workspace 今日课程 fixture 预览',
+    lastVerified: '2026-06-18',
     knownIssues: [
       '后端实际只有 1 门 Web 安全课，多课程演示由前端 courseCatalog 补齐',
       '`progress` 是用户级字段，未接入个性化时是常量',
+      'Workspace 今日课程 adapter 对网络错误、5xx、超时或字段异常降级 fixture；4xx 业务错误透出 UI 错误态',
     ],
   },
   {

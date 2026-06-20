@@ -1,5 +1,6 @@
 import { BookOpen, Wrench, Trophy, Shield, Target, FileSearch, Clock, ExternalLink, Loader2 } from 'lucide-react';
 import { useState, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { PageShell, Card, Tag } from '../components/PageShell';
 
 interface CTFEvent {
@@ -136,12 +137,21 @@ const Grid = ({
 );
 
 export function Practice() {
+  const [params] = useSearchParams();
+  const fromCourseSqli = params.get('from') === 'course-sqli';
+
   return (
-    <PageShell
-      title="实战进阶"
-      subtitle="教程、工具、竞赛与靶场 · 行动导向的实战能力建设"
-      actions={<button className="px-3 py-1.5 text-sm bg-brand-blue-600 text-white rounded-lg">我要参赛</button>}
-      tabs={[
+    <div className="space-y-4">
+      {fromCourseSqli && (
+        <div className="rounded-xl border border-brand-blue-100 bg-brand-blue-50/70 px-4 py-3 text-sm text-brand-blue-800">
+          同一画像驱动的延展示范：这里复用 SQL 注入学习结果，演示 Competition / Practice 入口；不新增真实竞赛 API。
+        </div>
+      )}
+      <PageShell
+        title="实战进阶"
+        subtitle="教程、工具、竞赛与靶场 · 行动导向的实战能力建设"
+        actions={<button className="px-3 py-1.5 text-sm bg-brand-blue-600 text-white rounded-lg">我要参赛</button>}
+        tabs={[
         {
           key: 'tutorial',
           label: '教程中心',
@@ -288,7 +298,8 @@ export function Practice() {
             </Card>
           ),
         },
-      ]}
-    />
+        ]}
+      />
+    </div>
   );
 }

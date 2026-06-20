@@ -71,6 +71,7 @@ export function Research() {
   const [compareError, setCompareError] = useState<string | null>(null);
   const [detail, setDetail] = useState<DetailResponse | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const fromCourseSqli = params.get('from') === 'course-sqli';
 
   const loadItems = async () => {
     if (activeTab === 'recommend' || activeTab === 'hot' || activeItemType === 'compare') return;
@@ -224,6 +225,11 @@ export function Research() {
 
   return (
     <>
+      {fromCourseSqli && (
+        <div className="mb-4 rounded-xl border border-brand-blue-100 bg-brand-blue-50/70 px-4 py-3 text-sm text-brand-blue-800">
+          同一画像驱动的延展示范：这里复用 SQL 注入课程画像，演示 Research / Fund 推荐入口；当前仍按科研页面既有 mock / partial-real 数据展示。
+        </div>
+      )}
       <PageShell
         title="科研创新"
         subtitle="基金、动态、文章、专利 · 聚合科研资源与机会发现"

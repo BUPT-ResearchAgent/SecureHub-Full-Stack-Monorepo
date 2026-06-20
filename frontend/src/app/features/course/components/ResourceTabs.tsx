@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { History, PlayCircle } from 'lucide-react';
+import { Briefcase, FilePenLine, FlaskConical, History, PlayCircle, Trophy } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { ErrorBoundary } from '@/app/components/ErrorBoundary';
 import { LLMErrorState, LoadingState } from '@/app/components/StateView';
 import { useEvidence } from '@/app/components/EvidenceDrawer';
@@ -32,12 +33,20 @@ import type { ResourceVariantKind, ResourceVersion } from '@/lib/types/resource-
 const resourceTypes: ResourceType[] = ['doc', 'ppt', 'mindmap', 'quiz', 'lab', 'video', 'readings'];
 
 function fallbackResource(type: ResourceType): ResourceItem {
+  const fixture = mockResources.find((resource) => resource.type === type);
+  if (fixture) {
+    return {
+      ...fixture,
+      id: `fixture-preview-${type}`,
+      title: `${fixture.title}（演示 fixture 预览）`,
+    };
+  }
   return {
     id: `fallback-${type}`,
     type,
-    title: `${resourceTypeLabel(type)}待生成`,
+    title: `${resourceTypeLabel(type)}演示预览`,
     status: 'idle',
-    content: '点击生成后，将由既有 9 个智能体协作产出内容。',
+    content: '当前暂无真实 artifact，展示演示 fixture 预览；点击生成后会优先请求真实 / partial-real 资源接口。',
     evidenceRefs: [],
   };
 }
@@ -65,12 +74,35 @@ function ResourceQualityBadge({ score }: { score?: number }) {
   );
 }
 
+function ExtensionButton({
+  children,
+  icon: Icon,
+  onClick,
+}: {
+  children: string;
+  icon: typeof FlaskConical;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-medium text-slate-700 hover:border-brand-blue-200 hover:bg-brand-blue-50 hover:text-brand-blue-700"
+    >
+      <Icon className="h-3.5 w-3.5" />
+      {children}
+    </button>
+  );
+}
+
 export function ResourceTabs() {
+  const navigate = useNavigate();
   const { currentKpId, resources: storedResources } = useCourseState();
   const courseDispatch = useCourseDispatch();
   const evidence = useEvidence();
   const traceDispatch = useAgentTraceDispatch();
   const cancelRef = useRef<() => void>();
+  const activeStreamTypeRef = useRef<ResourceType>('doc');
   const persistedSignaturesRef = useRef<Record<string, string>>({});
   const [active, setActive] = useState<ResourceType>('doc');
   const [resources, setResources] = useState<Partial<Record<ResourceType, ResourceItem>>>(() => initialResourceMap(storedResources));
@@ -121,6 +153,7 @@ export function ResourceTabs() {
 
   const startGeneration = (targetType: ResourceType = active) => {
     cancelRef.current?.();
+    activeStreamTypeRef.current = targetType;
     tokenBuffer.cancel();
     setProgressText('正在校验输入');
     updateResource(targetType, (previous) => ({
@@ -158,11 +191,13 @@ export function ResourceTabs() {
         },
         onArtifact(artifact) {
           const artifactType = artifact.resource_type ?? targetType;
+          activeStreamTypeRef.current = artifactType;
           updateResource(artifactType, (previous) => ({
             ...previous,
             id: artifact.resource_id,
             type: artifactType,
             title: artifact.title,
+            status: 'generating',
           }));
         },
         onTrace(run) {
@@ -171,7 +206,8 @@ export function ResourceTabs() {
         onDone(done) {
           tokenBuffer.flush();
           setProgressText('');
-          updateResource(targetType, (previous) => ({
+          const doneType = activeStreamTypeRef.current ?? targetType;
+          updateResource(doneType, (previous) => ({
             ...previous,
             status: 'ready',
             errorCode: undefined,
@@ -227,6 +263,37 @@ export function ResourceTabs() {
 
   return (
     <div className="space-y-4">
+      <div className="rounded-xl border border-brand-blue-100 bg-white px-4 py-3 shadow-sm">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-xs font-medium text-brand-blue-700">学完 SQL 注入后的中枢延展示范</p>
+            <h3 className="mt-1 text-sm font-semibold text-slate-900">同一画像驱动 Research / Fund / Job / Competition 串场</h3>
+            <p className="mt-1 max-w-3xl text-xs leading-relaxed text-slate-500">
+              这些入口只跳转到现有页面或 mock 面板，用于演示课程画像如何延展到科研、就业、竞赛和写作选题；不代表已接入真实 Fund / Job / Competition 数据。
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <ExtensionButton icon={FlaskConical} onClick={() => navigate('/research?tab=fund&from=course-sqli')}>
+              Research / Fund
+            </ExtensionButton>
+            <ExtensionButton icon={Briefcase} onClick={() => navigate('/careers?tab=jobs&from=course-sqli')}>
+              Job / Career
+            </ExtensionButton>
+            <ExtensionButton icon={Trophy} onClick={() => navigate('/practice?tab=contest&from=course-sqli')}>
+              Competition
+            </ExtensionButton>
+            <ExtensionButton icon={FilePenLine} onClick={() => navigate('/writing?tab=deduce&from=course-sqli')}>
+              Topic / Writing
+            </ExtensionButton>
+          </div>
+        </div>
+      </div>
+
+      <div className="rounded-xl border border-amber-200 bg-amber-50/70 px-4 py-3 text-sm text-amber-800">
+        当前资源工作台覆盖 doc / ppt / mindmap / quiz / lab / readings / video_script（前端以 video 类型承载）7 类展示。
+        未触发真实 artifact 时使用演示 fixture 预览，不代表后端已完成真实生成。
+      </div>
+
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap gap-2">
           {selectedResourceTypes.map((type) => {

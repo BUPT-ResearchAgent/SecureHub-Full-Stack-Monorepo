@@ -8,8 +8,9 @@ export type SearchItem = {
 };
 
 export const navItems: SearchItem[] = [
-  { id: 'nav-workspace', title: '总览', url: '/workspace?tab=today', category: 'nav' },
+  { id: 'nav-workspace', title: '总览', url: '/workspace', category: 'nav' },
   { id: 'nav-practice', title: '实战进阶', url: '/practice?tab=tutorial', category: 'nav' },
+  { id: 'nav-course', title: '课程学习', url: '/course', category: 'nav' },
   { id: 'nav-research', title: '科研创新', url: '/research?tab=fund', category: 'nav' },
   { id: 'nav-writing', title: '选题写作', url: '/writing?tab=deduce', category: 'nav' },
   { id: 'nav-chat', title: '智能问答', url: '/chat?tab=topic', category: 'nav' },
@@ -18,14 +19,12 @@ export const navItems: SearchItem[] = [
   { id: 'nav-tasks', title: '计划任务', url: '/tasks?tab=board', category: 'nav' },
   { id: 'nav-profile', title: '个人中心', url: '/profile?tab=persona', category: 'nav' },
 
-  { id: 'nav-workspace-today', title: '今日要务', summary: '查看今日工作内容和截止提醒', url: '/workspace?tab=today', category: 'nav', parent: '总览' },
-  { id: 'nav-workspace-ddl', title: '截止提醒', summary: '截止日期提醒', url: '/workspace?tab=ddl', category: 'nav', parent: '总览' },
-  { id: 'nav-workspace-actions', title: '推荐行动', summary: '系统推荐的处理行动', url: '/workspace?tab=actions', category: 'nav', parent: '总览' },
-  { id: 'nav-workspace-recent', title: '最近生成物', summary: '最近生成的内容', url: '/workspace?tab=recent', category: 'nav', parent: '总览' },
-  { id: 'nav-workspace-freshness', title: '数据新鲜度', summary: '数据更新状态', url: '/workspace?tab=freshness', category: 'nav', parent: '总览' },
-  { id: 'nav-workspace-industry', title: '行业热点', summary: '行业热点资讯', url: '/workspace?tab=industry', category: 'nav', parent: '总览' },
-  { id: 'nav-workspace-social', title: '社会热点', summary: '社会热点资讯', url: '/workspace?tab=social', category: 'nav', parent: '总览' },
-  { id: 'nav-workspace-policy', title: '国家政策', summary: '国家政策文件', url: '/workspace?tab=policy', category: 'nav', parent: '总览' },
+  { id: 'nav-workspace-today-course', title: '今日课程', summary: '继续 SQL 注入课程、查看进度和知识点', url: '/workspace#today-course', category: 'nav', parent: '总览' },
+  { id: 'nav-workspace-today-tasks', title: '今日任务', summary: '查看今日工作内容、简报和待处理任务', url: '/workspace#today-tasks', category: 'nav', parent: '总览' },
+  { id: 'nav-workspace-recent-resources', title: '生成资源', summary: '最近生成的课程资源与质量分', url: '/workspace#recent-resources', category: 'nav', parent: '总览' },
+  { id: 'nav-workspace-agent-runs', title: '智能体活动', summary: '最近 course_learning trace 与质量分', url: '/workspace#agent-runs', category: 'nav', parent: '总览' },
+  { id: 'nav-workspace-capability', title: '能力画像', summary: '基于 user_capabilities 的能力预览', url: '/workspace#capability', category: 'nav', parent: '总览' },
+  { id: 'nav-workspace-rhythm', title: '本周节奏', summary: '本周学习节奏、日程和数据状态', url: '/workspace#rhythm', category: 'nav', parent: '总览' },
 
   { id: 'nav-practice-tutorial', title: '教程中心', summary: '学习教程和工具使用', url: '/practice?tab=tutorial', category: 'nav', parent: '实战进阶' },
   { id: 'nav-practice-tools', title: '工具库', summary: '安全工具集', url: '/practice?tab=tools', category: 'nav', parent: '实战进阶' },
@@ -34,6 +33,12 @@ export const navItems: SearchItem[] = [
   { id: 'nav-practice-range', title: '靶场演练', summary: '在线靶场练习', url: '/practice?tab=range', category: 'nav', parent: '实战进阶' },
   { id: 'nav-practice-cases', title: '实战案例', summary: '真实攻防案例', url: '/practice?tab=cases', category: 'nav', parent: '实战进阶' },
   { id: 'nav-practice-ddl', title: '竞赛DDL', summary: '竞赛截止日期', url: '/practice?tab=ddl', category: 'nav', parent: '实战进阶' },
+
+  { id: 'nav-course-entry', title: '课程入口', summary: '选择课程并构建学习画像', url: '/course?courseId=web-security-foundation&view=structured&tab=entry', category: 'nav', parent: '课程学习' },
+  { id: 'nav-course-path', title: '学习路径', summary: '查看 SQL 注入个性化学习路径', url: '/course?courseId=web-security-foundation&view=structured&tab=path', category: 'nav', parent: '课程学习' },
+  { id: 'nav-course-workbench', title: '资源工作台', summary: '切换文档、PPT、思维导图、题目、实验、阅读与视频脚本', url: '/course?courseId=web-security-foundation&view=structured&tab=workbench', category: 'nav', parent: '课程学习' },
+  { id: 'nav-course-tutor', title: '辅导对话', summary: '进入课程上下文的智能辅导', url: '/course?courseId=web-security-foundation&view=structured&tab=tutor', category: 'nav', parent: '课程学习' },
+  { id: 'nav-course-assess', title: '效果评估', summary: '完成答题反馈和能力画像回流', url: '/course?courseId=web-security-foundation&view=structured&tab=assess', category: 'nav', parent: '课程学习' },
 
   { id: 'nav-research-fund', title: '基金项目', summary: '科研基金项目', url: '/research?tab=fund', category: 'nav', parent: '科研创新' },
   { id: 'nav-research-news', title: '科研动态', summary: '最新科研动态', url: '/research?tab=news', category: 'nav', parent: '科研创新' },
@@ -98,6 +103,7 @@ export const navItems: SearchItem[] = [
 export const pageItems: SearchItem[] = [
   { id: 'page-workspace', title: '工作台', summary: '今日要务、截止提醒、推荐行动、最近生成物', url: '/workspace', category: 'page' },
   { id: 'page-practice', title: '实战进阶', summary: '教程中心、工具库、竞赛专区', url: '/practice', category: 'page' },
+  { id: 'page-course', title: '课程学习', summary: '画像、路径、资源工作台、辅导对话、效果评估', url: '/course', category: 'page' },
   { id: 'page-research', title: '科研创新', summary: '基金项目、科研动态、学术创新、热点文章', url: '/research', category: 'page' },
   { id: 'page-writing', title: '选题写作', summary: '选题推演、写作模块、文档编辑、PPT大纲', url: '/writing', category: 'page' },
   { id: 'page-chat', title: '智能问答', summary: '选题指导、科研咨询、竞赛咨询', url: '/chat', category: 'page' },

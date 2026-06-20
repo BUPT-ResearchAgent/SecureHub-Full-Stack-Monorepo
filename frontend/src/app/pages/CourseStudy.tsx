@@ -85,20 +85,25 @@ const tabs: TabDef[] = [
 const tabOrder = ['entry', 'path', 'workbench', 'tutor', 'assess'] as const;
 type CourseTabKey = typeof tabOrder[number];
 type CourseView = 'chat' | 'structured';
+type LegacyCourseView = CourseView | 'resources';
 const courseViewStorageKey = 'securehub-course-view';
 
 function isCourseTab(value: string | null): value is CourseTabKey {
   return tabOrder.includes(value as CourseTabKey);
 }
 
-function isCourseView(value: string | null): value is CourseView {
-  return value === 'chat' || value === 'structured';
+function isCourseView(value: string | null): value is LegacyCourseView {
+  return value === 'chat' || value === 'structured' || value === 'resources';
+}
+
+function normalizeCourseView(value: LegacyCourseView): CourseView {
+  return value === 'resources' ? 'structured' : value;
 }
 
 function readStoredCourseView(): CourseView {
   if (typeof window === 'undefined') return 'chat';
   const stored = window.localStorage.getItem(courseViewStorageKey);
-  return isCourseView(stored) ? stored : 'chat';
+  return isCourseView(stored) ? normalizeCourseView(stored) : 'chat';
 }
 
 function CourseViewSwitch({
@@ -193,7 +198,7 @@ function CourseStudyInner() {
   const [demoRunning, setDemoRunning] = useState(false);
   const demoTimersRef = useRef<number[]>([]);
   const rawView = params.get('view');
-  const activeView: CourseView = isCourseView(rawView) ? rawView : initialView;
+  const activeView: CourseView = isCourseView(rawView) ? normalizeCourseView(rawView) : initialView;
   const rawTab = params.get('tab');
   const activeTab: CourseTabKey = isCourseTab(rawTab) ? rawTab : 'entry';
 
@@ -206,6 +211,13 @@ function CourseStudyInner() {
 
   useEffect(() => {
     window.localStorage.setItem(courseViewStorageKey, activeView);
+    if (rawView === 'resources') {
+      const next = new URLSearchParams(params);
+      next.set('view', 'structured');
+      if (!isCourseTab(next.get('tab'))) next.set('tab', 'workbench');
+      setParams(next, { replace: true });
+      return;
+    }
     if (isCourseView(rawView)) return;
     const next = new URLSearchParams(params);
     next.set('view', activeView);
