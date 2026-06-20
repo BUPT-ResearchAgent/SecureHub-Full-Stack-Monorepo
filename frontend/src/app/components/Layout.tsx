@@ -36,7 +36,7 @@ import {
 import { useAuth } from '@/app/features/auth/store';
 import { RoleSwitcher } from '@/app/features/teacher/RoleSwitcher';
 
-export type NavChild = { key: string; label: string };
+export type NavChild = { key: string; label: string; to?: string };
 export type NavItem = {
   path: string;
   icon: any;
@@ -44,20 +44,32 @@ export type NavItem = {
   children: NavChild[];
 };
 
+function navTargetForChild(item: NavItem, child: NavChild): string {
+  return child.to ?? `${item.path}?tab=${child.key}`;
+}
+
+function activeChildKey(item: NavItem, location: ReturnType<typeof useLocation>): string {
+  if (item.path === '/workspace' && location.hash) {
+    const hashKey = location.hash.replace(/^#/, '');
+    const matched = item.children.find((child) => child.to?.endsWith(`#${hashKey}`));
+    if (matched) return matched.key;
+  }
+  const search = new URLSearchParams(location.search);
+  return search.get('tab') || item.children[0].key;
+}
+
 export const navItems: NavItem[] = [
   {
     path: '/workspace',
     icon: LayoutDashboard,
     label: '总览',
     children: [
-      { key: 'today', label: '今日要务' },
-      { key: 'ddl', label: '截止提醒' },
-      { key: 'actions', label: '推荐行动' },
-      { key: 'recent', label: '最近生成物' },
-      { key: 'freshness', label: '数据新鲜度' },
-      { key: 'industry', label: '行业热点' },
-      { key: 'social', label: '社会热点' },
-      { key: 'policy', label: '国家政策' },
+      { key: 'today-course', label: '今日课程', to: '/workspace#today-course' },
+      { key: 'today-tasks', label: '今日任务', to: '/workspace#today-tasks' },
+      { key: 'recent-resources', label: '生成资源', to: '/workspace#recent-resources' },
+      { key: 'agent-runs', label: '智能体活动', to: '/workspace#agent-runs' },
+      { key: 'capability', label: '能力画像', to: '/workspace#capability' },
+      { key: 'rhythm', label: '本周节奏', to: '/workspace#rhythm' },
     ],
   },
   {
@@ -271,7 +283,7 @@ function LayoutFrame() {
                         navigate(item.path);
                       } else {
                         toggle(item.path);
-                        navigate(`${item.path}?tab=${item.children[0].key}`);
+                        navigate(navTargetForChild(item, item.children[0]));
                       }
                     }}
                     className={`w-full flex items-center gap-2.5 px-2.5 py-2 rounded-md transition-colors ${
@@ -300,13 +312,12 @@ function LayoutFrame() {
                     >
                       <ul className="mt-0.5 mb-1 ml-5 pl-2 border-l border-slate-200 space-y-0.5">
                         {item.children.map((child) => {
-                          const search = new URLSearchParams(location.search);
-                          const activeTab = search.get('tab') || item.children[0].key;
+                          const activeTab = activeChildKey(item, location);
                           const childActive = isActive && activeTab === child.key;
                           return (
                             <li key={child.key}>
                               <NavLink
-                                to={`${item.path}?tab=${child.key}`}
+                                to={navTargetForChild(item, child)}
                                 className={`block px-2 py-1.5 rounded-md text-sm transition-colors ${
                                   childActive
                                     ? 'bg-[#003399]/10 text-[#003399]'

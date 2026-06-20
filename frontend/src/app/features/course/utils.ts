@@ -37,7 +37,7 @@ export function resourceTypeLabel(type: ResourceType): string {
     mindmap: '思维导图',
     quiz: '练习题',
     lab: '实操案例',
-    video: '视频脚本',
+    video: '视频脚本（video_script）',
     readings: '拓展阅读',
   };
   return labels[type];

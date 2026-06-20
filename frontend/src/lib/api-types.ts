@@ -42,7 +42,10 @@ export type EvidenceCollectionMode =
 export interface EvidenceChunkDTO {
   chunk_id: string;
   document_id: string;
+  /** Primary evidence text field. Renderers must prefer `chunk_text` over legacy `excerpt`. */
   chunk_text: string;
+  /** Legacy fallback kept for older mock/backend payloads. */
+  excerpt?: string | null;
   score: number;
   platform: string;
   rights_note: string;

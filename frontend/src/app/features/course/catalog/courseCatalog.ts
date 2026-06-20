@@ -70,12 +70,19 @@ export const courseCatalogById = Object.fromEntries(
   courseCatalog.map((course) => [course.id, course]),
 ) as Record<string, CourseCatalogItem>;
 
+const courseIdAliases: Record<string, string> = {
+  'web-sec': 'web-security-foundation',
+  websec: 'web-security-foundation',
+  course_websec_intro: 'web-security-foundation',
+  '00000000-0000-0000-0000-000000000101': 'web-security-foundation',
+};
+
 /** 默认课程：保持第一门 Web 安全基础不变，前几轮演示数据全部围绕它构建。 */
 export const defaultCourseId: CourseCatalogItem['id'] = courseCatalog[0].id;
 
 export function getCourseById(courseId: string | null | undefined): CourseCatalogItem | undefined {
   if (!courseId) return undefined;
-  return courseCatalogById[courseId];
+  return courseCatalogById[courseIdAliases[courseId] ?? courseId];
 }
 
 export function resolveCourseId(courseId: string | null | undefined): string {

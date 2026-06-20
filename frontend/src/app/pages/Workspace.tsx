@@ -6,7 +6,7 @@
 
 import type { ReactNode } from 'react';
 import { useEffect, useMemo, useState } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { motion } from 'motion/react';
 import { toast } from 'sonner';
 import {
@@ -53,7 +53,11 @@ import { RecentAssetsPanel } from '@/app/features/workspace/components/RecentAss
 import { RecommendedActionsPanel } from '@/app/features/workspace/components/RecommendedActionsPanel';
 import { TodayTasksPanel } from '@/app/features/workspace/components/TodayTasksPanel';
 import { WeeklyRhythmCard } from '@/app/features/workspace/components/WeeklyRhythmCard';
-import { refreshDataSourceDemo } from '@/app/features/workspace/api';
+import {
+  loadTodayCourseSnapshot,
+  refreshDataSourceDemo,
+  type TodayCourseSnapshot,
+} from '@/app/features/workspace/api';
 import { useWorkspaceDashboard } from '@/app/features/workspace/store';
 import type { DataSourceStatus } from '@/app/features/workspace/types';
 import { firstHighPriorityTask } from '@/app/features/workspace/utils';
@@ -75,6 +79,15 @@ const SUBMODULE_TABS = [
 type SubmoduleTab = (typeof SUBMODULE_TABS)[number]['key'];
 const SUBMODULE_KEYS: readonly SubmoduleTab[] = SUBMODULE_TABS.map((tab) => tab.key);
 
+const WORKSPACE_ANCHORS = [
+  { id: 'today-course', label: '今日课程', description: '课程进度、知识点、真实 / fixture 来源状态' },
+  { id: 'today-tasks', label: '今日任务', description: '今日要务、简报和开始工作入口' },
+  { id: 'recent-resources', label: '生成资源', description: '最近课程资源与质量分' },
+  { id: 'agent-runs', label: '智能体活动', description: 'course_learning trace 预览' },
+  { id: 'capability', label: '能力画像', description: 'user_capabilities 预览' },
+  { id: 'rhythm', label: '本周节奏', description: '学习节奏、日程和 dev 数据状态' },
+] as const;
+
 function isSubmoduleTab(value: string | null): value is SubmoduleTab {
   return SUBMODULE_KEYS.includes(value as SubmoduleTab);
 }
@@ -85,7 +98,7 @@ const resourceLabels: Record<ResourceType, string> = {
   mindmap: '思维导图',
   quiz: '练习题',
   lab: '实操实验',
-  video: '视频脚本',
+  video: '视频脚本（video_script）',
   readings: '扩展阅读',
 };
 
@@ -110,17 +123,33 @@ function readLastCourseId(): string | null {
 
 export function Workspace() {
   const navigate = useNavigate();
+  const location = useLocation();
   const [params, setParams] = useSearchParams();
   const lastCourseId = readLastCourseId();
   const activeCourse =
     courseCatalog.find((course) => course.id === lastCourseId) ?? courseCatalog[0];
 
-  // 旧版 8 tab 仍由 sidebar / GlobalSearch 链接进入；新仪表盘上方常驻，tab 区域驻底。
+  // 旧版 8 tab reducer 仍保留；新版 Workspace 仅暴露一页式锚点入口。
   const { dashboard, dispatch, saveNow, resetDemo } = useWorkspaceDashboard();
   const [briefOpen, setBriefOpen] = useState(false);
   const tabParam = params.get('tab');
   const activeSubmoduleTab: SubmoduleTab = isSubmoduleTab(tabParam) ? tabParam : 'today';
   const activeSubmodule = SUBMODULE_TABS.find((tab) => tab.key === activeSubmoduleTab) ?? SUBMODULE_TABS[0];
+
+  useEffect(() => {
+    const hash = location.hash.replace(/^#/, '');
+    if (!hash) return;
+    window.setTimeout(() => {
+      document.getElementById(hash)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 80);
+  }, [location.hash]);
+
+  const scrollToWorkspaceAnchor = (anchorId: string) => {
+    navigate(`/workspace#${anchorId}`, { replace: true });
+    window.setTimeout(() => {
+      document.getElementById(anchorId)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 0);
+  };
 
   const goToPath = (path: string, message: string) => {
     navigate(path);
@@ -139,7 +168,7 @@ export function Workspace() {
       toast.success('今日要务已全部完成');
       return;
     }
-    setSubmoduleTab('today');
+    scrollToWorkspaceAnchor('today-tasks');
     window.setTimeout(() => {
       document.getElementById(`workspace-task-${task.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
     }, 120);
@@ -247,16 +276,18 @@ export function Workspace() {
         subtitle="A3 多智能体个性化学习的工作台入口 · 课程进度、生成资源、智能体活动与能力画像一屏可见"
       />
 
-      {/* 子模块工具栏与 tab nav：所有子页面公共。 */}
+      {/* 新版 Workspace 使用锚点导航，避免旧 tab query 进入无效状态。 */}
       <section className="space-y-3 border-y border-slate-200 py-4">
         <header className="flex flex-wrap items-end justify-between gap-3">
           <div className="min-w-0">
             <p className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-2.5 py-0.5 text-[11px] font-medium text-slate-600">
               <Layers className="h-3 w-3" />
-              总览子模块
+              Workspace 导航
             </p>
-            <h2 className="mt-1 text-lg font-semibold text-slate-900">{activeSubmodule.label}</h2>
-            <p className="mt-0.5 text-xs leading-relaxed text-slate-500">{activeSubmodule.description}</p>
+            <h2 className="mt-1 text-lg font-semibold text-slate-900">今日课程中枢总览</h2>
+            <p className="mt-0.5 text-xs leading-relaxed text-slate-500">
+              单页承载课程进度、生成资源、智能体活动、能力画像与任务节奏；旧 tab query 不再作为主入口。
+            </p>
           </div>
           <div className="flex flex-wrap items-center justify-end gap-2">
             <ToolbarButton icon={FileText} onClick={openBrief}>查看今日简报</ToolbarButton>
@@ -267,41 +298,36 @@ export function Workspace() {
           </div>
         </header>
 
-        <nav role="tablist" aria-label="总览子模块" className="flex flex-wrap gap-1.5">
-          {SUBMODULE_TABS.map((tab) => {
-            const selected = tab.key === activeSubmoduleTab;
+        <nav aria-label="Workspace 可见区域" className="flex flex-wrap gap-1.5">
+          {WORKSPACE_ANCHORS.map((anchor) => {
+            const selected = location.hash === `#${anchor.id}`;
             return (
               <button
-                key={tab.key}
+                key={anchor.id}
                 type="button"
-                role="tab"
-                aria-selected={selected}
-                onClick={() => setSubmoduleTab(tab.key)}
+                title={anchor.description}
+                onClick={() => scrollToWorkspaceAnchor(anchor.id)}
                 className={`rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors ${
                   selected
                     ? 'border-brand-blue-600 bg-brand-blue-50 text-brand-blue-700'
                     : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
                 }`}
               >
-                {tab.label}
+                {anchor.label}
               </button>
             );
           })}
         </nav>
       </section>
 
-      {activeSubmoduleTab === 'today' ? (
-        <IntegratedTodayView
-          activeCourseId={activeCourse.id}
-          dashboard={dashboard}
-          dispatch={dispatch}
-          onOpenBrief={openBrief}
-          onStartWork={startWork}
-          onNavigate={goToPath}
-        />
-      ) : (
-        <div>{renderSubmodule()}</div>
-      )}
+      <IntegratedTodayView
+        activeCourseId={activeCourse.id}
+        dashboard={dashboard}
+        dispatch={dispatch}
+        onOpenBrief={openBrief}
+        onStartWork={startWork}
+        onNavigate={goToPath}
+      />
 
       <DailyBriefDrawer brief={dashboard.dailyBrief} open={briefOpen} onClose={() => setBriefOpen(false)} />
     </div>
@@ -311,7 +337,7 @@ export function Workspace() {
 /**
  * 「今日要务」专属的整合视图。
  *
- * 用户访问 /workspace?tab=today 时显示：4 行结构，每张卡片都有清晰的归属位置，
+ * 用户访问 /workspace 或 /workspace#today-course 时显示：4 行结构，每张卡片都有清晰的归属位置，
  * 避免「新仪表盘 + 旧 panel 粗暴叠加 + 第三列下垂溢出到旧区域」的旧问题。
  *
  *   Row1 (Hero, 2/3 + 1/3)        ：TodayCourseCard | TodayXpCard
@@ -340,7 +366,7 @@ function IntegratedTodayView({
   return (
     <div className="space-y-5">
       {/* Row 1 · Hero */}
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_280px]">
+      <div id="today-course" className="grid scroll-mt-24 gap-4 xl:grid-cols-[minmax(0,1fr)_280px]">
         <TodayCourseCard
           courseId={activeCourseId}
           onContinue={() => navigate(`/course?courseId=${activeCourseId}&view=chat`)}
@@ -363,25 +389,33 @@ function IntegratedTodayView({
 
       {/* Row 3 · Insights（3 等宽小卡片，与 Row 4 不互相挤压） */}
       <div className="grid gap-4 lg:grid-cols-3">
-        <RecentResourcesCard onOpen={() => navigate('/profile?tab=resources')} />
-        <RecentAgentRunsCard
-          onOpen={() => navigate(`/course?courseId=${activeCourseId}&view=structured`)}
-        />
-        <CapabilityRadarPreviewCard onOpen={() => navigate('/profile?tab=persona')} />
+        <div id="recent-resources" className="scroll-mt-24">
+          <RecentResourcesCard onOpen={() => navigate('/profile?tab=resources')} />
+        </div>
+        <div id="agent-runs" className="scroll-mt-24">
+          <RecentAgentRunsCard
+            onOpen={() => navigate(`/course?courseId=${activeCourseId}&view=structured`)}
+          />
+        </div>
+        <div id="capability" className="scroll-mt-24">
+          <CapabilityRadarPreviewCard onOpen={() => navigate('/profile?tab=persona')} />
+        </div>
       </div>
 
       {/* Row 4 · 工作主区 */}
       <div className="grid gap-4 xl:grid-cols-[minmax(0,2fr)_minmax(280px,1fr)]">
-        <TodayTasksPanel
-          dashboard={dashboard}
-          dispatch={dispatch}
-          onOpenBrief={onOpenBrief}
-          onStartWork={onStartWork}
-          onNavigate={onNavigate}
-          showHeader={false}
-          showRhythm={false}
-        />
-        <div className="space-y-4">
+        <div id="today-tasks" className="scroll-mt-24">
+          <TodayTasksPanel
+            dashboard={dashboard}
+            dispatch={dispatch}
+            onOpenBrief={onOpenBrief}
+            onStartWork={onStartWork}
+            onNavigate={onNavigate}
+            showHeader={false}
+            showRhythm={false}
+          />
+        </div>
+        <div id="rhythm" className="space-y-4 scroll-mt-24">
           <WeeklyRhythmCard dashboard={dashboard} />
           <LearningScheduleCard
             onContinue={() => navigate(`/course?courseId=${activeCourseId}&view=chat`)}
@@ -531,13 +565,6 @@ function PageHeader({ title, subtitle }: { title: string; subtitle: string }) {
   );
 }
 
-type CourseApiItem = {
-  id?: string;
-  title?: string;
-  progress?: number;
-  current_kp_title?: string;
-};
-
 function TodayCourseCard({
   courseId,
   onContinue,
@@ -552,25 +579,40 @@ function TodayCourseCard({
   onViewPath: () => void;
 }) {
   const course = courseCatalog.find((item) => item.id === courseId) ?? courseCatalog[0];
-  const [progress, setProgress] = useState<number>(course.progressPercent);
-  const [kpTitle, setKpTitle] = useState<string>(course.currentKnowledgePoint);
+  const [snapshot, setSnapshot] = useState<TodayCourseSnapshot>(() => ({
+    id: course.id,
+    title: course.title,
+    progressPercent: course.progressPercent,
+    currentKnowledgePoint: course.currentKnowledgePoint,
+    source: 'fixture',
+    message: '正在读取今日课程状态。',
+  }));
+  const [status, setStatus] = useState<'loading' | 'ready' | 'fallback' | 'error'>('loading');
+  const [statusMessage, setStatusMessage] = useState('正在读取今日课程状态。');
 
-  // 进度环：尝试拉真实后端数据，失败则保留 catalog 默认值。
   useEffect(() => {
     let cancelled = false;
-    fetch(`${API_BASE_URL}/api/v1/courses`, { headers: { Accept: 'application/json' } })
-      .then((response) => (response.ok ? response.json() : null))
-      .then((payload: unknown) => {
-        if (cancelled || !payload) return;
-        const items: CourseApiItem[] = Array.isArray(payload)
-          ? payload
-          : ((payload as { items?: CourseApiItem[] }).items ?? []);
-        const first = items[0];
-        if (first?.progress != null) setProgress(Math.round(Math.max(0, Math.min(1, first.progress)) * 100));
-        if (first?.current_kp_title) setKpTitle(first.current_kp_title);
+    setStatus('loading');
+    setStatusMessage('正在读取今日课程状态。');
+    loadTodayCourseSnapshot(course)
+      .then((next) => {
+        if (cancelled) return;
+        setSnapshot(next);
+        setStatus(next.source === 'fixture' ? 'fallback' : 'ready');
+        setStatusMessage(next.message);
       })
-      .catch(() => {
-        /* 静默降级，TodayCourseCard 默认值已能撑起首屏。 */
+      .catch((error) => {
+        if (cancelled) return;
+        setSnapshot({
+          id: course.id,
+          title: course.title,
+          progressPercent: course.progressPercent,
+          currentKnowledgePoint: course.currentKnowledgePoint,
+          source: 'fixture',
+          message: '课程接口返回业务错误，已保留本地预览并提示错误态。',
+        });
+        setStatus('error');
+        setStatusMessage(error instanceof Error ? error.message : '课程接口返回业务错误');
       });
     return () => {
       cancelled = true;
@@ -579,7 +621,16 @@ function TodayCourseCard({
 
   const radius = 28;
   const circumference = 2 * Math.PI * radius;
+  const progress = snapshot.progressPercent;
   const dashOffset = circumference * (1 - progress / 100);
+  const sourceBadge =
+    status === 'loading'
+      ? { label: '加载中', className: 'border-slate-200 bg-slate-50 text-slate-500' }
+      : status === 'ready'
+        ? { label: '真实接口', className: 'border-emerald-200 bg-emerald-50 text-emerald-700' }
+        : status === 'fallback'
+          ? { label: 'fixture 预览', className: 'border-amber-200 bg-amber-50 text-amber-700' }
+          : { label: '业务错误', className: 'border-red-200 bg-red-50 text-red-700' };
 
   return (
     <motion.section
@@ -629,10 +680,16 @@ function TodayCourseCard({
             <div className="flex items-center gap-2 text-xs font-medium text-brand-blue-600">
               <GraduationCap className="h-3.5 w-3.5" />
               今日课程
+              <span className={`rounded-full border px-2 py-0.5 text-[11px] ${sourceBadge.className}`}>
+                {sourceBadge.label}
+              </span>
             </div>
-            <h2 className="mt-1 truncate text-xl font-semibold text-slate-900">{course.title}</h2>
+            <h2 className="mt-1 truncate text-xl font-semibold text-slate-900">{snapshot.title}</h2>
             <p className="mt-1 truncate text-sm text-slate-500">
-              当前知识点：<span className="text-slate-700">{kpTitle}</span> · {course.tags.join(' / ')}
+              当前知识点：<span className="text-slate-700">{snapshot.currentKnowledgePoint}</span> · {course.tags.join(' / ')}
+            </p>
+            <p className={`mt-1 text-xs ${status === 'error' ? 'text-red-600' : 'text-slate-400'}`}>
+              {statusMessage}
             </p>
           </div>
         </div>

@@ -74,6 +74,7 @@ export function Careers() {
   const [quickLoading, setQuickLoading] = useState(false);
   const tabParam = params.get('tab');
   const activeTab: CareersTabKey = isCareersTab(tabParam) ? tabParam : 'jobs';
+  const fromCourseSqli = params.get('from') === 'course-sqli';
   const currentIndex = tabs.findIndex((tab) => tab.key === activeTab);
   const currentLabel = tabs[currentIndex]?.label ?? tabs[0].label;
 
@@ -155,38 +156,45 @@ export function Careers() {
   };
 
   return (
-    <PageShell
-      title="就业招聘"
-      subtitle="岗位、差距、路径、简历、面试与企业画像 · 成长导向的就业工作台"
-      defaultTab="jobs"
-      actions={
-        <CareerToolbar
-          workbench={workbench}
-          dispatch={dispatch}
-          quickLoading={quickLoading}
-          onSave={handleSave}
-          onQuickGenerate={handleQuickGenerate}
-          onReset={handleReset}
-        />
-      }
-      tabs={tabs.map((tab) => ({
-        key: tab.key,
-        label: tab.label,
-        description: tab.description,
-        render: () => (
-          <div className="space-y-4">
-            <CareerWorkbenchBar
-              workbench={workbench}
-              jobs={MOCK_JOBS}
-              questions={MOCK_INTERVIEW_QUESTIONS}
-              currentLabel={currentLabel}
-              onPrev={goPrev}
-              onNext={goNext}
-            />
-            {tabContent[tab.key]()}
-          </div>
-        ),
-      }))}
-    />
+    <div className="space-y-4">
+      {fromCourseSqli && (
+        <div className="rounded-xl border border-brand-blue-100 bg-brand-blue-50/70 px-4 py-3 text-sm text-brand-blue-800">
+          同一画像驱动的延展示范：这里复用 SQL 注入学习结果，演示 Job / Career 推荐入口；当前仍使用就业工作台既有 mock 数据。
+        </div>
+      )}
+      <PageShell
+        title="就业招聘"
+        subtitle="岗位、差距、路径、简历、面试与企业画像 · 成长导向的就业工作台"
+        defaultTab="jobs"
+        actions={
+          <CareerToolbar
+            workbench={workbench}
+            dispatch={dispatch}
+            quickLoading={quickLoading}
+            onSave={handleSave}
+            onQuickGenerate={handleQuickGenerate}
+            onReset={handleReset}
+          />
+        }
+        tabs={tabs.map((tab) => ({
+          key: tab.key,
+          label: tab.label,
+          description: tab.description,
+          render: () => (
+            <div className="space-y-4">
+              <CareerWorkbenchBar
+                workbench={workbench}
+                jobs={MOCK_JOBS}
+                questions={MOCK_INTERVIEW_QUESTIONS}
+                currentLabel={currentLabel}
+                onPrev={goPrev}
+                onNext={goNext}
+              />
+              {tabContent[tab.key]()}
+            </div>
+          ),
+        }))}
+      />
+    </div>
   );
 }

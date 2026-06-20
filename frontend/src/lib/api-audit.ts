@@ -1,6 +1,6 @@
 // Status: real
 //
-// 11 个 A3 主路径端点的审计清单。
+// 12 个 A3 主路径端点的审计清单。
 // 与 docs/api/course-contract.md §1 一一对应；BackendStatusPanel 的「契约对比」tab
 // 渲染本表，前端 fallback 策略也以此表为权威。
 
@@ -41,11 +41,12 @@ export const ENDPOINT_AUDIT: EndpointAudit[] = [
     status: 'partial-real',
     summary: '课程目录列表（默认只返回 enabled 课程）',
     realFields: ['id', 'code', 'title', 'description', 'progress'],
-    fallbackMock: 'mockCourse + courseCatalog',
-    lastVerified: '2026-06-14',
+    fallbackMock: 'mockCourse + courseCatalog / Workspace 今日课程 fixture 预览',
+    lastVerified: '2026-06-18',
     knownIssues: [
       '后端实际只有 1 门 Web 安全课，多课程演示由前端 courseCatalog 补齐',
       '`progress` 是用户级字段，未接入个性化时是常量',
+      'Workspace 今日课程 adapter 对网络错误、5xx、超时或字段异常降级 fixture；4xx 业务错误透出 UI 错误态',
     ],
   },
   {
@@ -56,9 +57,10 @@ export const ENDPOINT_AUDIT: EndpointAudit[] = [
     contractRef: '1.2',
     status: 'partial-real',
     summary: '生成学习路径（依赖知识图谱）',
+    realFields: ['course_id', 'path.node_id', 'path.title', 'path.status', 'path.prerequisites'],
     fallbackMock: 'mockLearningPath',
     lastVerified: '2026-06-16',
-    knownIssues: ['已接 real-first endpoint；A service 函数尚未交付时回退到 GenerateLearningPath skill'],
+    knownIssues: ['返回 fixture 学习路径数据，待 A 替换为真 skill 调用'],
   },
   {
     id: 'course-resources-generate',
@@ -68,10 +70,12 @@ export const ENDPOINT_AUDIT: EndpointAudit[] = [
     contractRef: '1.3',
     status: 'partial-real',
     summary: '生成 7 类学习资源（SSE，含 evidence/token/artifact）',
+    realFields: ['event:evidence.chunk_text', 'event:token.content', 'event:artifact.resource_type', 'event:trace.provider'],
     fallbackMock: 'replayResourceGeneration（按 type 回放）',
     lastVerified: '2026-06-16',
     knownIssues: [
-      '已接 real-first SSE endpoint；A service 函数尚未交付时回退到资源 skill map',
+      '返回 fixture SSE 事件流，待 A 替换为真资源生成 skill 调用',
+      '后端使用 plural adapter `app.services.resources.generate_resource`，与其他 4 个 endpoint（singular `app.services.agent`）不一致，但已通过 adapter 屏蔽',
       '前端已从 isMockMode 守门改为 withMockFallback + mock SSE replay',
     ],
     sse: true,
@@ -110,9 +114,10 @@ export const ENDPOINT_AUDIT: EndpointAudit[] = [
     contractRef: '1.6',
     status: 'partial-real',
     summary: '画像构建对话（SSE，写入 dimensions + capabilities）',
+    realFields: ['event:token.content', 'event:trace.provider', 'event:done.quality_score'],
     fallbackMock: 'replayPersonaChat',
     lastVerified: '2026-06-16',
-    knownIssues: ['已改为 SSE real-first；A service 函数尚未交付时回退到 BuildLearningPersona skill'],
+    knownIssues: ['返回 fixture SSE 事件流，待 A 替换为真画像构建 skill 调用'],
     sse: true,
   },
   {
@@ -161,9 +166,10 @@ export const ENDPOINT_AUDIT: EndpointAudit[] = [
     contractRef: '1.10',
     status: 'partial-real',
     summary: '辅导问答（career_planner 路由，SSE）',
+    realFields: ['event:evidence.chunk_text', 'event:token.content', 'event:trace.provider', 'event:done.quality_score'],
     fallbackMock: 'replayTutorAsk',
     lastVerified: '2026-06-16',
-    knownIssues: ['已改为 SSE real-first；A service 函数尚未交付时回退到 RouteTutorQuestion skill'],
+    knownIssues: ['返回 fixture SSE 事件流，待 A 替换为真辅导问答 skill 调用'],
     sse: true,
   },
   {
@@ -174,9 +180,23 @@ export const ENDPOINT_AUDIT: EndpointAudit[] = [
     contractRef: '1.11',
     status: 'partial-real',
     summary: '评估提交，回流 learning_events 与 user_capabilities',
+    realFields: ['score', 'feedback', 'updated_capabilities.dimension', 'updated_capabilities.score'],
     fallbackMock: 'replayAssessment',
     lastVerified: '2026-06-16',
-    knownIssues: ['已接 real-first endpoint；A service 函数尚未交付时回退到 RunAssessment skill'],
+    knownIssues: ['返回 fixture score 与 updated_capabilities；fallback adapter 可兼容 capability_delta 投影，待 A 替换为真评估 skill 调用'],
+  },
+  {
+    id: 'llm-health',
+    path: '/api/v1/llm/health',
+    method: 'GET',
+    owner: 'A',
+    contractRef: 'LLM',
+    status: 'partial-real',
+    summary: 'LLM Provider 健康检查与 fixture / fallback 模式标识',
+    realFields: ['provider', 'model', 'mode', 'live_enabled', 'status', 'last_error', 'rate_limit_state'],
+    fallbackMock: 'BackendStatusPanel 内置 fixture/error 兜底',
+    lastVerified: '2026-06-16',
+    knownIssues: ['返回 mode=fixture，真 LLM Provider 接入后改 mode=real'],
   },
 ];
 

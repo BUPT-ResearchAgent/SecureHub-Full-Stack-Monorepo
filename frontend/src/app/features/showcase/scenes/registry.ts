@@ -1,9 +1,11 @@
 // Status: mock
 //
-// Showcase scene 注册表：2 个 ready + 6 个 placeholder。
+// Showcase scene 注册表：4 个 ready + 6 个 placeholder。
 // 占位场景在 catalog 显示"即将上线"，点击不进入播放页（仅 toast 提示）。
 
 import { aiGovernanceScene } from './aiGovernance.scene';
+import { courseExtensionScene } from './courseExtension.scene';
+import { sqlClosureScene } from './sqlClosure.scene';
 import { sqlInjectionScene } from './sqlInjection.scene';
 import type { ShowcaseScene } from './types';
 
@@ -25,6 +27,8 @@ const placeholder = (
 
 export const SCENE_REGISTRY: ShowcaseScene[] = [
   sqlInjectionScene,
+  sqlClosureScene,
+  courseExtensionScene,
   aiGovernanceScene,
   placeholder(
     'crypto-foundation',
