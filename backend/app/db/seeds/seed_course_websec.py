@@ -5,10 +5,10 @@
 Seeds:
 
 - 1 course row
-- 15 ``knowledge_nodes`` (one per knowledge-point slug)
-- 30 ``knowledge_edges`` (prerequisite DAG)
+- 17 ``knowledge_nodes`` (one per knowledge-point slug)
+- 39 ``knowledge_edges`` (prerequisite DAG)
 - 1 placeholder ``documents`` row per knowledge point + 4 ``chunks`` per
-  document = 60 chunks total. Embeddings stay ``NULL`` with
+  document = 68 chunks total. Embeddings stay ``NULL`` with
   ``embedding_status='pending'`` for the embedding pipeline to fill in.
 - 5 SQL injection ``quiz_items`` bound to the SQL injection knowledge node.
 """
@@ -94,6 +94,20 @@ SOURCE_PROFILES: dict[str, dict[str, object]] = {
         "license": "Public learning material",
         "rights_note": "PortSwigger 公开学习资料，保留链接，仅做课程索引和摘要切片。",
     },
+    "deserialization": {
+        "platform": "owasp",
+        "url": "https://owasp.org/www-project-cheat-sheets/cheatsheets/Deserialization_Cheat_Sheet.html",
+        "author": "OWASP",
+        "license": "CC BY-SA 4.0",
+        "rights_note": "OWASP Cheat Sheet 公开资料，教学演示引用并保留来源。",
+    },
+    "secure-coding": {
+        "platform": "owasp",
+        "url": "https://owasp.org/www-project-secure-coding-practices-quick-reference-guide/",
+        "author": "OWASP",
+        "license": "CC BY-SA 4.0",
+        "rights_note": "OWASP Secure Coding Practices 公开资料，教学演示引用并保留来源。",
+    },
 }
 
 TOPIC_HINTS: dict[str, list[str]] = {
@@ -132,6 +146,18 @@ TOPIC_HINTS: dict[str, list[str]] = {
         "安全设计应把文件存到 Web 根目录外，重命名对象 key，并按白名单校验类型与大小。",
         "图片处理、压缩包解压和 Office/PDF 预览都需要单独的沙箱或异步扫描流程。",
         "演示时强调 object_key 与 storage_objects 管理，避免把大文件直接塞进业务表。",
+    ],
+    "deserialization": [
+        "反序列化漏洞发生在应用把不可信数据还原成对象并触发构造、魔术方法或 gadget chain 时。",
+        "常见入口包括 Cookie、Session、缓存、消息队列、文件上传后的对象流以及跨服务 RPC 参数。",
+        "防御重点是禁止反序列化不可信输入，改用 JSON 等简单数据结构，并对类型、签名和来源做严格校验。",
+        "修复验收要覆盖依赖库 gadget、密钥轮换、对象白名单、异常日志和最小权限运行环境。",
+    ],
+    "secure-coding": [
+        "安全编码不是单个检查点，而是从需求、设计、编码、测试、发布到复盘的修复闭环。",
+        "Web 安全课程中的参数化查询、输出编码、CSRF Token、文件存储隔离和权限校验都应落到编码规范。",
+        "代码评审要关注输入边界、认证授权、错误处理、日志脱敏、依赖版本和默认配置是否安全。",
+        "演示中的证据卡片应把漏洞成因、修复 commit、回归测试和剩余风险连起来，避免只给泛化建议。",
     ],
 }
 

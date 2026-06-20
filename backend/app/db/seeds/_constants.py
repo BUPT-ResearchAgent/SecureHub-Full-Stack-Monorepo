@@ -100,7 +100,7 @@ COURSE_WEBSEC_DESCRIPTION = (
     "OWASP Top 10、SSRF / SSTI / 反序列化等专题，配套 SQL 注入实操案例。"
 )
 
-# 15 knowledge points (kept tight for demo readability).
+# 17 knowledge points (kept tight for demo readability).
 WEBSEC_NODES: list[tuple[str, str, int]] = [
     # (slug, name, level 1..5)
     ("http-basics", "HTTP / HTTPS 协议基础", 1),
@@ -114,13 +114,15 @@ WEBSEC_NODES: list[tuple[str, str, int]] = [
     ("csrf", "CSRF 攻击与 Token 防御", 3),
     ("file-upload", "文件上传漏洞", 3),
     ("ssrf", "SSRF 与内网穿透", 4),
+    ("deserialization", "反序列化漏洞与安全边界", 4),
     ("rce", "命令执行 / RCE", 4),
     ("auth-bypass", "认证绕过与越权", 3),
     ("waf-bypass", "WAF 检测与绕过常识", 4),
+    ("secure-coding", "安全编码与修复闭环", 2),
     ("owasp-top10", "OWASP Top 10 综合回顾", 2),
 ]
 
-# 30 prerequisite edges — small, hand-curated to look realistic in the demo.
+# 39 prerequisite edges — small, hand-curated to look realistic in the demo.
 WEBSEC_EDGES: list[tuple[str, str]] = [
     # (source_slug, target_slug)  — source must come before target
     ("http-basics", "same-origin"),
@@ -130,24 +132,33 @@ WEBSEC_EDGES: list[tuple[str, str]] = [
     ("http-basics", "csrf"),
     ("http-basics", "file-upload"),
     ("http-basics", "ssrf"),
+    ("http-basics", "secure-coding"),
     ("http-basics", "rce"),
     ("cookie-session", "auth-bypass"),
     ("cookie-session", "csrf"),
+    ("cookie-session", "deserialization"),
     ("sql-injection", "sql-injection-blind"),
     ("sql-injection", "auth-bypass"),
     ("sql-injection", "waf-bypass"),
+    ("sql-injection", "secure-coding"),
     ("xss-reflected", "xss-stored"),
     ("xss-reflected", "xss-dom"),
+    ("xss-reflected", "secure-coding"),
     ("xss-stored", "owasp-top10"),
     ("xss-dom", "owasp-top10"),
+    ("csrf", "secure-coding"),
     ("csrf", "owasp-top10"),
     ("file-upload", "rce"),
+    ("file-upload", "deserialization"),
     ("file-upload", "owasp-top10"),
     ("ssrf", "rce"),
     ("ssrf", "owasp-top10"),
+    ("deserialization", "rce"),
+    ("deserialization", "owasp-top10"),
     ("rce", "owasp-top10"),
     ("auth-bypass", "owasp-top10"),
     ("waf-bypass", "owasp-top10"),
+    ("secure-coding", "owasp-top10"),
     ("same-origin", "xss-reflected"),
     ("same-origin", "csrf"),
     ("sql-injection-blind", "waf-bypass"),
