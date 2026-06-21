@@ -8,6 +8,7 @@ from hashlib import sha256
 import json
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -101,7 +102,8 @@ async def _ingest_media_source(
     ingestion: IngestionService,
     storage_prefix: str,
 ) -> MediaCrawlerImportResult:
-    item_bytes = json.dumps(source.raw_item, ensure_ascii=False, indent=2).encode("utf-8")
+    stored_item = _redact_sensitive_media_fields(source.raw_item)
+    item_bytes = json.dumps(stored_item, ensure_ascii=False, indent=2).encode("utf-8")
     item_key = f"{storage_prefix}/{source.platform}/{_safe_media_key(source)}.json"
     await storage.put_bytes(
         object_key=item_key,
@@ -237,3 +239,16 @@ def _safe_media_key(source: NormalizedMediaSource) -> str:
     media_id = source.metadata.get("media_id") or sha256(source.url.encode("utf-8")).hexdigest()[:12]
     safe_id = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in str(media_id))
     return safe_id or sha256(source.url.encode("utf-8")).hexdigest()[:12]
+
+
+def _redact_sensitive_media_fields(item: dict[str, Any]) -> dict[str, Any]:
+    redacted = dict(item)
+    redacted.pop("xsec_token", None)
+    if isinstance(redacted.get("note_url"), str):
+        redacted["note_url"] = _strip_url_query(redacted["note_url"])
+    return redacted
+
+
+def _strip_url_query(url: str) -> str:
+    parts = urlsplit(url)
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, "", ""))

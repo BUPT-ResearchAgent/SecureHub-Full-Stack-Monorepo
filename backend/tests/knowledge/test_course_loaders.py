@@ -75,3 +75,44 @@ async def test_pdf_mineru_import_fallback_registers_pdf_and_markdown_assets(
         "application/pdf",
         "text/markdown; charset=utf-8",
     }
+
+
+@pytest.mark.anyio
+async def test_pdf_mineru_import_registers_local_markdown_images(
+    sqlite_session,
+    tmp_path: Path,
+) -> None:
+    pdf_path = tmp_path / "websec-textbook.pdf"
+    pdf_path.write_bytes(b"%PDF-1.4\n% demo pdf bytes\n")
+    mineru_dir = tmp_path / "mineru"
+    image_dir = mineru_dir / "assets"
+    image_dir.mkdir(parents=True)
+    image_path = image_dir / "page-001.jpg"
+    image_path.write_bytes(b"fake jpeg bytes")
+    markdown_path = mineru_dir / "full.md"
+    markdown_path.write_text(
+        "# Web Security Textbook\n\n![page](assets/page-001.jpg)\n\nSQL injection basics.",
+        encoding="utf-8",
+    )
+
+    result = await pdf_mineru_import(
+        pdf_path,
+        session=sqlite_session,
+        mineru_output_dir=mineru_dir,
+        title="Web Security Textbook",
+    )
+    await sqlite_session.commit()
+
+    assets = (await sqlite_session.execute(select(DocumentAsset))).scalars().all()
+    objects = (await sqlite_session.execute(select(StorageObject))).scalars().all()
+
+    assert result.asset_count == 3
+    assert {asset.asset_type for asset in assets} == {
+        "original_pdf",
+        "markdown_full",
+        "page_image",
+    }
+    image_asset = next(asset for asset in assets if asset.asset_type == "page_image")
+    image_object = next(obj for obj in objects if obj.object_key == image_asset.object_key)
+    assert image_object.mime_type == "image/jpeg"
+    assert image_asset.metadata_["markdown_ref"] == "assets/page-001.jpg"
