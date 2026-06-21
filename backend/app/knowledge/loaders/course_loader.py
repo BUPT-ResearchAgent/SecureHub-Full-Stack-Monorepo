@@ -7,7 +7,9 @@ from hashlib import sha256
 import json
 import mimetypes
 from pathlib import Path
+import re
 from typing import Any
+from urllib.parse import unquote, urlsplit
 from uuid import UUID
 
 from pydantic import BaseModel
@@ -16,6 +18,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.session import get_sessionmaker
 from app.services.knowledge.ingestion_service import IngestionRequest, IngestionService
 from app.services.storage.storage_service import StorageService
+
+
+MARKDOWN_IMAGE_RE = re.compile(
+    r"!\[[^\]]*\]\((?P<target>[^)\s]+)(?:\s+[\"'][^)]*[\"'])?\)"
+)
 
 
 class CourseLoadResult(BaseModel):
@@ -180,6 +187,13 @@ async def pdf_mineru_import(
         metadata={"domain": domain, "asset_type": "markdown_full"},
     )
     md_hash = sha256(md_bytes).hexdigest()
+    image_assets = await _store_local_markdown_images(
+        storage,
+        markdown=markdown,
+        markdown_path=markdown_path,
+        base_key=base_key,
+        domain=domain,
+    )
 
     merged_metadata = {
         "platform": "mineru",
@@ -220,6 +234,7 @@ async def pdf_mineru_import(
                     "content_hash": md_hash,
                     "metadata": {"source_path": str(markdown_path) if markdown_path else None},
                 },
+                *image_assets,
             ],
         )
     )
@@ -289,12 +304,78 @@ def _first_heading(markdown: str) -> str | None:
 def _find_mineru_markdown(output_dir: Path) -> Path | None:
     if not output_dir.exists():
         return None
+    if output_dir.is_file() and output_dir.suffix.lower() in {".md", ".markdown"}:
+        return output_dir
+    if output_dir.is_file():
+        return None
     preferred = [output_dir / "full.md", output_dir / "output.md", output_dir / "markdown.md"]
     for path in preferred:
         if path.exists():
             return path
     markdown_files = sorted(output_dir.rglob("*.md"))
     return markdown_files[0] if markdown_files else None
+
+
+async def _store_local_markdown_images(
+    storage: StorageService,
+    *,
+    markdown: str,
+    markdown_path: Path | None,
+    base_key: str,
+    domain: str,
+) -> list[dict[str, Any]]:
+    if markdown_path is None:
+        return []
+
+    image_refs = list(dict.fromkeys(match.group("target") for match in MARKDOWN_IMAGE_RE.finditer(markdown)))
+    assets: list[dict[str, Any]] = []
+    for index, ref in enumerate(image_refs, start=1):
+        image_path = _resolve_markdown_image(markdown_path, ref)
+        if image_path is None:
+            continue
+
+        content = image_path.read_bytes()
+        digest = sha256(content).hexdigest()
+        mime_type = mimetypes.guess_type(image_path.name)[0] or "application/octet-stream"
+        object_key = f"{base_key}/assets/{index:04d}_{image_path.name}"
+        await storage.put_bytes(
+            object_key=object_key,
+            content=content,
+            mime_type=mime_type,
+            original_filename=image_path.name,
+            metadata={
+                "domain": domain,
+                "asset_type": "page_image",
+                "source_markdown": str(markdown_path),
+                "markdown_ref": ref,
+            },
+        )
+        assets.append(
+            {
+                "asset_type": "page_image",
+                "object_key": object_key,
+                "mime_type": mime_type,
+                "size_bytes": len(content),
+                "content_hash": digest,
+                "metadata": {
+                    "source_path": str(image_path),
+                    "source_markdown": str(markdown_path),
+                    "markdown_ref": ref,
+                },
+            }
+        )
+    return assets
+
+
+def _resolve_markdown_image(markdown_path: Path, ref: str) -> Path | None:
+    parsed = urlsplit(ref)
+    if parsed.scheme or parsed.netloc:
+        return None
+
+    candidate = (markdown_path.parent / unquote(parsed.path)).resolve()
+    if candidate.exists() and candidate.is_file():
+        return candidate
+    return None
 
 
 def _fallback_markdown(pdf_path: Path, *, title: str | None = None) -> str:
