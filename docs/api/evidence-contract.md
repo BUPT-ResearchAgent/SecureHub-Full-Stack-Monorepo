@@ -158,6 +158,43 @@ data: [{...EvidenceChunkDTO}, ...]
 
 完整描述见 `docs/api/course-contract.md §2 evidence`。
 
+## 8. 6-C-1 draft-by-C 采集侧字段草案
+
+**draft-by-C，供 B/C 双 review 后升级为权威版。** 本节只记录 C 侧已经稳定写入 `documents / document_assets / chunks` 的采集字段与枚举边界，不替代上方 frozen v1 DTO 契约。
+
+最小必填集：
+
+| 字段 | 含义 |
+|---|---|
+| `chunk_id` | `chunks.id`，Evidence 条目的稳定身份 |
+| `document_id` | `chunks.document_id`，用于回溯原始文档 |
+| `chunk_text` | `chunks.chunk_text`，证据正文 |
+| `score` | 检索层返回的相关度分数 |
+
+来源标识必填集：
+
+| 字段 | 含义 |
+|---|---|
+| `platform` | 来源平台，见下方枚举 |
+| `source_url` | 原始公开来源链接；`manual` 可为空，其余平台必须有值 |
+| `rights_note` | 授权与引用边界说明，Evidence 展示时必须可追溯 |
+
+可选展示集：`title / author / published_at / fetched_at / collection_mode / asset_type / page_no / chapter / timestamp / license`。
+
+`platform` 枚举锁定为：`owasp / portswigger / github / bili / zhihu / xhs / mineru / manual / cve / ctftime / wechat_mp / csdn / mindspider_reference`。
+
+`collection_mode` 枚举锁定为：`manual / api / scrapling / mediacrawler / mindspider_reference`。
+
+`asset_type` 枚举锁定为：`original_pdf / markdown_full / markdown_chapter / page_image / cover_image / ocr_text / raw_html / media_item_json / media_comment_json / video_transcript`。
+
+6-C-1 已稳定写入：
+
+| platform | collection_mode | document asset types | 来源边界 |
+|---|---|---|---|
+| `owasp` | `scrapling` | `raw_html`, `markdown_full` | OWASP Community 公开页，CC BY-SA 4.0 署名引用 |
+| `portswigger` | `scrapling` | `raw_html`, `markdown_full` | PortSwigger Web Security Academy 公开 Learn 页，教育演示引用并链接回原页 |
+| `github` | `scrapling` | `raw_html`, `markdown_full` | OWASP CheatSheetSeries raw markdown，CC BY-SA 4.0 署名引用 |
+
 ---
 
 > 维护：本文件修改需 B + C 双 review，并跑通 `pnpm typecheck` + `uv run pytest backend/tests/schemas backend/tests/rag` 后方可合入 dev。

@@ -21,6 +21,36 @@ Domain：`course_websec`
 | GitHub Docs fixture | `github` | https://raw.githubusercontent.com/securehub-demo/websec-labs/main/docs/secure-coding.md | 开源仓库公开文档；遵守仓库许可证，保留来源链接。 | `scrapling` offline fixture | `raw_html` → chunks | 是：offline importer test 写入统一表 | 是：GitHub Docs loader + `platform=github` retrieval |
 | B 站 MediaCrawler fixture | `bili` | https://www.bilibili.com/video/BV1securehub | MediaCrawler 离线导出样本；仅用于学习与比赛演示，保留平台链接与作者信息，不批量转载。 | `mediacrawler` export fixture | `media_item_json` / `media_comment_json` | 是：E2E fixture 写入统一表 | 是：MediaCrawler normalizer + retrieval |
 
+## 2026-07-07 6-C-1 Scrapling 真采集
+
+| 状态 | platform | source_url | rights_note | collection_mode | chunks | 有无测试 |
+|---|---|---|---|---|---:|---|
+| [真采集/2026-07-07] | `owasp` | https://owasp.org/www-community/attacks/SQL_Injection | OWASP 公开社区文档；按 CC BY-SA 4.0 署名引用，保留来源链接。 | `scrapling` | 39 | 是：cache replay + metadata |
+| [真采集/2026-07-07] | `owasp` | https://owasp.org/www-community/attacks/xss/ | OWASP 公开社区文档；按 CC BY-SA 4.0 署名引用，保留来源链接。 | `scrapling` | 63 | 是：cache replay + metadata |
+| [不可达/2026-07-07] | `owasp` | https://owasp.org/www-community/OWASP_Top_Ten | OWASP 公开社区文档；按 CC BY-SA 4.0 署名引用，保留来源链接。 | `scrapling` | 0 | 源码标注 404，不入库 |
+| [真采集/2026-07-07] | `owasp` | https://owasp.org/www-community/attacks/csrf | OWASP 公开社区文档；按 CC BY-SA 4.0 署名引用，保留来源链接。 | `scrapling` | 52 | 是：cache replay + metadata |
+| [真采集/2026-07-07] | `owasp` | https://owasp.org/www-community/vulnerabilities/Unrestricted_File_Upload | OWASP 公开社区文档；按 CC BY-SA 4.0 署名引用，保留来源链接。 | `scrapling` | 93 | 是：cache replay + metadata |
+| [真采集/2026-07-07] | `owasp` | https://owasp.org/www-community/attacks/Server_Side_Request_Forgery | OWASP 公开社区文档；按 CC BY-SA 4.0 署名引用，保留来源链接。 | `scrapling` | 8 | 是：cache replay + metadata |
+| [真采集/2026-07-07] | `owasp` | https://owasp.org/www-community/attacks/Session_hijacking_attack | OWASP 公开社区文档；按 CC BY-SA 4.0 署名引用，保留来源链接。 | `scrapling` | 12 | 是：cache replay + metadata |
+| [真采集/2026-07-07] | `owasp` | https://owasp.org/www-community/Broken_Access_Control | OWASP 公开社区文档；按 CC BY-SA 4.0 署名引用，保留来源链接。 | `scrapling` | 33 | 是：cache replay + metadata |
+| [真采集/2026-07-07] | `owasp` | https://owasp.org/www-community/attacks/Command_Injection | OWASP 公开社区文档；按 CC BY-SA 4.0 署名引用，保留来源链接。 | `scrapling` | 35 | 是：cache replay + metadata |
+| [真采集/2026-07-07] | `owasp` | https://owasp.org/www-community/vulnerabilities/Deserialization_of_untrusted_data | OWASP 公开社区文档；按 CC BY-SA 4.0 署名引用，保留来源链接。 | `scrapling` | 41 | 是：cache replay + metadata |
+| [不可达/2026-07-07] | `owasp` | https://owasp.org/www-community/vulnerabilities/Insecure_Cryptographic_Storage | OWASP 公开社区文档；按 CC BY-SA 4.0 署名引用，保留来源链接。 | `scrapling` | 0 | 源码标注 404，不入库 |
+| [真采集/2026-07-07] | `portswigger` | https://portswigger.net/web-security/sql-injection | PortSwigger Web Security Academy 公开学习内容，仅引用摘要与切片供教学演示，链接回原页 | `scrapling` | 29 | 是：cache replay + metadata |
+| [真采集/2026-07-07] | `portswigger` | https://portswigger.net/web-security/cross-site-scripting | PortSwigger Web Security Academy 公开学习内容，仅引用摘要与切片供教学演示，链接回原页 | `scrapling` | 24 | 是：cache replay + metadata |
+| [真采集/2026-07-07] | `portswigger` | https://portswigger.net/web-security/csrf | PortSwigger Web Security Academy 公开学习内容，仅引用摘要与切片供教学演示，链接回原页 | `scrapling` | 17 | 是：cache replay + metadata |
+| [真采集/2026-07-07] | `portswigger` | https://portswigger.net/web-security/file-upload | PortSwigger Web Security Academy 公开学习内容，仅引用摘要与切片供教学演示，链接回原页 | `scrapling` | 45 | 是：cache replay + metadata |
+| [真采集/2026-07-07] | `portswigger` | https://portswigger.net/web-security/ssrf | PortSwigger Web Security Academy 公开学习内容，仅引用摘要与切片供教学演示，链接回原页 | `scrapling` | 24 | 是：cache replay + metadata |
+| [真采集/2026-07-07] | `portswigger` | https://portswigger.net/web-security/authentication | PortSwigger Web Security Academy 公开学习内容，仅引用摘要与切片供教学演示，链接回原页 | `scrapling` | 12 | 是：cache replay + metadata |
+| [真采集/2026-07-07] | `portswigger` | https://portswigger.net/web-security/access-control | PortSwigger Web Security Academy 公开学习内容，仅引用摘要与切片供教学演示，链接回原页 | `scrapling` | 29 | 是：cache replay + metadata |
+| [真采集/2026-07-07] | `github` | https://raw.githubusercontent.com/OWASP/CheatSheetSeries/master/cheatsheets/SQL_Injection_Prevention_Cheat_Sheet.md | OWASP CheatSheetSeries 官方仓库；按 CC BY-SA 4.0 署名引用；raw markdown 直取 | `scrapling` | 38 | 是：cache replay + metadata |
+| [真采集/2026-07-07] | `github` | https://raw.githubusercontent.com/OWASP/CheatSheetSeries/master/cheatsheets/Cross_Site_Scripting_Prevention_Cheat_Sheet.md | OWASP CheatSheetSeries 官方仓库；按 CC BY-SA 4.0 署名引用；raw markdown 直取 | `scrapling` | 50 | 是：cache replay + metadata |
+| [真采集/2026-07-07] | `github` | https://raw.githubusercontent.com/OWASP/CheatSheetSeries/master/cheatsheets/Cross-Site_Request_Forgery_Prevention_Cheat_Sheet.md | OWASP CheatSheetSeries 官方仓库；按 CC BY-SA 4.0 署名引用；raw markdown 直取 | `scrapling` | 135 | 是：cache replay + metadata |
+| [真采集/2026-07-07] | `github` | https://raw.githubusercontent.com/OWASP/CheatSheetSeries/master/cheatsheets/File_Upload_Cheat_Sheet.md | OWASP CheatSheetSeries 官方仓库；按 CC BY-SA 4.0 署名引用；raw markdown 直取 | `scrapling` | 24 | 是：cache replay + metadata |
+| [真采集/2026-07-07] | `github` | https://raw.githubusercontent.com/OWASP/CheatSheetSeries/master/cheatsheets/Server_Side_Request_Forgery_Prevention_Cheat_Sheet.md | OWASP CheatSheetSeries 官方仓库；按 CC BY-SA 4.0 署名引用；raw markdown 直取 | `scrapling` | 52 | 是：cache replay + metadata |
+| [真采集/2026-07-07] | `github` | https://raw.githubusercontent.com/OWASP/CheatSheetSeries/master/cheatsheets/Authentication_Cheat_Sheet.md | OWASP CheatSheetSeries 官方仓库；按 CC BY-SA 4.0 署名引用；raw markdown 直取 | `scrapling` | 75 | 是：cache replay + metadata |
+| [真采集/2026-07-07] | `github` | https://raw.githubusercontent.com/OWASP/CheatSheetSeries/master/cheatsheets/Access_Control_Cheat_Sheet.md | OWASP CheatSheetSeries 官方仓库；按 CC BY-SA 4.0 署名引用；raw markdown 直取 | `scrapling` | 1 | 是：cache replay + metadata |
+
 ## Metadata Floor
 
 每条资料进入 `documents.metadata` 与 `chunks.metadata` 时必须包含：
