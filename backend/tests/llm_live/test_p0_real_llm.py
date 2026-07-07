@@ -22,6 +22,7 @@ import pytest
 
 from app.core.config import get_settings
 from app.db.models.agent.agent_run import AgentRun
+from app.db.models.resource.generated_resource import GeneratedResource
 from app.db.seeds._constants import COURSE_WEBSEC_ID, DEMO_USER_ID, node_id, stable_id
 from app.db.seeds.seed_course_websec import run as seed_course_websec
 from app.db.seeds.seed_demo_user import run as seed_demo_user
@@ -180,7 +181,7 @@ async def _record_acceptance(
     content: str,
     hits: list[ChunkHit],
     call: LiveCallResult,
-) -> tuple[AgentRun, UUID]:
+) -> tuple[AgentRun, GeneratedResource]:
     evidence_ids = [hit.chunk_id for hit in hits]
     token_usage = {
         "provider": call.provider,
@@ -232,7 +233,7 @@ async def _record_acceptance(
         },
     )
     await session.commit()
-    return run, resource.id
+    return run, resource
 
 
 def _assert_acceptance(content: str, hits: list[ChunkHit], call: LiveCallResult) -> None:
@@ -299,7 +300,7 @@ async def test_p0_sql_injection_real_llm_acceptance_matrix(sqlite_session) -> No
         assert total_cost <= limits.daily_budget_cny
 
         _assert_acceptance(call.content, hits, call)
-        run, resource_id = await _record_acceptance(
+        run, resource = await _record_acceptance(
             sqlite_session,
             task_name=task_name,
             resource_type=resource_type,
@@ -313,7 +314,13 @@ async def test_p0_sql_injection_real_llm_acceptance_matrix(sqlite_session) -> No
         assert run.token_usage["model"]
         assert run.token_usage["total"] > 0
         assert run.token_usage["cost_estimate"] >= 0
-        assert resource_id
+        assert resource.id
+        assert resource.agent_run_id == run.id
+        assert resource.evidence_chunk_ids
+        assert resource.metadata_["provider"] == provider
+        assert resource.metadata_["model"]
+        assert resource.metadata_["token_usage"]["total"] > 0
+        assert resource.metadata_["cost_estimate"] >= 0
 
 
 @pytest.mark.anyio
@@ -334,12 +341,9 @@ async def test_p0_real_llm_insufficient_evidence_refuses_without_call(sqlite_ses
         )
     )
 
+    assert len(hits) < 3
     llm_calls = 0
-    if len(hits) < 3:
-        refusal = "证据不足：未达到 3 条 evidence，拒绝调用真实 LLM。"
-    else:  # pragma: no cover - defensive if future seed expands into this topic
-        llm_calls += 1
-        refusal = ""
+    refusal = "证据不足：未达到 3 条 evidence，拒绝调用真实 LLM。"
 
     assert llm_calls == 0
     assert "证据不足" in refusal

@@ -15,10 +15,25 @@ Status: real
 | 5:50-6:30 | 多源采集证据 | Evidence 展示 platform、source_url、author、rights_note |
 | 6:30-7:00 | 架构总结 | 统一进入 documents / document_assets / chunks / storage_objects |
 
+## C 负责状态
+
+| Gate | 状态 | 说明 |
+|---|---|---|
+| WebSec seed | ready | `seed_course_websec.py` 幂等，覆盖 17 nodes、68 chunks、5 SQL 注入题目 |
+| Evidence metadata | ready | seed / loader fixture 保留 `platform/source_url/author/rights_note/collection_mode/asset_type` |
+| PDF / MinerU evidence | ready | SSRF seed fixture 使用 `platform=mineru`、`asset_type=pdf`、`page_no=12`；loader 测试覆盖 PDF + Markdown + page image |
+| RAG smoke | ready | 覆盖 SQL 注入、XSS、文件上传、CSRF、SSRF、访问控制、命令执行、反序列化、安全编码 |
+| no-evidence gate | ready | 空 domain、证据不足、metadata 缺 `source_url/rights_note` 均不进入 LLM / done |
+| GitHub Docs fixture | ready | offline fixture 写入 `documents + document_assets + chunks + storage_objects`，`platform=github` 可召回 |
+| Scrapling / 官方资料 fixture | ready | OWASP / PortSwigger 使用离线最小样例，不依赖外网跑 CI |
+| MediaCrawler fixture | ready | B 站 export fixture → normalizer → unified tables → retrieval |
+| demo_smoke | partial | 脚本覆盖 health、llm/health、courses、rag/search、course plan、resources/generate、agent_runs；若 A/B endpoint 未 ready，按依赖方标记失败 |
+| live LLM gate | gated | 默认 skip；真实 DeepSeek/讯飞调用待项目负责人允许 API 消耗并提供 key 后验证 |
+
 ## P0 测试命令
 
 ```powershell
-cd F:\software_cup\SecureHub-Full-Stack-Monorepo
+cd D:\Nnutural\Desktop\BUPT大全\BUPT竞赛\26软件杯\SecureHub-Full-Stack-Monorepo
 .\scripts\demo_smoke.ps1
 ```
 
@@ -27,10 +42,11 @@ cd F:\software_cup\SecureHub-Full-Stack-Monorepo
 | 素材 | 路径 / 表 | 状态 |
 |---|---|---|
 | Web 安全资料清单 | `docs/demo/websec_source_inventory.md` | ready |
-| SQL 注入 / XSS / CSRF / 文件上传知识点 | `backend/app/db/seeds/seed_course_websec.py` | ready |
+| SQL 注入 / XSS / CSRF / 文件上传 / SSRF / 访问控制知识点 | `backend/app/db/seeds/seed_course_websec.py` | ready |
 | PDF/MinerU 入库脚本 | `scripts/ingest_pdf_mineru.py` | ready |
 | RAG smoke test | `backend/tests/rag/test_retrieve_course_websec.py` | ready |
 | 无证据回归测试 | `backend/tests/hallucination/test_no_evidence_queries.py` | ready |
+| live LLM 手动门禁 | `backend/tests/llm_live/test_p0_real_llm.py` / `docs/demo/llm_live_acceptance.md` | gated |
 | generated_resources 测试 | `backend/tests/resource/test_generated_resources.py` | ready |
 | user_capabilities 测试 | `backend/tests/identity/test_user_capabilities.py` | ready |
 
@@ -43,3 +59,4 @@ cd F:\software_cup\SecureHub-Full-Stack-Monorepo
 - 来源字段保留 `platform / source_url / author / published_at / fetched_at / rights_note`。
 - 无证据测试确认不会进入生成步骤。
 - MediaCrawler / MindSpider 仅作为 P1/P2 受控适配与参考说明。
+- live LLM 测试不进入普通 CI；无真实 key 时只报告门禁完成，不伪造真实调用通过。

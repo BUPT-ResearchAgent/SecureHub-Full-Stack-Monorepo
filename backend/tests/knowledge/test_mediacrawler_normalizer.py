@@ -38,6 +38,7 @@ def test_media_source_normalizer_maps_xhs_content() -> None:
     assert source.metadata["platform"] == "xhs"
     assert source.metadata["source_url"].endswith("xhs-001")
     assert source.metadata["author"] == "安全学习者"
+    assert source.metadata["collection_mode"] == "mediacrawler"
     assert "参数化查询" in source.raw_text
     assert source.metadata["rights_note"]
 
@@ -100,5 +101,6 @@ async def test_mediacrawler_export_import_writes_assets_and_chunks(
     assert result.comment_count == 1
     assert result.asset_count == 2
     assert documents[0].metadata_["platform"] == "bili"
+    assert documents[0].metadata_["collection_mode"] == "mediacrawler"
     assert {asset.asset_type for asset in assets} == {"media_item_json", "media_comment_json"}
     assert hits

@@ -57,17 +57,25 @@ function Initialize-SmokeEnvironment {
     if (-not $env:ENABLE_LLM_LIVE_TESTS) {
         $env:ENABLE_LLM_LIVE_TESTS = "false"
     }
+
+    foreach ($ProxyName in @("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy")) {
+        Remove-Item "Env:$ProxyName" -ErrorAction SilentlyContinue
+    }
+    $env:NO_PROXY = "127.0.0.1,localhost,::1"
+    $env:no_proxy = $env:NO_PROXY
 }
 
 function New-SmokeResult {
     param(
         [string]$Name,
         [bool]$Passed,
-        [string]$Detail
+        [string]$Detail,
+        [string]$Owner = "C"
     )
     [PSCustomObject]@{
         Step = $Name
         Status = $(if ($Passed) { "PASS" } else { "FAIL" })
+        Owner = $Owner
         Detail = $Detail
     }
 }
@@ -78,11 +86,12 @@ function Add-SmokeResult {
     param(
         [string]$Name,
         [bool]$Passed,
-        [string]$Detail
+        [string]$Detail,
+        [string]$Owner = "C"
     )
-    $Result = New-SmokeResult -Name $Name -Passed $Passed -Detail $Detail
+    $Result = New-SmokeResult -Name $Name -Passed $Passed -Detail $Detail -Owner $Owner
     $Results.Add($Result) | Out-Null
-    Write-Host ("[{0}] {1} - {2}" -f $Result.Status, $Name, $Detail)
+    Write-Host ("[{0}] {1} ({2}) - {3}" -f $Result.Status, $Name, $Owner, $Detail)
 }
 
 function Invoke-SmokeJson {
@@ -93,11 +102,21 @@ function Invoke-SmokeJson {
         [object]$Body = $null
     )
     $Uri = "$BackendUrl$Path"
+    $Params = @{
+        Method = $Method
+        Uri = $Uri
+        TimeoutSec = $(if ($null -eq $Body) { 20 } else { 30 })
+    }
+    if ($PSVersionTable.PSVersion.Major -ge 6) {
+        $Params["NoProxy"] = $true
+    }
     if ($null -eq $Body) {
-        return Invoke-RestMethod -Method $Method -Uri $Uri -TimeoutSec 20
+        return Invoke-RestMethod @Params
     }
     $JsonBody = $Body | ConvertTo-Json -Depth 16
-    return Invoke-RestMethod -Method $Method -Uri $Uri -ContentType "application/json" -Body $JsonBody -TimeoutSec 30
+    $Params["ContentType"] = "application/json"
+    $Params["Body"] = $JsonBody
+    return Invoke-RestMethod @Params
 }
 
 function Invoke-SmokeText {
@@ -116,6 +135,9 @@ function Invoke-SmokeText {
     }
     if ($PSVersionTable.PSVersion.Major -lt 6) {
         $Params["UseBasicParsing"] = $true
+    }
+    else {
+        $Params["NoProxy"] = $true
     }
     $Response = Invoke-WebRequest @Params
     return $Response.Content
@@ -174,14 +196,15 @@ function Start-SmokeBackend {
 function Run-SmokeStep {
     param(
         [string]$Name,
-        [scriptblock]$Block
+        [scriptblock]$Block,
+        [string]$Owner = "C"
     )
     try {
         $Detail = & $Block
-        Add-SmokeResult -Name $Name -Passed $true -Detail ([string]$Detail)
+        Add-SmokeResult -Name $Name -Passed $true -Detail ([string]$Detail) -Owner $Owner
     }
     catch {
-        Add-SmokeResult -Name $Name -Passed $false -Detail $_.Exception.Message
+        Add-SmokeResult -Name $Name -Passed $false -Detail $_.Exception.Message -Owner $Owner
     }
 }
 
@@ -194,7 +217,7 @@ Initialize-SmokeEnvironment
 try {
     Start-SmokeBackend
 
-    Run-SmokeStep "health" {
+    Run-SmokeStep -Name "health" -Block {
         $Health = Invoke-SmokeJson -Method "GET" -Path "/api/v1/health"
         if (-not $Health.status) {
             throw "missing status"
@@ -202,7 +225,7 @@ try {
         "status=$($Health.status)"
     }
 
-    Run-SmokeStep "llm/health" {
+    Run-SmokeStep -Name "llm/health" -Owner "A" -Block {
         $Llm = Invoke-SmokeJson -Method "GET" -Path "/api/v1/llm/health"
         if ($Llm.status -ne "available") {
             throw "llm status=$($Llm.status)"
@@ -210,7 +233,7 @@ try {
         "provider=$($Llm.provider), mode=$($Llm.mode), live_enabled=$($Llm.live_enabled)"
     }
 
-    Run-SmokeStep "courses" {
+    Run-SmokeStep -Name "courses" -Owner "B/C" -Block {
         $Courses = Invoke-SmokeJson -Method "GET" -Path "/api/v1/courses"
         $CourseList = @($Courses)
         if ($Courses.items) {
@@ -223,7 +246,7 @@ try {
         "count=$($CourseList.Count), websec=$($WebSec.id)"
     }
 
-    Run-SmokeStep "rag/search" {
+    Run-SmokeStep -Name "rag/search" -Block {
         $Rag = Invoke-SmokeJson -Method "POST" -Path "/api/v1/rag/search" -Body @{
             domain = "course_websec"
             query = "SQL injection parameterized queries"
@@ -235,7 +258,7 @@ try {
         "hits=$($Rag.hits.Count), fallback=$($Rag.fallback)"
     }
 
-    Run-SmokeStep "course plan" {
+    Run-SmokeStep -Name "course plan" -Owner "A/B" -Block {
         $Plan = Invoke-SmokeJson -Method "POST" -Path "/api/v1/courses/course-websec/plan" -Body @{
             user_id = $UserId
             target_node_id = $KpId
@@ -249,7 +272,7 @@ try {
         "course_id=$($Plan.course_id), path=$($Plan.path.Count)"
     }
 
-    Run-SmokeStep "resources/generate" {
+    Run-SmokeStep -Name "resources/generate" -Owner "A/B" -Block {
         $Events = Invoke-SmokeText -Path "/api/v1/courses/course-websec/resources/generate?type=doc" -Body @{
             type = "doc"
             user_id = $UserId
@@ -270,7 +293,7 @@ try {
         "sse events include evidence/artifact/done"
     }
 
-    Run-SmokeStep "agent_runs" {
+    Run-SmokeStep -Name "agent_runs" -Owner "A/B" -Block {
         $Runs = Invoke-SmokeJson -Method "GET" -Path "/api/v1/agent-runs?limit=5"
         if ($null -ne $Runs.items) {
             return "items=$($Runs.items.Count), total=$($Runs.total)"

@@ -94,6 +94,16 @@ SOURCE_PROFILES: dict[str, dict[str, object]] = {
         "license": "Public learning material",
         "rights_note": "PortSwigger 公开学习资料，保留链接，仅做课程索引和摘要切片。",
     },
+    "ssrf": {
+        "platform": "mineru",
+        "url": "https://demo.securehub.local/pdf/websec-ssrf-mineru.pdf",
+        "author": "SecureHub / MinerU",
+        "license": "demo-only",
+        "rights_note": "PDF/MinerU 离线解析 fixture；仅用于课程知识库演示，保留原始来源。",
+        "collection_mode": "manual",
+        "asset_type": "pdf",
+        "page_no": 12,
+    },
     "deserialization": {
         "platform": "owasp",
         "url": "https://owasp.org/www-project-cheat-sheets/cheatsheets/Deserialization_Cheat_Sheet.html",
@@ -141,17 +151,41 @@ TOPIC_HINTS: dict[str, list[str]] = {
         "只依赖验证码或检查是否登录并不能证明请求来自用户主动操作。",
         "教学场景可以用转账、改邮箱、绑定账号等状态变更接口说明风险。",
     ],
+    "cookie-session": [
+        "Cookie、Session 与 Token 是认证状态的核心载体，设计错误会放大会话固定、泄露和重放风险。",
+        "安全会话应配置 HttpOnly、Secure、SameSite、合理过期时间，并在敏感操作后轮换凭据。",
+        "Token 方案需要校验签名、过期时间、受众和撤销策略，避免把认证凭据长期暴露在前端状态中。",
+        "课程演示把认证状态与 CSRF、访问控制和越权漏洞连起来，说明浏览器自动携带凭据的影响。",
+    ],
     "file-upload": [
         "文件上传漏洞的风险来自扩展名校验不足、MIME 信任、路径穿越、解析器差异和上传后可执行。",
         "安全设计应把文件存到 Web 根目录外，重命名对象 key，并按白名单校验类型与大小。",
         "图片处理、压缩包解压和 Office/PDF 预览都需要单独的沙箱或异步扫描流程。",
         "演示时强调 object_key 与 storage_objects 管理，避免把大文件直接塞进业务表。",
     ],
+    "ssrf": [
+        "SSRF 是服务端代表攻击者访问内网、云元数据或受限服务的请求伪造风险。",
+        "常见入口包括 URL 预览、图片抓取、Webhook、PDF 转换和远程资源导入等后端请求功能。",
+        "防御应使用 allowlist、DNS/IP 解析校验、禁止内网地址段、限制协议，并隔离出站网络权限。",
+        "本条来自 PDF/MinerU 离线 fixture，证据 metadata 保留 page_no，方便演示 EvidenceDrawer 页码回链。",
+    ],
     "deserialization": [
         "反序列化漏洞发生在应用把不可信数据还原成对象并触发构造、魔术方法或 gadget chain 时。",
         "常见入口包括 Cookie、Session、缓存、消息队列、文件上传后的对象流以及跨服务 RPC 参数。",
         "防御重点是禁止反序列化不可信输入，改用 JSON 等简单数据结构，并对类型、签名和来源做严格校验。",
         "修复验收要覆盖依赖库 gadget、密钥轮换、对象白名单、异常日志和最小权限运行环境。",
+    ],
+    "rce": [
+        "命令执行 / RCE 通常来自把用户输入拼接到系统命令、模板表达式、脚本解释器或危险反射调用中。",
+        "攻击影响从读取环境变量、执行系统命令到横向移动不等，必须结合最小权限和运行时隔离评估。",
+        "修复优先避免调用 shell，改用结构化 API；确需执行外部程序时使用参数数组、白名单和超时限制。",
+        "回归测试要覆盖命令分隔符、环境变量、路径穿越、编码绕过和错误输出泄漏。",
+    ],
+    "auth-bypass": [
+        "访问控制漏洞包括未授权访问、水平越权、垂直越权和对象级权限校验缺失。",
+        "认证只证明用户是谁，授权还必须逐资源判断该用户是否能执行当前操作。",
+        "安全设计应把权限校验放在服务端统一策略层，避免只靠前端隐藏按钮或路由。",
+        "测试要覆盖不同用户、不同角色、直接访问对象 ID、批量接口和历史链接。",
     ],
     "secure-coding": [
         "安全编码不是单个检查点，而是从需求、设计、编码、测试、发布到复盘的修复闭环。",
@@ -232,8 +266,11 @@ def _source_profile(slug: str) -> dict[str, object]:
         "author": "SecureHub 课程组",
         "license": "demo-only",
         "rights_note": "团队整理的课程演示材料，可在比赛演示中展示。",
+        "collection_mode": "manual",
+        "asset_type": "markdown_full",
+        "page_no": None,
     }
-    return SOURCE_PROFILES.get(slug, default)
+    return default | SOURCE_PROFILES.get(slug, {})
 
 
 def _chunk_texts(slug: str, name: str) -> list[str]:
@@ -366,8 +403,9 @@ async def _seed(session: AsyncSession) -> dict[str, int]:
             "fetched_at": fetched_at.isoformat(),
             "license": profile["license"],
             "rights_note": profile["rights_note"],
-            "collection_mode": "manual",
-            "asset_type": "markdown_full",
+            "collection_mode": profile["collection_mode"],
+            "asset_type": profile["asset_type"],
+            "page_no": profile["page_no"],
             "kp_slug": slug,
             "level": level,
             "type": "概念",
@@ -437,8 +475,9 @@ async def _seed(session: AsyncSession) -> dict[str, int]:
                     "fetched_at": fetched_at.isoformat(),
                     "license": profile["license"],
                     "rights_note": profile["rights_note"],
-                    "collection_mode": "manual",
-                    "asset_type": "markdown_full",
+                    "collection_mode": profile["collection_mode"],
+                    "asset_type": profile["asset_type"],
+                    "page_no": profile["page_no"],
                     "chapter": name,
                     "reliability": 0.9,
                 }
@@ -471,8 +510,9 @@ async def _seed(session: AsyncSession) -> dict[str, int]:
                         "fetched_at": fetched_at.isoformat(),
                         "license": profile["license"],
                         "rights_note": profile["rights_note"],
-                        "collection_mode": "manual",
-                        "asset_type": "markdown_full",
+                        "collection_mode": profile["collection_mode"],
+                        "asset_type": profile["asset_type"],
+                        "page_no": profile["page_no"],
                         "chapter": name,
                         "reliability": 0.9,
                     },

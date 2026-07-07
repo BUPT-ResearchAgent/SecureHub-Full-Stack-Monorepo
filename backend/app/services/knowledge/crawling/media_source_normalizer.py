@@ -261,7 +261,7 @@ def _base_metadata(
         "asset_type": "media_item_json",
         "reliability": 0.65,
         "trust_score": 0.65,
-        "collection_mode": "mediacrawler_export",
+        "collection_mode": "mediacrawler",
     }
     metadata.update({key: value for key, value in extra.items() if value is not None})
     return metadata

@@ -1,17 +1,22 @@
 # Status: real
 
+from pathlib import Path
+
 from sqlalchemy import select
 
 import pytest
 
+from app.db.models.knowledge.chunk import Chunk
 from app.db.models.knowledge.document import Document
 from app.db.models.knowledge.document_asset import DocumentAsset
 from app.db.models.storage.storage_object import StorageObject
 from app.knowledge.loaders.generic_web_loader import WebSourceSpec, generic_web_import
 from app.knowledge.loaders.owasp_loader import owasp_import
 from app.knowledge.loaders.scrapling_public_importer import (
+    PLATFORM_SOURCES,
     build_arg_parser,
     build_sources,
+    load_cache_dir,
     load_source_file,
     main_async,
 )
@@ -79,6 +84,7 @@ async def test_generic_web_import_normalizes_public_page(sqlite_session) -> None
             )
         ],
         session=sqlite_session,
+        storage_prefix="course_websec/test/web",
     )
     await sqlite_session.commit()
 
@@ -93,11 +99,11 @@ async def test_generic_web_import_normalizes_public_page(sqlite_session) -> None
     )
 
     assert result.document_ids
-    assert result.asset_count == 1
+    assert result.asset_count == 2
     assert documents[0].metadata_["platform"] == "owasp"
     assert documents[0].metadata_["rights_note"]
-    assert assets[0].asset_type == "raw_html"
-    assert objects[0].object_key.startswith("course_websec/web/")
+    assert {asset.asset_type for asset in assets} == {"raw_html", "markdown_full"}
+    assert all(obj.object_key.startswith("course_websec/test/web/") for obj in objects)
     assert hits
     assert hits[0].metadata["platform"] == "owasp"
 
@@ -117,6 +123,7 @@ async def test_owasp_loader_uses_offline_specs(sqlite_session) -> None:
             )
         ],
         session=sqlite_session,
+        storage_prefix="course_websec/test/owasp",
     )
 
     assert result.domain == "course_websec"
@@ -215,3 +222,91 @@ async def test_scrapling_public_importer_dry_run_skips_database(capsys) -> None:
     assert summary.requested_count == 1
     assert summary.imported == []
     assert "dry-run platform=owasp" in output
+
+
+@pytest.mark.anyio
+async def test_owasp_ingestion_full_pipeline_from_cache(sqlite_session) -> None:
+    sources = _load_cached_sources("owasp", minimum=3)
+    result = await generic_web_import(sources, session=sqlite_session, storage_prefix="course_websec/test/owasp")
+    await sqlite_session.commit()
+
+    assert len(result.document_ids) >= 3
+    await _assert_full_pipeline(sqlite_session, platform="owasp", minimum_documents=3)
+
+
+@pytest.mark.anyio
+async def test_portswigger_ingestion_full_pipeline_from_cache(sqlite_session) -> None:
+    sources = _load_cached_sources("portswigger", minimum=3)
+    result = await generic_web_import(
+        sources,
+        session=sqlite_session,
+        storage_prefix="course_websec/test/portswigger",
+    )
+    await sqlite_session.commit()
+
+    assert len(result.document_ids) >= 3
+    await _assert_full_pipeline(sqlite_session, platform="portswigger", minimum_documents=3)
+
+
+@pytest.mark.anyio
+async def test_github_docs_ingestion_full_pipeline_from_cache(sqlite_session) -> None:
+    sources = _load_cached_sources("github", minimum=3)
+    result = await generic_web_import(sources, session=sqlite_session, storage_prefix="course_websec/test/github")
+    await sqlite_session.commit()
+
+    assert len(result.document_ids) >= 3
+    await _assert_full_pipeline(sqlite_session, platform="github", minimum_documents=3)
+
+
+@pytest.mark.anyio
+async def test_scrapling_documents_have_required_metadata(sqlite_session) -> None:
+    cached_sources: list[WebSourceSpec] = []
+    for platform in ("owasp", "portswigger", "github"):
+        cached_sources.extend(_load_cached_sources(platform, minimum=3)[:3])
+    await generic_web_import(cached_sources, session=sqlite_session, storage_prefix="course_websec/test/replay")
+    await sqlite_session.commit()
+
+    documents = (
+        await sqlite_session.execute(select(Document).where(Document.metadata_["collection_mode"].as_string() == "scrapling"))
+    ).scalars().all()
+    assert documents
+    for document in documents:
+        for key in ("platform", "source_url", "fetched_at", "rights_note", "collection_mode", "title"):
+            assert document.metadata_.get(key), f"document {document.id} missing {key}"
+
+
+def _load_cached_sources(platform: str, *, minimum: int) -> list[WebSourceSpec]:
+    cache_dir = _repo_root() / "data" / "storage" / "course_websec" / platform
+    sources = load_cache_dir(cache_dir, candidates=PLATFORM_SOURCES[platform])
+    unique_by_url = {source.url: source for source in sources}
+    cached = list(unique_by_url.values())
+    if len(cached) < minimum:
+        pytest.skip(f"need at least {minimum} cached {platform} pages, found {len(cached)}")
+    return cached[:minimum]
+
+
+async def _assert_full_pipeline(sqlite_session, *, platform: str, minimum_documents: int) -> None:
+    documents = (
+        await sqlite_session.execute(select(Document).where(Document.metadata_["platform"].as_string() == platform))
+    ).scalars().all()
+    assert len(documents) >= minimum_documents
+
+    for document in documents:
+        assert document.raw_text and len(document.raw_text) >= 80
+        for key in ("platform", "source_url", "fetched_at", "rights_note", "collection_mode", "title"):
+            assert document.metadata_.get(key), f"document {document.id} missing {key}"
+
+        assets = (
+            await sqlite_session.execute(select(DocumentAsset).where(DocumentAsset.document_id == document.id))
+        ).scalars().all()
+        assert {asset.asset_type for asset in assets} >= {"raw_html", "markdown_full"}
+
+        chunks = (
+            await sqlite_session.execute(select(Chunk).where(Chunk.document_id == document.id))
+        ).scalars().all()
+        assert chunks
+        assert all(chunk.metadata_.get("platform") == platform for chunk in chunks)
+
+
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parents[3]
