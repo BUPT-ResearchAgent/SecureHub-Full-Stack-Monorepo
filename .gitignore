@@ -59,8 +59,13 @@ Workout/member_c_p0_handoff.md
 # ==== 教材版权保护（6-C-2 新增）====
 # 大陆正规出版教材 PDF 本体禁止 push
 data/storage/course_websec/mineru/**/*.pdf
+data/storage/course_websec/mineru_ingested/**/*.pdf
 # MinerU 输出的完整 markdown 正文也禁止 push（可能整本教材原文）
 data/storage/course_websec/mineru/**/full.md
+data/storage/course_websec/mineru_ingested/**/full.md
+# 章节级本地对象仅供本机 RAG 演示使用，避免把教材正文切片提交到 git
+data/storage/course_websec/mineru/**/chapters/
+data/storage/course_websec/mineru_ingested/**/chapters/
 # 图片资产按需保留（page_image / cover_image 是“抽取的公开信息”，合规展示用途）
 # 如果图片也想排除，取消以下注释：
 # data/storage/course_websec/mineru/**/assets/*.jpg
