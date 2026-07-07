@@ -104,3 +104,77 @@ Status: real
 
 - 未跑通 URL：`https://owasp.org/www-community/OWASP_Top_Ten`、`https://owasp.org/www-community/vulnerabilities/Insecure_Cryptographic_Storage`（均 404）。
 - 建议 6-C-2 承接：MinerU PDF 批量入库时复用 `documents / document_assets / chunks` 与 draft EvidenceDTO 字段；另行评估 smoke 脚本端口参数是否需要 C/A 协调修复。
+
+## 2026-07-07 6-C-2 中文教材章节级完整入库
+
+### 0. 起手
+
+- `.gitignore` 已排除教材 PDF、MinerU `full.md`、`mineru_ingested` 本地对象与 chapter 输出目录。
+- 首个版权保护 commit 清理了已跟踪的 5-C seed PDF/full.md：`websec-textbook/full.md`、`websec-textbook/websec-textbook.pdf`、`websec-upload/full.md`、`websec-upload/websec-upload.pdf`。
+- 本轮不 push、不建 PR；三本真教材 PDF 和完整 `full.md` 不进入 git。
+
+### 1. 三本教材入库结果
+
+| 教材 | document_id | chapter_count | chunk_count | 备注 |
+|---|---|---:|---:|---|
+| 现代密码学教程（第2版） | `7b89565f-0ba1-52fb-b91e-8a7e95469602` | 12 | 1218 | `ChineseTextbookHeadingClassifier` 按“第 X 章”切 chapter |
+| 网络安全原理与实践 | `3fbaeff8-7996-5a0d-b99d-df12aea31c8c` | 23 | 724 | 同上 |
+| 汇编语言（第3版） | `4776c945-bd89-5e54-a60d-720aaf7048af` | 13 | 538 | 同上 |
+
+### 2. SQL 验收结果
+
+- `documents`: 26
+- `chunks`: 3411
+- `markdown_chapter`: 48
+- `original_pdf`: 3
+- `pdf_mineru_chunks`: 2480
+- `bad_chunks`: 0
+- `rights_docs`: 3
+
+### 3. Heading 分类器命中
+
+- `crypto-basics`: BOOK 3, CHAPTER 12, SECTION 63, SUBSECTION 180, ITEM 498, UNKNOWN 65
+- `network-security`: BOOK 2, CHAPTER 23, SECTION 81, SUBSECTION 189, ITEM 290, UNKNOWN 24
+- `reverse-engineering`: BOOK 7, CHAPTER 13, SECTION 146, ITEM 77, UNKNOWN 143
+
+### 4. 契约与合规
+
+- `docs/api/evidence-contract.md` 升级为 v1.1，登记 `platform=mineru`、`asset_type=markdown_chapter`、`license=proprietary-educational-use`。
+- `docs/demo/textbook-rights-policy.md` 新增三本教材版权处理策略；inventory、rights note、source manifest 已同步。
+- `documents.metadata.rights_note` 使用教材版权模板：仅用于 SecureHub 内部教学演示 RAG 检索，不对外分发原文。
+
+### 5. 重要事故与修复
+
+- 发现旧 storage 默认前缀会把导入对象写回 `data/storage/course_websec/mineru/<name>/...` 输入目录，导致三本本地 PDF 被测试 fixture 覆盖成小文件。
+- 已修复根因：默认 `storage_prefix` 改为 `course_websec/mineru_ingested`，测试传入独立 `storage_local_root`，并新增 `_ensure_storage_target_outside_inputs` 防止目标目录落入 MinerU 输入目录。
+- `full.md` 已从 PostgreSQL `documents.raw_text` 恢复，当前大小约 1.10 MB / 835 KB / 553 KB。
+- 三本 PDF 本体仍损坏：`crypto-basics.pdf` 35 bytes，`network-security.pdf` 38 bytes，`reverse-engineering.pdf` 41 bytes。已在本机搜索工作区与用户目录，未找到备份；需项目负责人重新拷贝三本教材 PDF 到本地。
+
+### 6. 验收命令
+
+- `uv run pytest tests/knowledge/ -q -m "not llm_live"`：30 passed。
+- `uv run pytest tests/rag/test_retrieve_course_websec.py -q -m "not llm_live"`：7 passed。
+- `uv run pytest -m "not llm_live" -q`：128 passed, 2 deselected, 2 async cleanup warnings。
+- `uv run python -m json.tool ../data/course_websec/source_manifest.json`：通过。
+- `git ls-files "data/storage/course_websec/mineru/*/*.pdf"` 与 `git ls-files "data/storage/course_websec/mineru/*/full.md"`：均为空。
+- `git check-ignore -v`：三本教材 PDF/full.md、`mineru_ingested` PDF/full.md、chapter 目录均命中 `.gitignore`。
+- Docker compose 侧 Redis 6379 被其他项目占用；PostgreSQL 已可用并完成 SQL 校验。
+
+### 7. 需 tag 关注
+
+- @member-b：EvidenceDrawer 未来可展示 `book_title / chapter / heading_path / section_hint`，形成“《教材》第 X 章 X.Y 小节”式引用。
+- @project-lead：本地三本 PDF 需要重新复制；git 与 RAG 数据库已避免再次覆盖原始 MinerU 输入目录。
+
+### 8. 本轮 commit 列表
+
+- `5edc7547 chore(git): ignore textbook PDFs and full markdown from vcs`
+- `97294198 feat(loader): ingest MinerU textbooks by chapter`
+- `045adc76 test(knowledge): cover chaptered MinerU ingestion`
+- `91212b8a chore(git): ignore MinerU ingested textbook outputs`
+- `a243191c docs(demo): record textbook evidence contract and rights`
+- 本节将随 `docs(log): record 6-C-2 textbook ingestion session` 提交。
+
+### 9. 遗留与下一步
+
+- 重新拷贝三本 PDF 后，可重跑 `.\scripts\ingest\ingest_pdf_mineru_batch.ps1` 验证幂等输出 `already ingested, skipped`；如需刷新 PDF hash，再使用 `-ForceReingest`。
+- 建议 6-C-3 承接 MediaCrawler B 站真 export，补 Web 安全主战场视频转写证据。
