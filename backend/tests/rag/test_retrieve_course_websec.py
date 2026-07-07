@@ -1,8 +1,11 @@
 # Status: real
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import func, select
 
+from app.db.models.knowledge.chunk import Chunk
+from app.db.models.knowledge.document import Document
+from app.db.models.knowledge.knowledge_node import KnowledgeNode
 from app.db.models.learning.quiz_item import QuizItem
 from app.db.seeds.seed_course_websec import run as seed_course_websec
 from app.services.knowledge.retrieval_service import RetrievalService
@@ -14,6 +17,10 @@ RAG_SMOKE_QUERIES = [
     ("参数化查询的作用", {"参数化", "查询"}),
     ("XSS 和 SQL 注入的区别", {"XSS", "SQL"}),
     ("文件上传漏洞风险", {"文件", "上传"}),
+    ("CSRF Token SameSite 防御", {"CSRF", "SameSite"}),
+    ("SSRF 内网 云元数据 防御", {"SSRF", "内网"}),
+    ("访问控制 越权 权限校验", {"访问控制", "权限"}),
+    ("命令执行 RCE 如何修复", {"命令执行", "RCE"}),
     ("反序列化漏洞 如何防御", {"反序列化", "防御"}),
     ("安全编码 修复闭环", {"安全编码", "修复"}),
 ]
@@ -91,3 +98,86 @@ async def test_course_websec_seeds_sql_injection_quiz_items(sqlite_session) -> N
         "short_answer",
     }
     assert all(item.kp_id for item in quiz_items)
+
+
+@pytest.mark.anyio
+async def test_course_websec_seed_is_idempotent_and_covers_required_floor(
+    sqlite_session,
+) -> None:
+    first = await seed_course_websec(sqlite_session)
+    await sqlite_session.commit()
+    second = await seed_course_websec(sqlite_session)
+    await sqlite_session.commit()
+
+    chunk_total = await sqlite_session.scalar(
+        select(func.count()).select_from(Chunk).where(Chunk.domain == "course_websec")
+    )
+    node_total = await sqlite_session.scalar(
+        select(func.count()).select_from(KnowledgeNode).where(
+            KnowledgeNode.domain == "course_websec"
+        )
+    )
+    quiz_total = await sqlite_session.scalar(
+        select(func.count()).select_from(QuizItem).where(
+            QuizItem.question.like("%SQL 注入%")
+        )
+    )
+
+    assert first["chunks"] >= 10
+    assert first["nodes"] >= 3
+    assert first["quiz_items"] >= 5
+    assert second == {
+        "courses": 0,
+        "nodes": 0,
+        "edges": 0,
+        "documents": 0,
+        "chunks": 0,
+        "quiz_items": 0,
+    }
+    assert chunk_total >= 10
+    assert node_total >= 3
+    assert quiz_total >= 5
+
+
+@pytest.mark.anyio
+async def test_course_websec_seed_covers_official_manual_and_pdf_evidence(
+    sqlite_session,
+) -> None:
+    await seed_course_websec(sqlite_session)
+    await sqlite_session.commit()
+
+    documents = (
+        await sqlite_session.execute(
+            select(Document).where(Document.domain == "course_websec")
+        )
+    ).scalars().all()
+    retriever = RetrievalService(sqlite_session)
+    pdf_hits = await retriever.retrieve(
+        "SSRF 云元数据 内网",
+        domain="course_websec",
+        top_k=5,
+        filters={"asset_type": "pdf"},
+    )
+
+    platforms = {document.metadata_.get("platform") for document in documents}
+    required_metadata = {
+        "platform",
+        "source_url",
+        "author",
+        "rights_note",
+        "collection_mode",
+        "asset_type",
+    }
+
+    assert {"owasp", "portswigger", "manual", "mineru"} <= platforms
+    for document in documents:
+        missing = required_metadata - set(document.metadata_)
+        assert not missing, f"{document.title} missing metadata fields: {missing}"
+        assert document.metadata_["source_url"]
+        assert document.metadata_["rights_note"]
+
+    assert pdf_hits
+    assert any(
+        hit.metadata.get("page_no") or hit.metadata.get("chapter") for hit in pdf_hits
+    )
+    assert all(hit.metadata["platform"] == "mineru" for hit in pdf_hits)

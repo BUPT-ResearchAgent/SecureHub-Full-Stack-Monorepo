@@ -117,22 +117,28 @@ async def test_low_evidence_count_does_not_generate_course_doc(sqlite_session) -
 
 @pytest.mark.anyio
 async def test_missing_source_metadata_never_enters_done_state() -> None:
-    hits = [
-        ChunkHit(
-            chunk_id="00000000-0000-0000-0000-000000000001",
-            document_id="00000000-0000-0000-0000-000000000002",
-            title="metadata incomplete",
-            snippet="SQL 注入证据片段",
-            score=1.0,
-            metadata={"platform": "owasp", "rights_note": ""},
-        ),
+    cases = [
+        {"platform": "owasp", "source_url": "https://owasp.org/example", "rights_note": ""},
+        {"platform": "owasp", "rights_note": "OWASP 公开资料引用。"},
     ]
-    events: list[str] = []
 
-    with pytest.raises(SourceMetadataIncomplete):
-        await _finalize_done_only_with_source_metadata(hits, events=events)
+    for metadata in cases:
+        hits = [
+            ChunkHit(
+                chunk_id="00000000-0000-0000-0000-000000000001",
+                document_id="00000000-0000-0000-0000-000000000002",
+                title="metadata incomplete",
+                snippet="SQL 注入证据片段",
+                score=1.0,
+                metadata=metadata,
+            ),
+        ]
+        events: list[str] = []
 
-    assert "done" not in events
+        with pytest.raises(SourceMetadataIncomplete):
+            await _finalize_done_only_with_source_metadata(hits, events=events)
+
+        assert "done" not in events
 
 
 @pytest.mark.anyio
