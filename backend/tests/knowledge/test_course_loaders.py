@@ -63,14 +63,19 @@ async def test_pdf_mineru_import_fallback_registers_pdf_and_markdown_assets(
         session=sqlite_session,
         title="文件上传漏洞讲义",
         source_url="https://demo.securehub.local/pdf/websec-upload.pdf",
+        storage_local_root=tmp_path / "storage",
     )
     await sqlite_session.commit()
 
     assets = (await sqlite_session.execute(select(DocumentAsset))).scalars().all()
     objects = (await sqlite_session.execute(select(StorageObject))).scalars().all()
 
-    assert result.asset_count == 2
-    assert {asset.asset_type for asset in assets} == {"original_pdf", "markdown_full"}
+    assert result.asset_count == 3
+    assert {asset.asset_type for asset in assets} == {
+        "original_pdf",
+        "markdown_full",
+        "markdown_chapter",
+    }
     assert {obj.mime_type for obj in objects} >= {
         "application/pdf",
         "text/markdown; charset=utf-8",
@@ -100,16 +105,18 @@ async def test_pdf_mineru_import_registers_local_markdown_images(
         session=sqlite_session,
         mineru_output_dir=mineru_dir,
         title="Web Security Textbook",
+        storage_local_root=tmp_path / "storage",
     )
     await sqlite_session.commit()
 
     assets = (await sqlite_session.execute(select(DocumentAsset))).scalars().all()
     objects = (await sqlite_session.execute(select(StorageObject))).scalars().all()
 
-    assert result.asset_count == 3
+    assert result.asset_count == 4
     assert {asset.asset_type for asset in assets} == {
         "original_pdf",
         "markdown_full",
+        "markdown_chapter",
         "page_image",
     }
     image_asset = next(asset for asset in assets if asset.asset_type == "page_image")
