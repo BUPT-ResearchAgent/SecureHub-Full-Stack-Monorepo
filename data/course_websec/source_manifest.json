@@ -431,5 +431,58 @@
       "chunks": 1,
       "asset_type": "web_article"
     }
+  ],
+  "textbook_sources_2026_07_07": [
+    {
+      "platform": "mineru",
+      "title": "现代密码学教程（第2版）",
+      "source_url": "local://crypto-basics.pdf",
+      "author": "谷利泽 / 郑世慧 / 杨义先",
+      "publisher": "北京邮电大学出版社",
+      "year": "2015",
+      "isbn": "978-7-5635-4307-6",
+      "license": "proprietary-educational-use",
+      "rights_note": "教材版权归原作者与出版社；本项目仅在 SecureHub 内部教学演示 RAG 检索场景使用，不对外分发原文，展示时保留章节引用与来源标注。",
+      "source_type": "pdf_mineru",
+      "collection_mode": "manual",
+      "document_id": "7b89565f-0ba1-52fb-b91e-8a7e95469602",
+      "chapters": 12,
+      "chunks": 1218,
+      "asset_type": "markdown_chapter"
+    },
+    {
+      "platform": "mineru",
+      "title": "网络安全原理与实践",
+      "source_url": "local://network-security.pdf",
+      "author": "陈伟 / 李频",
+      "publisher": "清华大学出版社",
+      "year": "2014",
+      "isbn": "978-7-302-35654-7",
+      "license": "proprietary-educational-use",
+      "rights_note": "教材版权归原作者与出版社；本项目仅在 SecureHub 内部教学演示 RAG 检索场景使用，不对外分发原文，展示时保留章节引用与来源标注。",
+      "source_type": "pdf_mineru",
+      "collection_mode": "manual",
+      "document_id": "3fbaeff8-7996-5a0d-b99d-df12aea31c8c",
+      "chapters": 23,
+      "chunks": 724,
+      "asset_type": "markdown_chapter"
+    },
+    {
+      "platform": "mineru",
+      "title": "汇编语言（第3版）",
+      "source_url": "local://reverse-engineering.pdf",
+      "author": "王爽",
+      "publisher": "清华大学出版社",
+      "year": "2013",
+      "isbn": "978-7-302-33314-2",
+      "license": "proprietary-educational-use",
+      "rights_note": "教材版权归原作者与出版社；本项目仅在 SecureHub 内部教学演示 RAG 检索场景使用，不对外分发原文，展示时保留章节引用与来源标注。",
+      "source_type": "pdf_mineru",
+      "collection_mode": "manual",
+      "document_id": "4776c945-bd89-5e54-a60d-720aaf7048af",
+      "chapters": 13,
+      "chunks": 538,
+      "asset_type": "markdown_chapter"
+    }
   ]
 }

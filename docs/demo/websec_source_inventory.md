@@ -51,6 +51,16 @@ Domain：`course_websec`
 | [真采集/2026-07-07] | `github` | https://raw.githubusercontent.com/OWASP/CheatSheetSeries/master/cheatsheets/Authentication_Cheat_Sheet.md | OWASP CheatSheetSeries 官方仓库；按 CC BY-SA 4.0 署名引用；raw markdown 直取 | `scrapling` | 75 | 是：cache replay + metadata |
 | [真采集/2026-07-07] | `github` | https://raw.githubusercontent.com/OWASP/CheatSheetSeries/master/cheatsheets/Access_Control_Cheat_Sheet.md | OWASP CheatSheetSeries 官方仓库；按 CC BY-SA 4.0 署名引用；raw markdown 直取 | `scrapling` | 1 | 是：cache replay + metadata |
 
+## 2026-07-07 6-C-2 中文教材章节级入库
+
+| 状态 | platform | 教材 | source_url | rights_note | collection_mode | chapters | chunks | 有无测试 |
+|---|---|---|---|---|---|---:|---:|---|
+| [已入库/2026-07-07] | `mineru` | 现代密码学教程（第2版） | `local://crypto-basics.pdf` | 教材版权归原作者与出版社；仅用于 SecureHub 内部教学演示 RAG 检索，不对外分发原文。 | `manual` / `pdf_mineru` | 12 | 1218 | 是：chapter classifier、MinerU ingestion、RAG fixture |
+| [已入库/2026-07-07] | `mineru` | 网络安全原理与实践 | `local://network-security.pdf` | 同上 | `manual` / `pdf_mineru` | 23 | 724 | 是：chapter classifier、MinerU ingestion、RAG fixture |
+| [已入库/2026-07-07] | `mineru` | 汇编语言（第3版） | `local://reverse-engineering.pdf` | 同上 | `manual` / `pdf_mineru` | 13 | 538 | 是：chapter classifier、MinerU ingestion、RAG fixture |
+
+说明：三本教材按“第 X 章”语义切出 `markdown_chapter` assets，并把 `chapter / heading_path / section_hint / asset_id / book_title` 写入每个 chunk metadata。PDF 和整本 `full.md` 均被 `.gitignore` 排除；本地 PDF 本体需由项目负责人保留或重新复制，不进入 git。
+
 ## Metadata Floor
 
 每条资料进入 `documents.metadata` 与 `chunks.metadata` 时必须包含：
