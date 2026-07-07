@@ -1,0 +1,52 @@
+name: Claude Code
+
+on:
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+  issues:
+    types: [opened, assigned]
+  pull_request_review:
+    types: [submitted]
+
+# 权限最小化：只授予 Claude Code Action 完成任务所需的读写权限，避免额度被无关触发消耗。
+concurrency:
+  group: claude-${{ github.event.issue.number || github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  claude:
+    # ────────────────────────────────────────────────────────────────
+    # 硬性访问控制：只有 Nnutural 触发的事件才会运行，其他成员的 @claude
+    # 评论 / issue / review 都会被直接 skip，不会消耗任何 Claude Code 额度。
+    #
+    # 如果未来需要加人，改成白名单数组即可，例如：
+    #   contains(fromJson('["Nnutural","teammate-a"]'), github.event.sender.login)
+    # ────────────────────────────────────────────────────────────────
+    if: |
+      github.event.sender.login == 'Nnutural' && (
+        (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) ||
+        (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude')) ||
+        (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude')) ||
+        (github.event_name == 'issues' && (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude')))
+      )
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      pull-requests: read
+      issues: read
+      id-token: write
+      actions: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Run Claude Code
+        id: claude
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
