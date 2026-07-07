@@ -111,8 +111,12 @@ async def _ingest_normalized_source(
     storage_prefix: str,
 ) -> CourseLoadResult:
     html_bytes = source.html_text.encode("utf-8")
-    digest = sha256(html_bytes).hexdigest()
-    object_key = f"{storage_prefix}/{_safe_url_key(source.url)}.html"
+    markdown_bytes = source.raw_text.encode("utf-8")
+    html_digest = sha256(html_bytes).hexdigest()
+    markdown_digest = sha256(markdown_bytes).hexdigest()
+    safe_key = _safe_url_key(source.url)
+    object_key = f"{storage_prefix}/{safe_key}.html"
+    markdown_key = f"{storage_prefix}/{safe_key}.md"
     await storage.put_bytes(
         object_key=object_key,
         content=html_bytes,
@@ -125,6 +129,18 @@ async def _ingest_normalized_source(
             "platform": source.metadata.get("platform"),
         },
     )
+    await storage.put_bytes(
+        object_key=markdown_key,
+        content=markdown_bytes,
+        mime_type="text/markdown; charset=utf-8",
+        original_filename=f"{safe_key}.md",
+        metadata={
+            "domain": source.domain,
+            "asset_type": "markdown_full",
+            "source_url": source.url,
+            "platform": source.metadata.get("platform"),
+        },
+    )
 
     result = await ingestion.ingest(
         IngestionRequest(
@@ -133,19 +149,34 @@ async def _ingest_normalized_source(
             title=source.title,
             url=source.url,
             raw_text=source.raw_text,
-            metadata=source.metadata,
+            metadata={
+                "collection_mode": "scrapling",
+                "title": source.title,
+                **source.metadata,
+            },
             assets=[
                 {
                     "asset_type": "raw_html",
                     "object_key": object_key,
                     "mime_type": "text/html; charset=utf-8",
                     "size_bytes": len(html_bytes),
-                    "content_hash": digest,
+                    "content_hash": html_digest,
                     "metadata": {
                         "source_url": source.url,
                         "platform": source.metadata.get("platform"),
                     },
-                }
+                },
+                {
+                    "asset_type": "markdown_full",
+                    "object_key": markdown_key,
+                    "mime_type": "text/markdown; charset=utf-8",
+                    "size_bytes": len(markdown_bytes),
+                    "content_hash": markdown_digest,
+                    "metadata": {
+                        "source_url": source.url,
+                        "platform": source.metadata.get("platform"),
+                    },
+                },
             ],
         )
     )
