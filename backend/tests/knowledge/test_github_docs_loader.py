@@ -45,6 +45,7 @@ async def test_github_docs_import_e2e_offline_fixture(sqlite_session) -> None:
             )
         ],
         session=sqlite_session,
+        storage_prefix="course_websec/test/github",
     )
     await sqlite_session.commit()
 
@@ -57,7 +58,7 @@ async def test_github_docs_import_e2e_offline_fixture(sqlite_session) -> None:
     objects = (
         await sqlite_session.execute(
             select(StorageObject).where(
-                StorageObject.object_key.like("course_websec/github/%")
+                StorageObject.object_key.like("course_websec/test/github/%")
             )
         )
     ).scalars().all()
@@ -70,7 +71,7 @@ async def test_github_docs_import_e2e_offline_fixture(sqlite_session) -> None:
 
     assert result.domain == "course_websec"
     assert result.document_ids
-    assert result.asset_count == 1
+    assert result.asset_count == 2
     assert result.chunk_count >= 1
     assert document is not None
     assert document.source_type == "github_docs"
@@ -83,10 +84,10 @@ async def test_github_docs_import_e2e_offline_fixture(sqlite_session) -> None:
     assert document.metadata_["path"] == "docs/secure-coding.md"
     assert document.metadata_["rights_note"]
     assert assets
-    assert assets[0].asset_type == "raw_html"
-    assert assets[0].object_key.startswith("course_websec/github/")
+    assert {asset.asset_type for asset in assets} == {"raw_html", "markdown_full"}
+    assert all(asset.object_key.startswith("course_websec/test/github/") for asset in assets)
     assert objects
-    assert objects[0].object_key == assets[0].object_key
+    assert {obj.object_key for obj in objects} == {asset.object_key for asset in assets}
     assert hits
     assert all(hit.metadata["platform"] == "github" for hit in hits)
     assert any("安全编码" in hit.snippet or "fix workflow" in hit.snippet for hit in hits)
