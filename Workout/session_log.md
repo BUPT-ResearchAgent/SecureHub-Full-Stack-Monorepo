@@ -178,3 +178,47 @@ Status: real
 
 - 重新拷贝三本 PDF 后，可重跑 `.\scripts\ingest\ingest_pdf_mineru_batch.ps1` 验证幂等输出 `already ingested, skipped`；如需刷新 PDF hash，再使用 `-ForceReingest`。
 - 建议 6-C-3 承接 MediaCrawler B 站真 export，补 Web 安全主战场视频转写证据。
+
+## 2026-07-08 6-C-3 MediaCrawler B 站真 export 端到端
+
+### 1. 输入数据
+
+- RawDir: `data/raw/mediacrawler/bili/jsonl/`
+- 文件数量：2（`search_contents_2026-06-15.jsonl`、`search_creators_2026-06-15.jsonl`）
+- 是否真实 export：是，人工提供的 B 站 MediaCrawler 离线 export；本轮未运行 MediaCrawler 爬虫本体。
+- 是否含评论：否，未发现 `*comments*.jsonl/json/csv`；本批次 `comments=0`。
+- 是否含封面：含 `video_cover_url` 字段 19 条；仅写入 metadata，不下载封面图片。
+- 是否含转写：否，`transcript/subtitle/asr_text/caption_text` 命中 0 条。
+
+### 2. 入库结果
+
+- documents 增量：19（导入前 `platform=bili` 为 0，导入后为 19）
+- document_assets 增量：19（全部 `media_item_json`；无 comments export，因此无 `media_comment_json`）
+- chunks 增量：21
+- storage_objects 增量：19
+- platform=bili documents：19
+- collection_mode=mediacrawler documents：19
+
+### 3. 合规判断
+
+- 未绕登录 / 验证码 / 风控：是；只消费离线 export。
+- 未下载原视频：是。
+- PII 清洗字段：`cookies/cookie`、`token/csrf/xsec_token/session/credential`、`user_id/uid/mid/sec_uid`、`avatar/avatar_url/face/head_url`、`ip_location/home_url/homepage/signature/sign`。
+- rights_note：`Bilibili UGC 用户内容，仅学习用途保留摘要与引用；不下载原视频，不批量转载。`
+- 结构化 storage JSON key 校验：19 个对象 `bad_key_paths={}`。
+
+### 4. 验收命令
+
+- pytest：`uv run pytest tests/knowledge/test_mediacrawler_normalizer.py -q`：3 passed；`uv run pytest tests/knowledge/ -q -m "not llm_live"`：31 passed；`uv run pytest tests/rag/test_retrieve_course_websec.py -q -m "not llm_live"`：7 passed；`uv run pytest -m "not llm_live" -q`：129 passed, 2 deselected, 2 pre-existing async cleanup warnings。
+- RAG：`RetrievalService.retrieve("SQL 注入 XSS Web安全", domain="course_websec", filters={"platform": "bili"})`：召回 5 条。
+- SQL / Python 校验：`platform_bili_documents=19`，`collection_mode_mediacrawler_documents=19`，`chunks=21`，`document_assets=19`，`storage_objects=19`，`missing_metadata=[]`。
+- git check-ignore：`data/raw/mediacrawler/**/*.jsonl/json/csv` 命中 `.gitignore`；本轮新增 `data/storage/course_websec/mediacrawler/**/*.json/jsonl/csv` ignore，防止归一化 UGC JSON 误提交。
+- JSON：`uv run python -m json.tool ..\data\course_websec\source_manifest.json`：通过。
+- demo smoke：`.\scripts\demo_smoke.ps1`：7 passed（Postgres / Redis 使用 docker compose 本地容器）。
+
+### 5. 遗留与下一步
+
+- 样本数量不足：否，本批次 19 条 contents，满足至少 5 个真实 B 站视频 document。
+- cover_image 是否缺失：缺失；仅有 `cover_url` metadata，未启用封面安全下载。
+- transcript 是否缺失：缺失；本批次 export 未提供转写字段。
+- 交给 6-C-4 的事项：继续补 Web 安全 10 主题覆盖时，可优先补带转写或评论摘要的人工 export，提高视频证据 chunk 密度。
