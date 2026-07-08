@@ -257,22 +257,22 @@ Status: real
 ### 1. Phase 完成度
 | Phase | 结果 | 关键数据 |
 |---|---|---|
-| 0. 安全准备 | 通过 | API Key 不打印；当前环境未暴露 DASHSCOPE_* |
+| 0. 安全准备 | 通过 | API Key 不打印；`backend/.env.local` 已从本地 CSV 配置 DASHSCOPE_*，文件仍被 git ignore |
 | 1. 只读审计 | 通过 | 发现 hash stub、retriever 动态猜维度、profile 缺失、异常吞掉等问题 |
 | 2. Provider 实现 | 通过 | `backend/app/llm/embeddings/` 7 文件；Qwen + fixture + factory + service |
 | 3. 单元测试 | 通过 | `uv run pytest -m "not llm_live and not embedding_live" -q`：156 passed, 3 deselected |
-| 4. Live Test | 阻塞 | 当前配置中 `DASHSCOPE_API_KEY` / `DASHSCOPE_OPENAI_COMPATIBLE_BASE_URL` 不存在；live test skipped |
+| 4. Live Test | 通过 | `ENABLE_EMBEDDING_LIVE_TESTS=true` + `ENABLE_LLM_LIVE_TESTS=true`；`uv run pytest tests/llm_live/test_qwen_embedding_live.py -q -m embedding_live -rs`：1 passed in 5.92s |
 | 5. DB Preflight | 阻塞 | 当前连接 DB：total=10, pending=10, ready=0；与交接 baseline 3555/2096 不符 |
 | 6. Reset 旧向量 | 未执行 | dry-run 命中 legacy_unprofiled_ready=0；按 Plan 停止破坏性步骤 |
 | 7. 全量重嵌入 | 未执行 | 因 Phase 4/5 门禁未满足，未调用真实 API 写库 |
-| 8. Postflight | 部分完成 | 代码/测试/安全自查完成；DB postflight 不适用 |
+| 8. Postflight | 部分完成 | 代码/测试/安全自查/live smoke 完成；DB postflight 不适用 |
 
 ### 2. 迁移前后对比
 - 交接预期：ready=2096 (BGE-M3 legacy 无 profile) + pending=1459，总数 3555
 - 当前实际连接 DB：pending=10, ready=0, embedding NULL=10
 - 迁移后数据库状态：未改动（Phase 6/7 未执行）
-- 累计 API 消耗：0 tokens / 0 元（未真实调用）
-- 首次 Qwen 请求延迟 / 平均延迟 / p95 延迟：未获取（live 配置缺失）
+- 累计 API 消耗：已发生一次 live smoke 真实调用（3 条短文本：2 条 document embedding + 1 条 query embedding）；未读取 DashScope 账单，未做批量消耗
+- 首次 Qwen 请求延迟 / 平均延迟 / p95 延迟：未独立采集；pytest wall time 为 5.92s
 
 ### 3. 契约触碰
 - `backend/.env.example` 新增 DASHSCOPE_* + EMBEDDING_* Qwen 配置空占位
@@ -282,7 +282,7 @@ Status: real
 - `pyproject.toml` 无净新增依赖（沿用 httpx）
 
 ### 4. 合规
-- API Key 从环境变量 / `.env.local` 读取，未打印完整 Key
+- API Key 从环境变量 / `.env.local` 读取；本地 `.env.local` 由 CSV 配置且不进 git；未打印完整 Key / URL
 - 禁止跨模型 fallback：Qwen provider 失败抛领域异常，不回 hash / BGE / fixture
 - `reset_embeddings` 默认 dry-run，真正执行必须 `--yes`
 - 日志不记录 Authorization / 完整原文 / 完整 vector
@@ -295,22 +295,30 @@ Status: real
 ### 6. 需 tag
 - @member-a: `backend/app/llm/embeddings/` 归 LLM Provider 家族，长期归你维护；本轮由 C 完成搬迁
 - @member-b: EvidenceDrawer 未来可展示 embedding_profile 徽章
-- @project-lead: API 消耗成本 0；需补齐 DashScope env 与目标 3555 chunks DB 后再跑 Phase 4-7
+- @project-lead: DashScope env 已补齐且 live smoke 通过；仍需切换目标 3555 chunks DB 后再跑 Phase 5-7；本轮新增真实 API 调用仅 live smoke 3 条短文本
 
 ### 7. Commit 列表（按 Phase 切分）
-- 待提交：`feat(embedding): [Phase 2] add Qwen embedding provider @member-a`
-- 待提交：`feat(embedding): [Phase 6-7] add reset and recoverable embedding jobs @member-a`
-- 待提交：`test(embedding): [Phase 3] cover Qwen fixture retriever contracts @member-a`
-- 待提交：`docs(embedding): [Phase 8] record Qwen profile contract and log @member-a`
+- `8b6f8942 feat(embedding): [Phase 2] add Qwen provider infrastructure @member-a`
+- `419fb38b feat(embedding): [Phase 6-7] add reset and recoverable jobs @member-a`
+- `64ac4b85 test(embedding): [Phase 3] cover Qwen provider and retriever contracts @member-a`
+- `601a2790 docs(embedding): [Phase 8] record Qwen profile contract @member-a`
+- `cdfb2b1f fix(embedding): [Phase 8] address review QA blockers @member-a`
+- 本次文档补记将随 `docs(embedding): record Qwen live config follow-up @member-a` 提交。
 
 ### 8. Review QA 结论
 - Review QA 发现并已修复：harness 不再把 EmbeddingError 兜底成 fixture；processing 状态会被 recover；Qwen profile 必须匹配 provider/model/dim/output；fixture provider 在 production 禁用；retriever 关闭 embedding client
 - 自查 13 项：生产 hash vector 已移除；无 Qwen -> BGE fallback；retriever profile 过滤已测；API Key 无实值入库；batch 上限 10；返回顺序/维度/NaN/Inf/429/500/timeout 均有单测；reset 默认 dry-run；job 可恢复并保留非 embedding metadata
-- 剩余阻塞：真实 live API 和 DB reset/re-embedding 未执行，原因是环境 Qwen 变量缺失且当前 DB baseline 不符
+- 剩余阻塞：DB reset/re-embedding 未执行，原因是当前 DB baseline 不符；真实 live API 已通过
 
 ### 9. 遗留
-- 补齐 `backend/.env.local` 的 `DASHSCOPE_API_KEY` / `DASHSCOPE_OPENAI_COMPATIBLE_BASE_URL`
 - 切回交接目标 DB（应为 3555 chunks，其中 2096 legacy ready）后重跑 Phase 4-7
 - Batch File API 迁移（Plan §十建议后续单独轮次）
 - Sparse embedding / Reranker（Plan §1 明确本轮不做）
 - rag/retriever fallback 阈值调优（A 的领地，本轮不改）
+
+### 10. API Key 配置补记
+- 已使用本地 `默认业务空间-apiKey-6044212.csv` 中的 `apiKey` 与 `openAiCompatible` 写入 `backend/.env.local`；未打印密钥或兼容地址，未提交 `.env.local`。
+- `.env.local` 中既有 `FRONTEND_ORIGINS` dotenv 解析问题已修正为单行 JSON 数组；后端 `get_settings()` 可正常加载 Qwen 配置。
+- 配置确认：provider=`qwen_openai_compatible`，model=`text-embedding-v4`，dim=`1024`，profile=`qwen-openai-compatible:text-embedding-v4:1024:dense:v1`，batch=`10`，concurrency=`1`，timeout=`30s`，retries=`2`。
+- Live 验证：`ENABLE_EMBEDDING_LIVE_TESTS=true` 与 `ENABLE_LLM_LIVE_TESTS=true` 同时开启后，`tests/llm_live/test_qwen_embedding_live.py` 通过，返回 1024 维 dense embedding。
+- Git 边界：`backend/.env.local` 为 `tracked=False` 且命中 `backend/.gitignore: .env*`；仅剩无关 `.codegraph` 工作区脏改未处理。
