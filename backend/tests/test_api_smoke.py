@@ -52,7 +52,13 @@ def test_agents_manifest():
     }
 
 
-def test_rag_search_returns_fixture():
+def test_rag_search_returns_fixture(monkeypatch):
+    from app.core.config import get_settings
+    from app.llm.embedding import reset_embedding_service
+
+    monkeypatch.setenv("EMBEDDING_PROVIDER", "fixture")
+    get_settings.cache_clear()
+    reset_embedding_service()
     client = TestClient(app)
     response = client.post(
         "/api/v1/rag/search",
