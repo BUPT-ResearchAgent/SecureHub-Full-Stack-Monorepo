@@ -247,3 +247,69 @@ Status: real
 ### 5. 遗留
 - 3555 chunks 待 Qwen 全量重跑（交接给 6-C-6）
 - .codegraph/codegraph.db 无关脏，不 commit
+
+## 2026-07-08 6-C-6 Embedding 迁移到 Qwen text-embedding-v4
+
+### 0. 与 6-C-5 半截交付的关系
+- 6-C-5 §3 A（BGE-M3）已 revert，本轮代码侧改为 Qwen OpenAI-compatible provider 架构
+- 6-C-5 §4 B（爬虫扩展）保留，未触碰 crawling 代码
+
+### 1. Phase 完成度
+| Phase | 结果 | 关键数据 |
+|---|---|---|
+| 0. 安全准备 | 通过 | API Key 不打印；当前环境未暴露 DASHSCOPE_* |
+| 1. 只读审计 | 通过 | 发现 hash stub、retriever 动态猜维度、profile 缺失、异常吞掉等问题 |
+| 2. Provider 实现 | 通过 | `backend/app/llm/embeddings/` 7 文件；Qwen + fixture + factory + service |
+| 3. 单元测试 | 通过 | `uv run pytest -m "not llm_live and not embedding_live" -q`：153 passed, 3 deselected |
+| 4. Live Test | 阻塞 | 当前配置中 `DASHSCOPE_API_KEY` / `DASHSCOPE_OPENAI_COMPATIBLE_BASE_URL` 不存在；live test skipped |
+| 5. DB Preflight | 阻塞 | 当前连接 DB：total=10, pending=10, ready=0；与交接 baseline 3555/2096 不符 |
+| 6. Reset 旧向量 | 未执行 | dry-run 命中 legacy_unprofiled_ready=0；按 Plan 停止破坏性步骤 |
+| 7. 全量重嵌入 | 未执行 | 因 Phase 4/5 门禁未满足，未调用真实 API 写库 |
+| 8. Postflight | 部分完成 | 代码/测试/安全自查完成；DB postflight 不适用 |
+
+### 2. 迁移前后对比
+- 交接预期：ready=2096 (BGE-M3 legacy 无 profile) + pending=1459，总数 3555
+- 当前实际连接 DB：pending=10, ready=0, embedding NULL=10
+- 迁移后数据库状态：未改动（Phase 6/7 未执行）
+- 累计 API 消耗：0 tokens / 0 元（未真实调用）
+- 首次 Qwen 请求延迟 / 平均延迟 / p95 延迟：未获取（live 配置缺失）
+
+### 3. 契约触碰
+- `backend/.env.example` 新增 DASHSCOPE_* + EMBEDDING_* Qwen 配置空占位
+- `chunks.metadata.embedding_profile` 契约引入，锁定 `qwen-openai-compatible:text-embedding-v4:1024:dense:v1`
+- `backend/app/llm/embeddings/` 新目录 7 文件
+- `docs/api/evidence-contract.md` v1.1 -> v1.2（新增 embedding profile 字段说明）
+- `pyproject.toml` 无净新增依赖（沿用 httpx）
+
+### 4. 合规
+- API Key 从环境变量 / `.env.local` 读取，未打印完整 Key
+- 禁止跨模型 fallback：Qwen provider 失败抛领域异常，不回 hash / BGE / fixture
+- `reset_embeddings` 默认 dry-run，真正执行必须 `--yes`
+- 日志不记录 Authorization / 完整原文 / 完整 vector
+
+### 5. rag/retriever 修改（3 处最小安全接入）
+- 禁止动态猜维度：query embedding 维度必须等于 `settings.EMBEDDING_DIM`
+- 过滤仅当前 profile：`metadata->>'embedding_profile' = EMBEDDING_PROFILE`
+- API 故障不吞异常：`EmbeddingError` 显式传播
+
+### 6. 需 tag
+- @member-a: `backend/app/llm/embeddings/` 归 LLM Provider 家族，长期归你维护；本轮由 C 完成搬迁
+- @member-b: EvidenceDrawer 未来可展示 embedding_profile 徽章
+- @project-lead: API 消耗成本 0；需补齐 DashScope env 与目标 3555 chunks DB 后再跑 Phase 4-7
+
+### 7. Commit 列表（按 Phase 切分）
+- 待提交：`feat(embedding): [Phase 2] add Qwen embedding provider @member-a`
+- 待提交：`feat(embedding): [Phase 6-7] add reset and recoverable embedding jobs @member-a`
+- 待提交：`test(embedding): [Phase 3] cover Qwen fixture retriever contracts @member-a`
+- 待提交：`docs(embedding): [Phase 8] record Qwen profile contract and log @member-a`
+
+### 8. Review QA 结论
+- 自查 13 项：生产 hash vector 已移除；无 Qwen -> BGE fallback；retriever profile 过滤已测；API Key 无实值入库；batch 上限 10；返回顺序/维度/NaN/Inf/429/500/timeout 均有单测；reset 默认 dry-run；job 可恢复并保留非 embedding metadata
+- 剩余阻塞：真实 live API 和 DB reset/re-embedding 未执行，原因是环境 Qwen 变量缺失且当前 DB baseline 不符
+
+### 9. 遗留
+- 补齐 `backend/.env.local` 的 `DASHSCOPE_API_KEY` / `DASHSCOPE_OPENAI_COMPATIBLE_BASE_URL`
+- 切回交接目标 DB（应为 3555 chunks，其中 2096 legacy ready）后重跑 Phase 4-7
+- Batch File API 迁移（Plan §十建议后续单独轮次）
+- Sparse embedding / Reranker（Plan §1 明确本轮不做）
+- rag/retriever fallback 阈值调优（A 的领地，本轮不改）
