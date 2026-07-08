@@ -28,6 +28,7 @@ from uuid import UUID, uuid4
 from pydantic import BaseModel, ValidationError
 
 from app.runtime.harness.context import HarnessContext
+from app.llm.embeddings.errors import EmbeddingError
 from app.runtime.harness.errors import (
     HarnessError,
     InsufficientEvidence,
@@ -113,27 +114,29 @@ async def _default_rag_retrieve(
     retriever returns no rows; we then degrade to canned fixtures so the demo
     path stays runnable.
     """
-    try:
-        from app.rag.retriever import retrieve  # late import to avoid cycles
+    from app.rag.retriever import retrieve  # late import to avoid cycles
 
+    try:
         hits = await retrieve(query, domain=domain, top_k=top_k, filter=filters)
-        if hits:
-            return [
-                EvidenceCard(
-                    chunk_id=str(hit.chunk_id),
-                    document_id=str(hit.document_id) if hit.document_id else None,
-                    domain=hit.domain,
-                    source=hit.source,
-                    excerpt=hit.chunk_text[:500],
-                    reliability=hit.reliability,
-                    score=hit.score,
-                    metadata=hit.metadata,
-                )
-                for hit in hits
-            ]
+    except EmbeddingError:
+        raise
     except Exception:
-        # Real retriever failed (no DB, no extension, no embeddings yet)
-        pass
+        # Real retriever failed before reaching the embedding provider.
+        hits = []
+    if hits:
+        return [
+            EvidenceCard(
+                chunk_id=str(hit.chunk_id),
+                document_id=str(hit.document_id) if hit.document_id else None,
+                domain=hit.domain,
+                source=hit.source,
+                excerpt=hit.chunk_text[:500],
+                reliability=hit.reliability,
+                score=hit.score,
+                metadata=hit.metadata,
+            )
+            for hit in hits
+        ]
     return [EvidenceCard(**hit) for hit in default_evidence_fixtures(domain)]
 
 

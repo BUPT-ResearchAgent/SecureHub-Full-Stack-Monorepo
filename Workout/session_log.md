@@ -222,3 +222,113 @@ Status: real
 - cover_image 是否缺失：缺失；仅有 `cover_url` metadata，未启用封面安全下载。
 - transcript 是否缺失：缺失；本批次 export 未提供转写字段。
 - 交给 6-C-4 的事项：继续补 Web 安全 10 主题覆盖时，可优先补带转写或评论摘要的人工 export，提高视频证据 chunk 密度。
+## 2026-07-08 6-C-5 半截交付（爬虫扩展完成，embedding 交接给 6-C-6）
+
+### 1. 完成部分
+- §4 B.1 MindSpider reference adapter：完整（adapter + fixture + CLI + tests + docs）
+- §4 B.2 MediaCrawler zhihu + xhs：完整（normalizer + CLIs + tests + docs）
+  * zhihu 真采集 18 documents（真扁平结构 + 纯文本 content_text）
+  * xhs graceful skip 首行解析错误
+
+### 2. 交接给 6-C-6 部分
+- §3 A BGE-M3 embedding：跑到 2096/3555（59%）后暂停
+- BGE-M3 相关代码全部 revert（embedding_service.py / embed_chunks.py / pyproject.toml）
+- DB 中 2096 条 BGE-M3 ready 向量待 6-C-6 Phase 6 reset
+
+### 3. 需 tag
+- @codex-6-c-6: 请从空白 embedding_service 开始，按 Plan/7-8 §11-31 做 Qwen 迁移
+- @member-a: rag/retriever.py fallback 阈值判断（本轮未改）
+
+### 4. Commit 列表
+- e5cf6af3 chore(git): ignore MindSpider runtime output data/storage/news/
+- 2a947bbd feat(mediacrawler): zhihu and xhs export normalizers with graceful skip
+- 1cd57315 feat(mindspider): P2 reference adapter with topic normalizer and fixture import
+
+### 5. 遗留
+- 3555 chunks 待 Qwen 全量重跑（交接给 6-C-6）
+- .codegraph/codegraph.db 无关脏，不 commit
+
+## 2026-07-08 6-C-6 Embedding 迁移到 Qwen text-embedding-v4
+
+### 0. 与 6-C-5 半截交付的关系
+- 6-C-5 §3 A（BGE-M3）已 revert，本轮代码侧改为 Qwen OpenAI-compatible provider 架构
+- 6-C-5 §4 B（爬虫扩展）保留，未触碰 crawling 代码
+
+### 1. Phase 完成度
+| Phase | 结果 | 关键数据 |
+|---|---|---|
+| 0. 安全准备 | 通过 | API Key 不打印；`backend/.env.local` 已从本地 CSV 配置 DASHSCOPE_*，文件仍被 git ignore |
+| 1. 只读审计 | 通过 | 发现 hash stub、retriever 动态猜维度、profile 缺失、异常吞掉等问题 |
+| 2. Provider 实现 | 通过 | `backend/app/llm/embeddings/` 7 文件；Qwen + fixture + factory + service |
+| 3. 单元测试 | 通过 | `uv run pytest -m "not llm_live and not embedding_live" -q`：156 passed, 3 deselected |
+| 4. Live Test | 通过 | `ENABLE_EMBEDDING_LIVE_TESTS=true` + `ENABLE_LLM_LIVE_TESTS=true`；`uv run pytest tests/llm_live/test_qwen_embedding_live.py -q -m embedding_live -rs`：1 passed in 5.92s |
+| 5. DB Preflight | 通过 | 切回本地 compose `localhost:15432/securehub` 后匹配交接 baseline：docs=89, total=3555, ready=2096, pending=1459, legacy_unprofiled_ready=2096 |
+| 6. Reset 旧向量 | 通过 | dry-run 命中 legacy_unprofiled_ready=2096；`--yes` updated=2096；reset 后 pending=3555, ready=0 |
+| 7. 全量重嵌入 | 通过 | `.\scripts\ingest\embed_all_chunks.ps1` 写入 Qwen ready=3555；failed=0；中途 Codex 工具超时但子进程继续完成 |
+| 8. Postflight | 通过 | DB / profile / retriever 直查通过；DashScope `Arrearage` 处理后复验 `demo_smoke` 7 passed，`rag/search fallback=False` |
+
+### 2. 迁移前后对比
+- 交接预期：ready=2096 (BGE-M3 legacy 无 profile) + pending=1459，总数 3555
+- 初始误判原因：`backend/.env.local` 曾指向 Neon（neondb：chunks=10, ready=0），切回本地 compose 后 baseline 恢复为 3555/2096/1459
+- 迁移后数据库状态：embedding_status=`{'ready': 3555}`；profile=`{'qwen-openai-compatible:text-embedding-v4:1024:dense:v1': 3555}`；ready_but_null=0；wrong_dim=0；missing_embedding_metadata=0
+- 累计 API 消耗：live smoke 3 条短文本 + 全量 3555 chunks；未读取 DashScope 账单
+- 首次 Qwen 请求延迟 / 平均延迟 / p95 延迟：未独立采集；全量任务由 10 条/batch 状态机完成，约 356 个 batch 请求
+
+### 3. 契约触碰
+- `backend/.env.example` 新增 DASHSCOPE_* + EMBEDDING_* Qwen 配置空占位
+- `chunks.metadata.embedding_profile` 契约引入，锁定 `qwen-openai-compatible:text-embedding-v4:1024:dense:v1`
+- `backend/app/llm/embeddings/` 新目录 7 文件
+- `docs/api/evidence-contract.md` v1.1 -> v1.2（新增 embedding profile 字段说明）
+- `pyproject.toml` 无净新增依赖（沿用 httpx）
+
+### 4. 合规
+- API Key 从环境变量 / `.env.local` 读取；本地 `.env.local` 由 CSV 配置且不进 git；未打印完整 Key / URL
+- 禁止跨模型 fallback：Qwen provider 失败抛领域异常，不回 hash / BGE / fixture
+- `reset_embeddings` 默认 dry-run，真正执行必须 `--yes`
+- 日志不记录 Authorization / 完整原文 / 完整 vector
+
+### 5. rag/retriever 修改（3 处最小安全接入）
+- 禁止动态猜维度：query embedding 维度必须等于 `settings.EMBEDDING_DIM`
+- 过滤仅当前 profile：`metadata->>'embedding_profile' = EMBEDDING_PROFILE`
+- API 故障不吞异常：`EmbeddingError` 显式传播
+
+### 6. 需 tag
+- @member-a: `backend/app/llm/embeddings/` 归 LLM Provider 家族，长期归你维护；本轮由 C 完成搬迁
+- @member-b: EvidenceDrawer 未来可展示 embedding_profile 徽章
+- @project-lead: 本地 compose DB 已完成 Qwen 全量重嵌入；DashScope 账号 `Arrearage` 已处理并复验 demo smoke 通过
+
+### 7. Commit 列表（按 Phase 切分）
+- `8b6f8942 feat(embedding): [Phase 2] add Qwen provider infrastructure @member-a`
+- `419fb38b feat(embedding): [Phase 6-7] add reset and recoverable jobs @member-a`
+- `64ac4b85 test(embedding): [Phase 3] cover Qwen provider and retriever contracts @member-a`
+- `601a2790 docs(embedding): [Phase 8] record Qwen profile contract @member-a`
+- `cdfb2b1f fix(embedding): [Phase 8] address review QA blockers @member-a`
+- `b77ce73a docs(embedding): record Qwen live config follow-up @member-a`
+- 本次 Phase 5-7 完成补记将随 `docs(log): complete 6-C-6 phases 5-7 on local compose after neon confusion` 提交。
+
+### 8. Review QA 结论
+- Review QA 发现并已修复：harness 不再把 EmbeddingError 兜底成 fixture；processing 状态会被 recover；Qwen profile 必须匹配 provider/model/dim/output；fixture provider 在 production 禁用；retriever 关闭 embedding client
+- 自查 13 项：生产 hash vector 已移除；无 Qwen -> BGE fallback；retriever profile 过滤已测；API Key 无实值入库；batch 上限 10；返回顺序/维度/NaN/Inf/429/500/timeout 均有单测；reset 默认 dry-run；job 可恢复并保留非 embedding metadata
+- 剩余阻塞：无；DB 侧迁移完成，实时 query embedding 与 API smoke 均已复验通过
+
+### 9. 遗留
+- Batch File API 迁移（Plan §十建议后续单独轮次）
+- Sparse embedding / Reranker（Plan §1 明确本轮不做）
+- rag/retriever fallback 阈值调优（A 的领地，本轮不改）
+
+### 10. API Key 配置补记
+- 已使用本地 `默认业务空间-apiKey-6044212.csv` 中的 `apiKey` 与 `openAiCompatible` 写入 `backend/.env.local`；未打印密钥或兼容地址，未提交 `.env.local`。
+- `.env.local` 中既有 `FRONTEND_ORIGINS` dotenv 解析问题已修正为单行 JSON 数组；后端 `get_settings()` 可正常加载 Qwen 配置。
+- 配置确认：provider=`qwen_openai_compatible`，model=`text-embedding-v4`，dim=`1024`，profile=`qwen-openai-compatible:text-embedding-v4:1024:dense:v1`，batch=`10`，concurrency=`1`，timeout=`30s`，retries=`2`。
+- Live 验证：`ENABLE_EMBEDDING_LIVE_TESTS=true` 与 `ENABLE_LLM_LIVE_TESTS=true` 同时开启后，`tests/llm_live/test_qwen_embedding_live.py` 通过，返回 1024 维 dense embedding。
+- Git 边界：`backend/.env.local` 为 `tracked=False` 且命中 `backend/.gitignore: .env*`；仅剩无关 `.codegraph` 工作区脏改未处理。
+
+### 11. Phase 5-7 本地 compose 完成补记
+- DATABASE_URL 已在本地 `.env.local` 切到 `localhost:15432/securehub`；原 Neon URL 仅作为脱敏注释保留，`.env.local` 不进 git。
+- Phase 5：本地 compose Postgres healthy，preflight 为 docs=89, chunks=3555, ready=2096, pending=1459, legacy_unprofiled_ready=2096, qwen_ready=0。
+- Phase 6：`.\scripts\ingest\reset_embeddings.ps1 -IncludeLegacyUnprofiledReady` dry-run 命中 2096；`-Yes` 后 updated=2096，状态变为 pending=3555。
+- Phase 7：`.\scripts\ingest\embed_all_chunks.ps1` 以 batch=10 全量写入 Qwen embedding；最终 ready=3555, failed=0, qwen_profile=3555。
+- Phase 8 DB postflight：embedding_status=`ready:3555`；profile=`qwen-openai-compatible:text-embedding-v4:1024:dense:v1:3555`；ready_but_null=0；wrong_dim=0；missing_embedding_metadata=0。
+- Phase 8 retriever 直查：`retrieve("SQL 注入 XSS Web安全", domain="course_websec", top_k=5)` 返回 5 hits，全部命中 Qwen profile，fallback_like=False。
+- Phase 8 临时阻断：全量重嵌入后，DashScope endpoint 曾短暂返回 `HTTP 400 Arrearage`，导致 `rag/search` 500；账号状态处理后，三条实时 query embedding 均返回 1024 维 Qwen profile。
+- Phase 8 API smoke 复验：`.\scripts\demo_smoke.ps1` 全量通过 7 steps；`rag/search` 返回 hits=3, fallback=False；`agent_runs` 返回 items=5。

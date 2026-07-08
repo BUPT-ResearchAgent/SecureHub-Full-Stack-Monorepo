@@ -1,0 +1,64 @@
+{
+  "topics": [
+    {
+      "topic_id": "ms_topic_001",
+      "keyword": "SQL 注入 2026 新型攻击",
+      "platforms": ["weibo", "zhihu", "bili"],
+      "hot_score": 87,
+      "sample_urls": ["https://example.org/security/sql-injection-2026"],
+      "collected_at": "2026-07-08T00:00:00Z",
+      "sentiment": "concern",
+      "abstract": "近期 SQL 注入讨论集中在 API 参数拼接、旧系统兼容层和自动化扫描误报治理，教学侧适合补充参数化查询与最小权限案例。"
+    },
+    {
+      "topic_id": "ms_topic_002",
+      "keyword": "越权漏洞与 RBAC 误配置",
+      "platforms": ["zhihu", "wechat_mp"],
+      "hot_score": 82,
+      "sample_urls": ["https://example.org/security/rbac-idor"],
+      "collected_at": "2026-07-08T00:00:00Z",
+      "sentiment": "concern",
+      "abstract": "开发者社区频繁讨论登录后接口授权缺失导致的水平越权，适合连接认证、授权、资源归属校验和 API 安全测试。"
+    },
+    {
+      "topic_id": "ms_topic_003",
+      "keyword": "文件上传绕过与内容检测",
+      "platforms": ["bili", "zhihu", "xhs"],
+      "hot_score": 76,
+      "sample_urls": ["https://example.org/security/upload-validation"],
+      "collected_at": "2026-07-08T00:00:00Z",
+      "sentiment": "learning",
+      "abstract": "学习讨论围绕扩展名黑名单、MIME 检测、图片木马和对象存储隔离，适合作为文件上传漏洞课程的舆情背景。"
+    },
+    {
+      "topic_id": "ms_topic_004",
+      "keyword": "XSS 与前端安全编码",
+      "platforms": ["zhihu", "bili"],
+      "hot_score": 73,
+      "sample_urls": ["https://example.org/security/xss-frontend"],
+      "collected_at": "2026-07-08T00:00:00Z",
+      "sentiment": "learning",
+      "abstract": "讨论集中在富文本渲染、DOM XSS、CSP 配置和输出编码，适合补充前端工程化场景中的安全默认值。"
+    },
+    {
+      "topic_id": "ms_topic_005",
+      "keyword": "SSRF 云元数据防护",
+      "platforms": ["weibo", "zhihu"],
+      "hot_score": 79,
+      "sample_urls": ["https://example.org/security/ssrf-cloud-metadata"],
+      "collected_at": "2026-07-08T00:00:00Z",
+      "sentiment": "concern",
+      "abstract": "SSRF 讨论从传统内网探测延伸到云元数据服务、出站访问控制和代理白名单策略，适合作为云安全案例。"
+    },
+    {
+      "topic_id": "ms_topic_006",
+      "keyword": "反序列化漏洞治理",
+      "platforms": ["zhihu", "wechat_mp", "bili"],
+      "hot_score": 71,
+      "sample_urls": ["https://example.org/security/deserialization"],
+      "collected_at": "2026-07-08T00:00:00Z",
+      "sentiment": "neutral",
+      "abstract": "社区内容主要围绕依赖升级、危险 gadget 链识别、对象白名单和运行时隔离，适合连接 Java/PHP 反序列化教学。"
+    }
+  ]
+}

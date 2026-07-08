@@ -1,4 +1,4 @@
-# Evidence Contract v1.1 — frozen 2026-07-07
+# Evidence Contract v1.2 — frozen 2026-07-08
 
 > Status: **frozen** — 任何字段增删 / 重命名 / 必填等级变更，必须同时更新：
 > - `backend/app/schemas/evidence.py`（Pydantic 真理源）
@@ -154,10 +154,52 @@
 
 > 不强制：契约层只校验类型和必填集，期望字段缺失不报错，但 UI 渲染会按 §5 假定有/无。
 
+## 5A. Embedding Profile 元数据
+
+Embedding Profile 是 chunks 向量空间的兼容性标识，存放在 `chunks.metadata`，不进入 Evidence DTO 的 top-level 字段。Retriever 必须只检索当前 profile 的 ready chunks，避免不同模型的 1024 维向量混算。
+
+当前锁定枚举：
+
+```text
+qwen-openai-compatible:text-embedding-v4:1024:dense:v1
+```
+
+成功写入 Qwen embedding 后，每个 chunk 必须合并以下 metadata 字段，并保留其他业务 metadata：
+
+| 字段 | 类型 | 必填 | 含义 |
+|---|---|---|---|
+| `embedding_profile` | string | ✅ | 当前向量空间契约；本轮固定为 `qwen-openai-compatible:text-embedding-v4:1024:dense:v1` |
+| `embedding_provider` | string | ✅ | Provider 名；当前为 `qwen_openai_compatible` |
+| `embedding_model` | string | ✅ | 模型名；当前为 `text-embedding-v4` |
+| `embedding_dim` | int | ✅ | 向量维度；当前为 `1024` |
+| `embedding_output_type` | string | ✅ | 输出类型；当前为 `dense` |
+| `embedding_generated_at` | ISO 8601 datetime | ✅ | 向量生成时间 |
+
+禁止把旧 hash / BGE-M3 / fixture 向量标记成当前 Qwen profile。旧 ready 且无 profile 的数据在迁移时视为 `<legacy-unprofiled>`，必须经显式 reset 后再重嵌入。
+
+运行配置约束：
+
+| 环境变量 | 固定值 / 要求 | 说明 |
+|---|---|---|
+| `EMBEDDING_PROVIDER` | `qwen_openai_compatible` | 生产/演示默认 provider；fixture 仅限测试 |
+| `EMBEDDING_MODEL` | `text-embedding-v4` | Qwen embedding v4 |
+| `EMBEDDING_DIM` | `1024` | Provider 初始化与 retriever 查询均强校验 |
+| `EMBEDDING_PROFILE` | `qwen-openai-compatible:text-embedding-v4:1024:dense:v1` | 必须与 provider/model/dim/output 完全匹配 |
+| `EMBEDDING_BATCH_SIZE` | `1..10`，当前 `10` | 超过 10 必须拒绝，避免服务端批量限制风险 |
+| `EMBEDDING_MAX_CONCURRENCY` | `>=1`，当前 `1` | 默认串行限流；后续扩容需重新压测 |
+| `EMBEDDING_TIMEOUT_SECONDS` | 当前 `30` | 单请求超时 |
+| `EMBEDDING_MAX_RETRIES` | 当前 `2` | 仅 5xx/timeout 等可恢复错误重试 |
+| `DASHSCOPE_API_KEY` | 必须从环境变量或 `.env.local` 注入 | 不得写入 tracked 文件、日志、metadata 或测试快照 |
+| `DASHSCOPE_OPENAI_COMPATIBLE_BASE_URL` | 必须从环境变量或 `.env.local` 注入 | 使用 DashScope OpenAI-compatible endpoint；不进入 DTO |
+
+2026-07-08 follow-up：本地 `backend/.env.local` 已用业务空间 CSV 配置 DashScope key 与 OpenAI-compatible base URL；该文件命中 `.gitignore`，不进入 git。配置加载 smoke 通过，live smoke `uv run pytest tests/llm_live/test_qwen_embedding_live.py -q -m embedding_live -rs` 在同时开启 `ENABLE_EMBEDDING_LIVE_TESTS=true` 与 `ENABLE_LLM_LIVE_TESTS=true` 后通过，返回 1024 维 dense embedding。
+
 ## 6. Changelog
 
 - **2026-06-16 v1 — frozen**：从 dev 上既有 14 字段扩展到 18 字段；将 `excerpt` 重命名为 `chunk_text`；新增 `score / title / collection_mode / license`；将 `collection_mode` 从 `metadata.collection_mode` 提到顶层；移除自由形态 `metadata: dict`；为 `source_url` 增加 "platform != manual 时必填" 校验。
 - **2026-07-07 v1.1 — frozen**：新增 `platform=mineru` 教材来源说明、`asset_type=markdown_chapter`、`license=proprietary-educational-use`，并明确 PDF/full.md 不进入 git 的版权边界。
+- **2026-07-08 v1.2 — frozen**：新增 `chunks.metadata.embedding_profile` 与 Qwen embedding 元数据契约；Retriever 只检索当前 Qwen profile 的 ready chunks，防止跨模型向量混算。
+- **2026-07-08 v1.2 follow-up**：补充 Qwen 运行环境变量约束与本地 DashScope live smoke 结果；不改变 Evidence DTO 字段集。
 
 ## 7. SSE event 信封
 

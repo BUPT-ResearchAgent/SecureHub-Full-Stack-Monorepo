@@ -1,9 +1,6 @@
-# Status: planned
+# Status: real
 
-"""Per task brief §6.1 — EmbeddingService walks pending chunks, calls the
-embedding provider (BGE-M3 / bge-large-zh / Spark embedding) and updates
-``chunks.embedding`` + ``embedding_status``.
-"""
+"""Knowledge-layer wrapper around the recoverable embedding job."""
 
 from dataclasses import dataclass
 
@@ -24,6 +21,9 @@ class EmbeddingService:
         self,
         *,
         domain: str | None = None,
-        batch_size: int = 64,
+        batch_size: int = 10,
     ) -> EmbeddingBatchResult:
-        raise NotImplementedError("planned: P1 — implements §6.1 embedding pipeline")
+        from app.knowledge.loaders.embed_chunks import embed_pending_chunks
+
+        result = await embed_pending_chunks(domain=domain, batch_size=batch_size)
+        return EmbeddingBatchResult(succeeded=result.embedded, failed=result.failed)

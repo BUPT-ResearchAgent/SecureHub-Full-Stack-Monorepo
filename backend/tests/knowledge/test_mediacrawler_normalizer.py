@@ -44,6 +44,72 @@ def test_media_source_normalizer_maps_xhs_content() -> None:
     assert source.metadata["rights_note"]
 
 
+def test_media_source_normalizer_maps_zhihu_answer_fields() -> None:
+    source = normalize_mediacrawler_content(
+        {
+            "content_id": "3248658267",
+            "content_type": "answer",
+            "content_text": "什么是 XSS &amp; CSRF，参数化查询如何阻断 SQL 注入。",
+            "content_url": "https://www.zhihu.com/question/21606800/answer/3248658267",
+            "question_id": "21606800",
+            "title": "零基础如何学习 Web 安全？",
+            "created_time": 1697195309,
+            "updated_time": 1733046261,
+            "voteup_count": 44,
+            "comment_count": 3,
+            "source_keyword": "web安全",
+            "user_nickname": "ailx10",
+            "user_id": "raw-user-id",
+            "user_avatar": "https://example.test/avatar.jpg",
+        },
+        platform="zhihu",
+        rights_note="知乎 UGC 用户内容；仅学习用途保留摘要与引用；不批量搬运。",
+    )
+
+    assert source.platform == "zhihu"
+    assert source.title == "零基础如何学习 Web 安全？"
+    assert source.url.endswith("/answer/3248658267")
+    assert source.metadata["platform"] == "zhihu"
+    assert source.metadata["question_id"] == "21606800"
+    assert source.metadata["content_id"] == "3248658267"
+    assert source.metadata["media_id"] == "3248658267"
+    assert source.metadata["author"] == "ailx10"
+    assert source.metadata["metrics"]["voteup_count"] == 44
+    assert source.metadata["updated_at"]
+    assert "XSS & CSRF" in source.raw_text
+    assert "知乎 UGC" in source.metadata["rights_note"]
+
+
+def test_media_source_normalizer_maps_xhs_field_variants() -> None:
+    source = normalize_mediacrawler_content(
+        {
+            "id": "xhs-alt-001",
+            "display_title": "什么是 SQL 注入？",
+            "content": "用预编译语句隔离输入和 SQL 语法。",
+            "url": "https://www.xiaohongshu.com/explore/xhs-alt-001?xsec_token=secret",
+            "user": {"nickname": "安全笔记"},
+            "created_time": 1779530102000,
+            "images": [
+                "https://example.test/cover.webp?xsec_token=secret",
+                {"url": "https://example.test/second.webp?sign=secret", "user_signature": "drop-me"},
+            ],
+            "source_keyword": "sql注入",
+        },
+        platform="xhs",
+        rights_note="小红书 UGC 用户内容；仅学习用途保留摘要与引用；不批量搬运。",
+    )
+
+    assert source.platform == "xhs"
+    assert source.metadata["media_id"] == "xhs-alt-001"
+    assert source.metadata["author"] == "安全笔记"
+    assert source.metadata["source_url"] == "https://www.xiaohongshu.com/explore/xhs-alt-001"
+    assert source.metadata["cover_or_images"] == [
+        "https://example.test/cover.webp",
+        {"url": "https://example.test/second.webp"},
+    ]
+    assert "预编译语句" in source.raw_text
+
+
 def test_media_source_normalizer_maps_bili_field_variants() -> None:
     source = normalize_mediacrawler_content(
         {
@@ -218,3 +284,120 @@ async def test_mediacrawler_export_import_writes_assets_and_chunks(
             "like_count": 3,
         }
     ]
+
+
+@pytest.mark.anyio
+async def test_mediacrawler_export_import_skips_bad_jsonl_lines(
+    sqlite_session,
+    tmp_path: Path,
+) -> None:
+    export_dir = tmp_path / "mediacrawler" / "xhs"
+    storage_root = tmp_path / "storage"
+    export_dir.mkdir(parents=True)
+    (export_dir / "xhs_contents.jsonl").write_text(
+        "{bad json line}\n"
+        + json.dumps(
+            {
+                "note_id": "xhs-parse-ok",
+                "title": "SQL 注入小红书笔记",
+                "desc": "参数化查询是基础防护。",
+                "note_url": "https://www.xiaohongshu.com/explore/xhs-parse-ok?xsec_token=secret",
+                "nickname": "安全学习者",
+                "time": 1779530102000,
+                "user_id": "raw-user-id",
+                "avatar": "https://example.test/avatar.jpg",
+                "xsec_token": "secret",
+                "user_signature": "signature-secret",
+                "ip_location": "北京",
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = await import_mediacrawler_exports(
+        [export_dir],
+        session=sqlite_session,
+        platform="xhs",
+        storage_prefix="course_websec/test/mediacrawler",
+        storage_local_root=storage_root,
+        rights_note="小红书 UGC 用户内容；仅学习用途保留摘要与引用；不批量搬运。",
+    )
+    await sqlite_session.commit()
+
+    documents = (await sqlite_session.execute(select(Document))).scalars().all()
+    objects = (await sqlite_session.execute(select(StorageObject))).scalars().all()
+    stored_payloads = "\n".join(
+        (storage_root / obj.object_key).read_text(encoding="utf-8")
+        for obj in objects
+    )
+
+    assert result.skipped_count == 1
+    assert result.content_count == 1
+    assert documents[0].metadata_["platform"] == "xhs"
+    assert documents[0].metadata_["source_url"] == "https://www.xiaohongshu.com/explore/xhs-parse-ok"
+    for forbidden in ("raw-user-id", "avatar.jpg", "xsec_token", "signature-secret", "ip_location"):
+        assert forbidden not in stored_payloads
+
+
+@pytest.mark.anyio
+async def test_mediacrawler_export_import_writes_zhihu_documents(
+    sqlite_session,
+    tmp_path: Path,
+) -> None:
+    export_dir = tmp_path / "mediacrawler" / "zhihu"
+    storage_root = tmp_path / "storage"
+    export_dir.mkdir(parents=True)
+    (export_dir / "zhihu_contents.jsonl").write_text(
+        json.dumps(
+            {
+                "content_id": "zhihu-answer-1",
+                "content_type": "answer",
+                "content_text": "授权检查缺失会导致越权漏洞，RBAC 是常见防护模型。",
+                "content_url": "https://www.zhihu.com/question/1/answer/zhihu-answer-1",
+                "question_id": "1",
+                "title": "Web 安全如何理解授权？",
+                "created_time": 1779937204,
+                "updated_time": 1779937204,
+                "voteup_count": 3,
+                "comment_count": 0,
+                "source_keyword": "web安全",
+                "user_nickname": "web安全成长日记",
+                "user_id": "raw-user-id",
+                "user_link": "https://www.zhihu.com/people/example",
+                "user_avatar": "https://example.test/avatar.jpg",
+                "user_url_token": "example",
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = await import_mediacrawler_exports(
+        [export_dir],
+        session=sqlite_session,
+        platform="zhihu",
+        storage_prefix="course_websec/test/mediacrawler",
+        storage_local_root=storage_root,
+        rights_note="知乎 UGC 用户内容；仅学习用途保留摘要与引用；不批量搬运。",
+    )
+    await sqlite_session.commit()
+
+    document = (await sqlite_session.execute(select(Document))).scalar_one()
+    hits = await RetrievalService(sqlite_session).retrieve(
+        "授权 越权 RBAC",
+        domain="course_websec",
+        top_k=3,
+        filters={"platform": "zhihu"},
+    )
+
+    assert result.content_count == 1
+    assert result.skipped_count == 0
+    assert document.metadata_["platform"] == "zhihu"
+    assert document.metadata_["question_id"] == "1"
+    assert document.metadata_["content_id"] == "zhihu-answer-1"
+    assert document.metadata_["rights_note"].startswith("知乎 UGC")
+    assert hits
+    assert hits[0].metadata["platform"] == "zhihu"
