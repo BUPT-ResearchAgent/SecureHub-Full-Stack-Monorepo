@@ -222,3 +222,28 @@ Status: real
 - cover_image 是否缺失：缺失；仅有 `cover_url` metadata，未启用封面安全下载。
 - transcript 是否缺失：缺失；本批次 export 未提供转写字段。
 - 交给 6-C-4 的事项：继续补 Web 安全 10 主题覆盖时，可优先补带转写或评论摘要的人工 export，提高视频证据 chunk 密度。
+## 2026-07-08 6-C-5 半截交付（爬虫扩展完成，embedding 交接给 6-C-6）
+
+### 1. 完成部分
+- §4 B.1 MindSpider reference adapter：完整（adapter + fixture + CLI + tests + docs）
+- §4 B.2 MediaCrawler zhihu + xhs：完整（normalizer + CLIs + tests + docs）
+  * zhihu 真采集 18 documents（真扁平结构 + 纯文本 content_text）
+  * xhs graceful skip 首行解析错误
+
+### 2. 交接给 6-C-6 部分
+- §3 A BGE-M3 embedding：跑到 2096/3555（59%）后暂停
+- BGE-M3 相关代码全部 revert（embedding_service.py / embed_chunks.py / pyproject.toml）
+- DB 中 2096 条 BGE-M3 ready 向量待 6-C-6 Phase 6 reset
+
+### 3. 需 tag
+- @codex-6-c-6: 请从空白 embedding_service 开始，按 Plan/7-8 §11-31 做 Qwen 迁移
+- @member-a: rag/retriever.py fallback 阈值判断（本轮未改）
+
+### 4. Commit 列表
+- e5cf6af3 chore(git): ignore MindSpider runtime output data/storage/news/
+- 2a947bbd feat(mediacrawler): zhihu and xhs export normalizers with graceful skip
+- 1cd57315 feat(mindspider): P2 reference adapter with topic normalizer and fixture import
+
+### 5. 遗留
+- 3555 chunks 待 Qwen 全量重跑（交接给 6-C-6）
+- .codegraph/codegraph.db 无关脏，不 commit
