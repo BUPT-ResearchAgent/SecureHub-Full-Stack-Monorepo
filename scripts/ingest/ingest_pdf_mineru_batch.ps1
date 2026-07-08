@@ -1,7 +1,7 @@
 # Status: real
 
 param(
-    [string[]]$Textbooks = @("crypto-basics", "network-security", "reverse-engineering"),
+    [string[]]$Textbooks = @("crypto-basics", "network-security", "reverse-engineering", "websec-textbook"),
     [switch]$ForceReingest
 )
 
@@ -16,10 +16,12 @@ $titleMap = @{
     "crypto-basics" = "现代密码学教程（第2版）"
     "network-security" = "网络安全原理与实践"
     "reverse-engineering" = "汇编语言（第3版）"
+    "websec-textbook" = "Web 安全基础教程"
 }
 
 foreach ($name in $Textbooks) {
-    if ($name -eq "websec-textbook" -or $name -eq "websec-upload") {
+    # 6-C-2-cleanup 之后：websec-upload 仍保留 seed 占位；websec-textbook 已填入真教材
+    if ($name -eq "websec-upload") {
         Write-Host "[ingest_pdf_mineru_batch] skipped preserved seed: $name"
         continue
     }

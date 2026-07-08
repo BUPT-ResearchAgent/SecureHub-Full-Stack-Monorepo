@@ -484,5 +484,42 @@
       "chunks": 538,
       "asset_type": "markdown_chapter"
     }
+  ],
+  "mediacrawler_bili_sources_2026_07_08": [
+    {
+      "platform": "bili",
+      "title": "B 站 MediaCrawler 2026-06-15 search contents export",
+      "source_url": "multiple Bilibili video URLs; see documents.metadata.source_url",
+      "author": "Bilibili UGC authors from offline export",
+      "license": "platform terms / non-commercial learning reference",
+      "rights_note": "Bilibili UGC 用户内容，仅学习用途保留摘要与引用；不下载原视频，不批量转载。",
+      "source_type": "media_post",
+      "collection_mode": "mediacrawler",
+      "reliability": 0.65,
+      "status": "imported",
+      "raw_dir": "data/raw/mediacrawler/bili/jsonl/",
+      "raw_files": [
+        "search_contents_2026-06-15.jsonl",
+        "search_creators_2026-06-15.jsonl"
+      ],
+      "contents": 19,
+      "comments": 0,
+      "documents": 19,
+      "chunks": 21,
+      "document_assets": 19,
+      "storage_objects": 19,
+      "asset_type": "media_item_json",
+      "comment_asset_type": null,
+      "cover_image_assets": 0,
+      "cover_url_in_metadata": true,
+      "transcript_rows": 0,
+      "pii_redaction": [
+        "cookies",
+        "token/csrf/xsec_token/session/credential",
+        "user_id/uid/mid/sec_uid",
+        "avatar/avatar_url/face/head_url",
+        "ip_location/home_url/homepage/signature"
+      ]
+    }
   ]
 }

@@ -2,14 +2,20 @@
 
 """Download remote Markdown images and rewrite links to local files.
 
-Example:
+Examples:
     python scripts/localize_markdown_images.py \
         data/processed/mineru/MinerU_markdown_Web安全基础教程.md
+
+    python scripts/localize_markdown_images.py --in-place \
+        --host cdn-mineru.openxlab.org.cn
 
 By default this writes:
     data/processed/mineru/MinerU_markdown_Web安全基础教程.local.md
     data/processed/mineru/MinerU_markdown_Web安全基础教程_assets/
     data/processed/mineru/MinerU_markdown_Web安全基础教程_assets/manifest.json
+
+When no Markdown path is passed, the script scans:
+    data/storage/course_websec/mineru/**/full.md
 """
 
 from __future__ import annotations
@@ -31,6 +37,8 @@ from urllib.request import Request, urlopen
 
 
 MARKDOWN_IMAGE_RE = re.compile(r"(!\[[^\]]*\]\()(?P<url>https?://[^)\s]+)(\))")
+REPO_ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_MINERU_ROOT = REPO_ROOT / "data" / "storage" / "course_websec" / "mineru"
 
 
 @dataclass(slots=True)
@@ -47,7 +55,35 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Download remote images referenced by a Markdown file."
     )
-    parser.add_argument("markdown", type=Path, help="Markdown file to process.")
+    parser.add_argument(
+        "markdown",
+        type=Path,
+        nargs="*",
+        help=(
+            "Markdown file(s) to process. If omitted, scan "
+            "data/storage/course_websec/mineru/**/full.md."
+        ),
+    )
+    parser.add_argument(
+        "--mineru-root",
+        type=Path,
+        default=DEFAULT_MINERU_ROOT,
+        help="Root directory to scan when no Markdown file is passed.",
+    )
+    parser.add_argument(
+        "--pattern",
+        default="**/full.md",
+        help="Glob pattern under --mineru-root when scanning automatically.",
+    )
+    parser.add_argument(
+        "--host",
+        action="append",
+        default=[],
+        help=(
+            "Only localize image URLs from this host. Can be passed multiple "
+            "times. By default all remote Markdown image URLs are localized."
+        ),
+    )
     parser.add_argument(
         "--output",
         type=Path,
@@ -58,7 +94,16 @@ def parse_args() -> argparse.Namespace:
         "--assets-dir",
         type=Path,
         default=None,
-        help="Directory for downloaded images. Defaults to <stem>_assets next to input.",
+        help=(
+            "Directory for downloaded images. Only valid for one Markdown file. "
+            "Defaults to <stem>_assets for explicit single-file mode, or assets/ "
+            "next to each full.md in automatic scan mode."
+        ),
+    )
+    parser.add_argument(
+        "--assets-name",
+        default="assets",
+        help="Assets directory name used in automatic scan mode.",
     )
     parser.add_argument(
         "--in-place",
@@ -98,12 +143,59 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    markdown_path = args.markdown.resolve()
-    if not markdown_path.exists():
-        raise SystemExit(f"Markdown not found: {markdown_path}")
+    markdown_paths = _resolve_markdown_paths(args)
+    if not markdown_paths:
+        raise SystemExit(
+            f"No Markdown files found. Scanned: {args.mineru_root.resolve()} / {args.pattern}"
+        )
     if args.in_place and args.output is not None:
         raise SystemExit("--output cannot be used with --in-place")
+    if len(markdown_paths) > 1 and args.output is not None:
+        raise SystemExit("--output can only be used with one Markdown file")
+    if len(markdown_paths) > 1 and args.assets_dir is not None:
+        raise SystemExit("--assets-dir can only be used with one Markdown file")
 
+    auto_scan = len(args.markdown) == 0
+    total = {"files": len(markdown_paths), "images": 0, "downloaded": 0, "failed": 0}
+    for markdown_path in markdown_paths:
+        result = _process_markdown(
+            markdown_path,
+            args=args,
+            auto_scan=auto_scan,
+        )
+        total["images"] += result["images"]
+        total["downloaded"] += result["downloaded"]
+        total["failed"] += result["failed"]
+
+    print(
+        "[localize_markdown_images] batch done "
+        f"files={total['files']} images={total['images']} "
+        f"downloaded={total['downloaded']} failed={total['failed']}"
+    )
+    if total["failed"]:
+        raise SystemExit(1)
+
+
+def _resolve_markdown_paths(args: argparse.Namespace) -> list[Path]:
+    if args.markdown:
+        paths = [path.resolve() for path in args.markdown]
+        missing = [path for path in paths if not path.exists()]
+        if missing:
+            raise SystemExit("Markdown not found: " + ", ".join(str(path) for path in missing))
+        return paths
+
+    mineru_root = args.mineru_root.resolve()
+    if not mineru_root.exists():
+        raise SystemExit(f"MinerU root not found: {mineru_root}")
+    return sorted(path.resolve() for path in mineru_root.glob(args.pattern) if path.is_file())
+
+
+def _process_markdown(
+    markdown_path: Path,
+    *,
+    args: argparse.Namespace,
+    auto_scan: bool,
+) -> dict[str, int]:
     output_path = (
         markdown_path
         if args.in_place
@@ -112,18 +204,29 @@ def main() -> None:
     assets_dir = (
         args.assets_dir.resolve()
         if args.assets_dir
-        else markdown_path.with_name(f"{markdown_path.stem}_assets").resolve()
+        else (
+            (markdown_path.parent / args.assets_name).resolve()
+            if auto_scan
+            else markdown_path.with_name(f"{markdown_path.stem}_assets").resolve()
+        )
     )
 
     markdown = markdown_path.read_text(encoding="utf-8")
-    urls = list(dict.fromkeys(match.group("url") for match in MARKDOWN_IMAGE_RE.finditer(markdown)))
+    hosts = set(args.host)
+    urls = list(
+        dict.fromkeys(
+            url
+            for url in (match.group("url") for match in MARKDOWN_IMAGE_RE.finditer(markdown))
+            if not hosts or urlsplit(url).hostname in hosts
+        )
+    )
     print(
         "[localize_markdown_images] "
         f"markdown={markdown_path} remote_images={len(urls)} "
         f"output={output_path} assets_dir={assets_dir}"
     )
     if args.dry_run:
-        return
+        return {"images": len(urls), "downloaded": 0, "failed": 0}
 
     assets_dir.mkdir(parents=True, exist_ok=True)
     mapping: dict[str, DownloadedImage] = {}
@@ -142,7 +245,7 @@ def main() -> None:
             time.sleep(args.sleep)
 
     rewritten = MARKDOWN_IMAGE_RE.sub(
-        lambda match: f"{match.group(1)}{_relative_posix(output_path, Path(mapping[match.group('url')].local_path))}{match.group(3)}",
+        lambda match: _rewrite_image_link(match, mapping, output_path),
         markdown,
     )
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -154,6 +257,7 @@ def main() -> None:
             {
                 "source_markdown": str(markdown_path),
                 "output_markdown": str(output_path),
+                "host_filter": sorted(hosts),
                 "asset_count": len(mapping),
                 "items": [asdict(item) for item in mapping.values()],
             },
@@ -170,8 +274,19 @@ def main() -> None:
         f"downloaded={len(mapping) - len(failures)} failed={len(failures)} "
         f"manifest={manifest_path}"
     )
-    if failures:
-        raise SystemExit(1)
+    return {
+        "images": len(urls),
+        "downloaded": len(mapping) - len(failures),
+        "failed": len(failures),
+    }
+
+
+def _rewrite_image_link(match: re.Match[str], mapping: dict[str, DownloadedImage], output_path: Path) -> str:
+    url = match.group("url")
+    item = mapping.get(url)
+    if item is None or item.status == "failed":
+        return match.group(0)
+    return f"{match.group(1)}{_relative_posix(output_path, Path(item.local_path))}{match.group(3)}"
 
 
 def _download_image(

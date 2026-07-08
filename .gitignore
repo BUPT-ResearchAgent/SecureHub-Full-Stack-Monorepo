@@ -56,17 +56,47 @@ Plan/
 SecureHub-Full-Stack-Monorepo/data
 Workout/member_c_p0_handoff.md
 
-# ==== 教材版权保护（6-C-2 新增）====
-# 大陆正规出版教材 PDF 本体禁止 push
+# ==== 教材版权保护（6-C-2 新增；6-C-2-cleanup 扩展）====
+# --- 工程副本目录（monorepo 内部工作目录） ---
 data/storage/course_websec/mineru/**/*.pdf
 data/storage/course_websec/mineru_ingested/**/*.pdf
-# MinerU 输出的完整 markdown 正文也禁止 push（可能整本教材原文）
 data/storage/course_websec/mineru/**/full.md
 data/storage/course_websec/mineru_ingested/**/full.md
-# 章节级本地对象仅供本机 RAG 演示使用，避免把教材正文切片提交到 git
 data/storage/course_websec/mineru/**/chapters/
 data/storage/course_websec/mineru_ingested/**/chapters/
-# 图片资产按需保留（page_image / cover_image 是“抽取的公开信息”，合规展示用途）
-# 如果图片也想排除，取消以下注释：
-# data/storage/course_websec/mineru/**/assets/*.jpg
-# data/storage/course_websec/mineru/**/assets/*.png
+
+# --- 素材源目录（data/raw/、data/processed/，从 6-C-2-cleanup 归位后） ---
+# 教材源 PDF（版权归原作者/出版社）
+data/raw/pdf/*.pdf
+data/raw/**/*.pdf
+# MinerU 转换过程产物（含教材正文 Markdown）
+data/processed/mineru/**/full.md
+data/processed/mineru/**/*.local.md
+data/processed/mineru/**/*.md
+data/processed/mineru/**/manifest.json
+# MediaCrawler 爬虫源数据（PII / 平台版权）
+data/raw/mediacrawler/**/*.jsonl
+data/raw/mediacrawler/**/*.json
+data/raw/mediacrawler/**/*.csv
+data/raw/mediacrawler/**/*.sqlite
+data/raw/mediacrawler/**/*.db
+# MediaCrawler 归一化入库产物（redacted，但仍含平台 UGC 内容）
+data/storage/course_websec/mediacrawler/**/*.json
+data/storage/course_websec/mediacrawler/**/*.jsonl
+data/storage/course_websec/mediacrawler/**/*.csv
+
+# --- 教材图片资产（6-C-2-cleanup：与 PDF/full.md 一起排除，版权一致性） ---
+# 教材页图 / cover 都是原书页面截图，版权归原作者；本地保留供 RAG 演示，不进 git
+data/storage/course_websec/mineru/**/assets/*.jpg
+data/storage/course_websec/mineru/**/assets/*.png
+data/storage/course_websec/mineru/**/assets/*.jpeg
+data/storage/course_websec/mineru/**/assets/manifest.json
+data/processed/mineru/**/assets/*.jpg
+data/processed/mineru/**/assets/*.png
+data/processed/mineru/**/assets/*.jpeg
+data/processed/mineru/**/assets/manifest.json
+
+# --- 报告类（可能含敏感内部审计信息，默认排除，需要时白名单单独 add） ---
+data/reports/*.md
+data/reports/*.pdf
+data/reports/*.docx
