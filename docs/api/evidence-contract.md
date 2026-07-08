@@ -1,4 +1,4 @@
-# Evidence Contract v1 — frozen 2026-06-16
+# Evidence Contract v1.1 — frozen 2026-07-07
 
 > Status: **frozen** — 任何字段增删 / 重命名 / 必填等级变更，必须同时更新：
 > - `backend/app/schemas/evidence.py`（Pydantic 真理源）
@@ -104,6 +104,7 @@
 | `mitre` | MITRE ATT&CK / CWE | 公共知识库 |
 | `securehub` | 平台自建知识库 | `rights_note` 写 `internal` |
 | `manual` | 教师 / 助教手工录入 | `source_url` 允许为 `null`；`rights_note` 必填 |
+| `mineru` | 本地 PDF/MinerU 教材解析 | 不提交 PDF/full.md；展示时保留教材、章节与版权说明 |
 
 > 后端 / 前端代码用开放 `str` 接收，校验时不限制集合；新平台无需改 schema，但**必须**在本表登记。
 
@@ -128,8 +129,18 @@
 | `page_image` | 截图 / 图片；常含 `page_no` 与 OCR 文本作为 `chunk_text` |
 | `markdown` | Markdown 文档 |
 | `pdf` | PDF 解析片段；必含 `page_no` |
+| `markdown_chapter` | 教材章节级 Markdown 资产；chunk metadata 必含 `chapter` 与 `heading_path` |
 
-历史 seed 数据中曾出现 `markdown_full` / `manual_import` 两值，过渡期允许，但新数据应使用上表 5 种之一。
+历史 seed 数据中曾出现 `markdown_full` / `manual_import` 两值，过渡期允许。6-C-2 起，教材章节检索证据使用 `markdown_chapter`。
+
+### 4.4 教材版权敏感字段
+
+| 字段 / 值 | 含义 | 合规要求 |
+|---|---|---|
+| `license=proprietary-educational-use` | 正规出版教材的内部教学演示引用 | PDF 与整本 Markdown 不进 git；Evidence 只展示摘要/短片段并保留来源标注 |
+| `rights_note` | 教材版权边界说明 | 必须写明版权归原作者/出版社，仅用于 SecureHub 内部教学演示 RAG 检索，不对外分发原文 |
+| `original_pdf` / `markdown_full` assets | 本地教材原始资产 | 允许登记本地对象 key 和 hash；禁止提交 PDF 本体与 `full.md` |
+| `markdown_chapter` assets | 章节级检索资产 | chunk metadata 必须保留 `book_title / chapter / heading_path / asset_id`，用于 EvidenceDrawer 追溯 |
 
 ## 5. asset_type 字段差异表
 
@@ -146,6 +157,7 @@
 ## 6. Changelog
 
 - **2026-06-16 v1 — frozen**：从 dev 上既有 14 字段扩展到 18 字段；将 `excerpt` 重命名为 `chunk_text`；新增 `score / title / collection_mode / license`；将 `collection_mode` 从 `metadata.collection_mode` 提到顶层；移除自由形态 `metadata: dict`；为 `source_url` 增加 "platform != manual 时必填" 校验。
+- **2026-07-07 v1.1 — frozen**：新增 `platform=mineru` 教材来源说明、`asset_type=markdown_chapter`、`license=proprietary-educational-use`，并明确 PDF/full.md 不进入 git 的版权边界。
 
 ## 7. SSE event 信封
 

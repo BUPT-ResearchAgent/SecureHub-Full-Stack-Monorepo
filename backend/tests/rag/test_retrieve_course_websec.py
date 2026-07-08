@@ -1,5 +1,7 @@
 # Status: real
 
+from pathlib import Path
+
 import pytest
 from sqlalchemy import func, select
 
@@ -8,6 +10,7 @@ from app.db.models.knowledge.document import Document
 from app.db.models.knowledge.knowledge_node import KnowledgeNode
 from app.db.models.learning.quiz_item import QuizItem
 from app.db.seeds.seed_course_websec import run as seed_course_websec
+from app.knowledge.loaders.course_loader import pdf_mineru_import
 from app.services.knowledge.retrieval_service import RetrievalService
 
 
@@ -181,3 +184,83 @@ async def test_course_websec_seed_covers_official_manual_and_pdf_evidence(
         hit.metadata.get("page_no") or hit.metadata.get("chapter") for hit in pdf_hits
     )
     assert all(hit.metadata["platform"] == "mineru" for hit in pdf_hits)
+
+
+@pytest.mark.anyio
+async def test_course_websec_retrieves_textbook_mineru_topics(
+    sqlite_session,
+    tmp_path: Path,
+) -> None:
+    fixtures = [
+        (
+            "crypto-basics",
+            "现代密码学教程（第2版）",
+            """# 现代密码学教程
+
+## 第1章 密码学概论
+密码学讨论 ECB 分组模式、RSA 公钥密码、哈希函数和 TLS 协议。
+
+## 1.1 信息安全目标
+机密性、完整性和认证都依赖密码算法。""",
+            {"ECB", "RSA"},
+            "ECB RSA 哈希 TLS",
+        ),
+        (
+            "network-security",
+            "网络安全原理与实践",
+            """# 网络安全原理与实践
+
+## 第4章 对称加密
+网络安全课程覆盖 IPSec、防火墙、入侵检测系统和无线网络安全。
+
+## 4.1 安全体系
+访问控制与身份认证是网络防护的重要基础。""",
+            {"IPSec", "防火墙"},
+            "IPSec 防火墙 入侵检测 无线网络安全",
+        ),
+        (
+            "reverse-engineering",
+            "汇编语言（第3版）",
+            """# 汇编语言
+
+## 第2章 寄存器
+汇编语言使用寄存器、内存地址和 loop 指令组织底层程序。
+
+## 2.1 通用寄存器
+AX、BX、CX、DX 是典型的 8086 通用寄存器。""",
+            {"寄存器", "loop"},
+            "汇编语言 寄存器 loop 指令",
+        ),
+    ]
+
+    for index, (name, title, markdown, _terms, _query) in enumerate(fixtures):
+        mineru_dir = tmp_path / name
+        mineru_dir.mkdir()
+        (mineru_dir / "full.md").write_text(markdown, encoding="utf-8")
+        pdf_path = mineru_dir / f"fixture-{name}.pdf"
+        pdf_path.write_bytes(f"%PDF-1.4\n% {name} fixture {index}\n".encode("utf-8"))
+        await pdf_mineru_import(
+            pdf_path,
+            session=sqlite_session,
+            mineru_output_dir=mineru_dir,
+            title=title,
+            source_url=f"local://{name}.pdf",
+            storage_local_root=tmp_path / "storage",
+        )
+    await sqlite_session.commit()
+
+    retriever = RetrievalService(sqlite_session)
+    for _name, _title, _markdown, expected_terms, query in fixtures:
+        hits = await retriever.retrieve(
+            query,
+            domain="course_websec",
+            top_k=8,
+            filters={"source_type": "pdf_mineru"},
+        )
+
+        assert hits, f"{query!r} should retrieve textbook evidence"
+        joined = "\n".join(f"{hit.title}\n{hit.snippet}" for hit in hits)
+        for term in expected_terms:
+            assert term in joined
+        assert all(hit.metadata["platform"] == "mineru" for hit in hits)
+        assert all(hit.metadata["asset_type"] == "markdown_chapter" for hit in hits)
