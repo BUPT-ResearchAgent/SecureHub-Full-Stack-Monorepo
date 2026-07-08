@@ -7,9 +7,11 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=(".env", ".env.local"),
         env_file_encoding="utf-8",
         case_sensitive=True,
+        extra="ignore",
+        env_ignore_empty=True,
     )
 
     APP_NAME: str = "securehub-backend"
@@ -33,8 +35,18 @@ class Settings(BaseSettings):
     XFYUN_MODEL: str = "spark-v4"
     DEEPSEEK_API_KEY: str = ""
     DEEPSEEK_MODEL: str = "deepseek-chat"
-    EMBEDDING_PROVIDER: str = "bge_m3"
+    EMBEDDING_PROVIDER: str = "qwen_openai_compatible"
+    EMBEDDING_MODEL: str = "text-embedding-v4"
     EMBEDDING_DIM: int = 1024
+    EMBEDDING_PROFILE: str = "qwen-openai-compatible:text-embedding-v4:1024:dense:v1"
+    EMBEDDING_BATCH_SIZE: int = 10
+    EMBEDDING_MAX_CONCURRENCY: int = 1
+    EMBEDDING_TIMEOUT_SECONDS: float = 30.0
+    EMBEDDING_MAX_RETRIES: int = 2
+    EMBEDDING_OUTPUT_TYPE: str = "dense"
+    ENABLE_EMBEDDING_LIVE_TESTS: bool = False
+    DASHSCOPE_API_KEY: str = ""
+    DASHSCOPE_OPENAI_COMPATIBLE_BASE_URL: str = ""
     MIN_EVIDENCE: int = 3
     RETRIEVAL_TOP_K: int = 8
     RERANK_TOP_K: int = 5

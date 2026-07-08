@@ -16,10 +16,12 @@ from typing import Any
 from uuid import UUID
 
 from pydantic import BaseModel, Field
-from sqlalchemy import func, select, text
+from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 
-from app.llm.embedding import embed_one
+from app.core.config import get_settings
+from app.llm.embeddings.errors import EmbeddingError
+from app.llm.embeddings.service import EmbeddingService
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +46,8 @@ async def retrieve(
 ) -> list[EvidenceHit]:
     """返回针对 ``query`` 召回的 chunk hits。
 
-    没有数据库 / 没有 ready 的 embedding 时直接返回空列表，调用方应自行决定是否兜底。
+    没有数据库 / 没有目标 profile 的 ready embedding 时返回空列表。
+    Embedding provider 故障会显式传播，避免被误报为“没有证据”。
     """
     try:
         from app.db.models.chunk import Chunk
@@ -54,20 +57,29 @@ async def retrieve(
         return []
 
     try:
+        settings = get_settings()
+        query_result = await EmbeddingService().embed_query(query)
+        if query_result.dimension != settings.EMBEDDING_DIM:
+            raise ValueError(
+                f"query embedding dimension {query_result.dimension} does not match "
+                f"settings.EMBEDDING_DIM={settings.EMBEDDING_DIM}"
+            )
+        embedding = query_result.vectors[0]
+
         sessionmaker = get_sessionmaker()
         async with sessionmaker() as session:
-            # 先做 keyword score 兜底，能在无 embedding 时仍命中
             stmt = (
                 select(Chunk)
                 .where(Chunk.domain == domain)
+                .where(Chunk.embedding_status == "ready")
+                .where(Chunk.embedding.is_not(None))
+                .where(Chunk.metadata_["embedding_profile"].as_string() == settings.EMBEDDING_PROFILE)
                 .limit(top_k * 4)
             )
             result = await session.execute(stmt)
             rows = result.scalars().all()
             if not rows:
                 return []
-
-            embedding = await embed_one(query, dimension=getattr(rows[0].embedding, "__len__", lambda: 1024)() if rows[0].embedding else 1024)
 
             hits: list[EvidenceHit] = []
             q_lower = (query or "").lower()
@@ -80,7 +92,15 @@ async def retrieve(
                 vec_score = 0.0
                 if chunk.embedding is not None and embedding:
                     try:
-                        vec_score = _cosine(embedding, list(chunk.embedding))
+                        doc_vector = list(chunk.embedding)
+                        if len(doc_vector) != settings.EMBEDDING_DIM:
+                            logger.warning(
+                                "retriever: skipping chunk %s with dimension %s",
+                                chunk.id,
+                                len(doc_vector),
+                            )
+                            continue
+                        vec_score = _cosine(embedding, doc_vector)
                     except Exception:  # noqa: BLE001
                         vec_score = 0.0
                 combined = 0.6 * vec_score + 0.4 * min(keyword_score, 1.0)
@@ -117,6 +137,10 @@ async def retrieve(
     except SQLAlchemyError as exc:
         logger.warning("retriever: DB query failed: %s", exc)
         return []
+    except EmbeddingError:
+        raise
+    except ValueError:
+        raise
     except Exception as exc:  # pragma: no cover
         logger.warning("retriever: unexpected error: %s", exc)
         return []
