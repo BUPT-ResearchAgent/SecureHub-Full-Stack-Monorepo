@@ -42,6 +42,7 @@ async def import_mediacrawler_exports(
     domain: str = "course_websec",
     storage_prefix: str = "course_websec/mediacrawler",
     rights_note: str | None = None,
+    storage_local_root: Path | None = None,
 ) -> MediaCrawlerImportResult:
     contents: list[tuple[dict[str, Any], Path]] = []
     comments: list[tuple[dict[str, Any], Path]] = []
@@ -57,9 +58,9 @@ async def import_mediacrawler_exports(
     for comment, _path in comments:
         key = media_parent_key(comment, platform=platform)
         if key is not None:
-            grouped_comments.setdefault(key, []).append(comment)
+            grouped_comments.setdefault(key, []).append(_sanitize_comment(comment))
 
-    storage = StorageService(session)
+    storage = StorageService(session, local_root=storage_local_root)
     ingestion = IngestionService(session)
     document_ids: list[UUID] = []
     chunk_count = 0
@@ -135,7 +136,8 @@ async def _ingest_media_source(
     ]
 
     if source.comments:
-        comments_bytes = json.dumps(source.comments, ensure_ascii=False, indent=2).encode("utf-8")
+        sanitized_comments = [_sanitize_comment(comment) for comment in source.comments]
+        comments_bytes = json.dumps(sanitized_comments, ensure_ascii=False, indent=2).encode("utf-8")
         comments_key = f"{storage_prefix}/{source.platform}/{_safe_media_key(source)}.comments.json"
         await storage.put_bytes(
             object_key=comments_key,
@@ -160,7 +162,7 @@ async def _ingest_media_source(
                     "source_path": str(source_path),
                     "platform": source.platform,
                     "source_url": source.url,
-                    "comment_count": len(source.comments),
+                    "comment_count": len(sanitized_comments),
                 },
             }
         )
@@ -242,11 +244,111 @@ def _safe_media_key(source: NormalizedMediaSource) -> str:
 
 
 def _redact_sensitive_media_fields(item: dict[str, Any]) -> dict[str, Any]:
-    redacted = dict(item)
-    redacted.pop("xsec_token", None)
-    if isinstance(redacted.get("note_url"), str):
-        redacted["note_url"] = _strip_url_query(redacted["note_url"])
+    redacted = _redact_value(item)
+    if not isinstance(redacted, dict):
+        return {}
     return redacted
+
+
+def _sanitize_comment(comment: dict[str, Any]) -> dict[str, Any]:
+    content = _first_present(comment, "content", "comment_content", "text", "message")
+    nickname = _first_present(comment, "nickname", "user_nickname", "user_name", "author")
+    created_time = _first_present(comment, "created_time", "create_time", "time", "pubdate")
+    like_count = _first_present(comment, "like_count", "liked_count")
+
+    sanitized: dict[str, Any] = {"content": str(content).strip() if content is not None else ""}
+    if nickname is not None and str(nickname).strip():
+        sanitized["nickname"] = str(nickname).strip()
+    if created_time is not None and created_time != "":
+        sanitized["created_time"] = created_time
+    if like_count is not None and like_count != "":
+        sanitized["like_count"] = like_count
+    return sanitized
+
+
+def _redact_value(value: Any) -> Any:
+    if isinstance(value, dict):
+        redacted: dict[str, Any] = {}
+        for key, child in value.items():
+            if _is_sensitive_key(str(key)):
+                continue
+            redacted[str(key)] = _redact_value(child)
+        return redacted
+    if isinstance(value, list):
+        return [_redact_value(item) for item in value]
+    if isinstance(value, str) and _looks_like_url_with_query(value):
+        return _strip_url_query(value)
+    return value
+
+
+def _is_sensitive_key(key: str) -> bool:
+    normalized = key.lower().strip()
+    compact = normalized.replace("-", "_")
+    flat = compact.replace("_", "")
+    exact_sensitive = {
+        "avatar",
+        "avatar_url",
+        "bili_jct",
+        "cookie",
+        "cookies",
+        "csrf",
+        "csrf_token",
+        "credential",
+        "credentials",
+        "face",
+        "head_url",
+        "homepage",
+        "home_page",
+        "home_url",
+        "ip",
+        "ip_location",
+        "last_ip",
+        "mid",
+        "refresh_token",
+        "sec_uid",
+        "sessdata",
+        "session",
+        "session_id",
+        "sid",
+        "sign",
+        "signature",
+        "token",
+        "uid",
+        "user_home",
+        "user_homepage",
+        "user_id",
+        "xsec_token",
+    }
+    sensitive_fragments = (
+        "avatar",
+        "cookie",
+        "credential",
+        "csrf",
+        "home_url",
+        "homepage",
+        "ip_location",
+        "session",
+        "token",
+        "user_id",
+        "userid",
+        "xsec",
+    )
+    return compact in exact_sensitive or flat in exact_sensitive or any(
+        fragment in compact or fragment in flat for fragment in sensitive_fragments
+    )
+
+
+def _first_present(item: dict[str, Any], *keys: str) -> Any:
+    for key in keys:
+        value = item.get(key)
+        if value is not None and value != "":
+            return value
+    return None
+
+
+def _looks_like_url_with_query(value: str) -> bool:
+    parts = urlsplit(value)
+    return bool(parts.scheme and parts.netloc and parts.query)
 
 
 def _strip_url_query(url: str) -> str:
