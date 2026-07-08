@@ -18,6 +18,7 @@ class _QueryService:
     def __init__(self, vector: list[float] | None = None, error: Exception | None = None) -> None:
         self.vector = vector or [0.001] * 1024
         self.error = error
+        self.closed = False
 
     async def embed_query(self, _text: str) -> EmbeddingResult:
         if self.error:
@@ -29,6 +30,9 @@ class _QueryService:
             dimension=len(self.vector),
             profile="qwen-openai-compatible:text-embedding-v4:1024:dense:v1",
         )
+
+    async def aclose(self) -> None:
+        self.closed = True
 
 
 @pytest.mark.anyio
@@ -82,6 +86,17 @@ async def test_retriever_filters_ready_current_profile(monkeypatch, sqlite_sessi
     hits = await retriever.retrieve("SQL injection", top_k=5)
 
     assert [str(hit.chunk_id) for hit in hits] == [str(ready_current.id)]
+
+
+@pytest.mark.anyio
+async def test_retriever_closes_embedding_service(monkeypatch, sqlite_session) -> None:
+    service = _QueryService()
+    monkeypatch.setattr(retriever, "EmbeddingService", lambda: service)
+    monkeypatch.setattr(db_session, "get_sessionmaker", lambda: lambda: sqlite_session)
+
+    await retriever.retrieve("SQL injection", top_k=5)
+
+    assert service.closed is True
 
 
 @pytest.mark.anyio

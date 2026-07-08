@@ -260,7 +260,7 @@ Status: real
 | 0. 安全准备 | 通过 | API Key 不打印；当前环境未暴露 DASHSCOPE_* |
 | 1. 只读审计 | 通过 | 发现 hash stub、retriever 动态猜维度、profile 缺失、异常吞掉等问题 |
 | 2. Provider 实现 | 通过 | `backend/app/llm/embeddings/` 7 文件；Qwen + fixture + factory + service |
-| 3. 单元测试 | 通过 | `uv run pytest -m "not llm_live and not embedding_live" -q`：153 passed, 3 deselected |
+| 3. 单元测试 | 通过 | `uv run pytest -m "not llm_live and not embedding_live" -q`：156 passed, 3 deselected |
 | 4. Live Test | 阻塞 | 当前配置中 `DASHSCOPE_API_KEY` / `DASHSCOPE_OPENAI_COMPATIBLE_BASE_URL` 不存在；live test skipped |
 | 5. DB Preflight | 阻塞 | 当前连接 DB：total=10, pending=10, ready=0；与交接 baseline 3555/2096 不符 |
 | 6. Reset 旧向量 | 未执行 | dry-run 命中 legacy_unprofiled_ready=0；按 Plan 停止破坏性步骤 |
@@ -304,6 +304,7 @@ Status: real
 - 待提交：`docs(embedding): [Phase 8] record Qwen profile contract and log @member-a`
 
 ### 8. Review QA 结论
+- Review QA 发现并已修复：harness 不再把 EmbeddingError 兜底成 fixture；processing 状态会被 recover；Qwen profile 必须匹配 provider/model/dim/output；fixture provider 在 production 禁用；retriever 关闭 embedding client
 - 自查 13 项：生产 hash vector 已移除；无 Qwen -> BGE fallback；retriever profile 过滤已测；API Key 无实值入库；batch 上限 10；返回顺序/维度/NaN/Inf/429/500/timeout 均有单测；reset 默认 dry-run；job 可恢复并保留非 embedding metadata
 - 剩余阻塞：真实 live API 和 DB reset/re-embedding 未执行，原因是环境 Qwen 变量缺失且当前 DB baseline 不符
 

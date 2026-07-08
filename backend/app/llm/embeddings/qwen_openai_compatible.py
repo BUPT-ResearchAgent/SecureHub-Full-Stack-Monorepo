@@ -73,6 +73,15 @@ class QwenOpenAICompatibleEmbeddingProvider:
             )
         if self.dimension != 1024:
             raise EmbeddingConfigurationError("EMBEDDING_DIM must be 1024 for this migration")
+        expected_profile = (
+            f"qwen-openai-compatible:{self.model_name}:{self.dimension}:"
+            f"{self.output_type}:v1"
+        )
+        if self.profile != expected_profile:
+            raise EmbeddingConfigurationError(
+                "EMBEDDING_PROFILE must match provider/model/dimension/output contract: "
+                f"{expected_profile}"
+            )
         if not 1 <= self.batch_size <= 10:
             raise EmbeddingConfigurationError("EMBEDDING_BATCH_SIZE must be in 1..10")
         if self.max_concurrency < 1:

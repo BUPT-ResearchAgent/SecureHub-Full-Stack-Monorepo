@@ -21,6 +21,11 @@ def create_embedding_provider(
     cfg = settings or get_settings()
     selected = _normalise_provider(provider or getattr(cfg, "EMBEDDING_PROVIDER", ""))
     if selected == "fixture":
+        app_env = str(getattr(cfg, "APP_ENV", "development")).lower()
+        if app_env in {"production", "prod", "release"}:
+            raise EmbeddingConfigurationError(
+                "EMBEDDING_PROVIDER=fixture is not allowed in production"
+            )
         return DeterministicFixtureEmbeddingProvider(
             dimension=int(getattr(cfg, "EMBEDDING_DIM", 1024)),
         )

@@ -5,6 +5,7 @@ param(
   [int]$BatchSize = 10,
   [int]$Limit = 0,
   [switch]$RetryFailed,
+  [switch]$NoRecoverProcessing,
   [switch]$DryRun
 )
 
@@ -14,6 +15,7 @@ $argsList = @("-m", "app.knowledge.loaders.embed_chunks", "--batch-size", "$Batc
 if ($Domain) { $argsList += @("--domain", $Domain) }
 if ($Limit -gt 0) { $argsList += @("--limit", "$Limit") }
 if ($RetryFailed) { $argsList += "--retry-failed" }
+if ($NoRecoverProcessing) { $argsList += "--no-recover-processing" }
 if ($DryRun) { $argsList += "--dry-run" }
 
 Push-Location (Join-Path $Root "backend")

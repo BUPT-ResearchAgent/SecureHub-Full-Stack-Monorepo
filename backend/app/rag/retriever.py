@@ -58,7 +58,11 @@ async def retrieve(
 
     try:
         settings = get_settings()
-        query_result = await EmbeddingService().embed_query(query)
+        service = EmbeddingService()
+        try:
+            query_result = await service.embed_query(query)
+        finally:
+            await service.aclose()
         if query_result.dimension != settings.EMBEDDING_DIM:
             raise ValueError(
                 f"query embedding dimension {query_result.dimension} does not match "

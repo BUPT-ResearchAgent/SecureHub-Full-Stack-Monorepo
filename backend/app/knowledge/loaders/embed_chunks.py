@@ -37,6 +37,8 @@ EMBEDDING_METADATA_KEYS = {
     "embedding_retry_count",
 }
 
+STALE_PROCESSING_MINUTES = 30
+
 
 class EmbedChunksResult(BaseModel):
     embedded_chunk_ids: list[UUID]
@@ -75,6 +77,7 @@ async def embed_pending_chunks(
     batch_size: int | None = None,
     limit: int | None = None,
     retry_failed: bool = False,
+    recover_processing: bool = True,
     dry_run: bool = False,
 ) -> EmbedAllChunksResult:
     settings = get_settings()
@@ -93,6 +96,7 @@ async def embed_pending_chunks(
                     domain=domain,
                     batch_size=effective_batch_size,
                     retry_failed=retry_failed,
+                    recover_processing=recover_processing,
                     remaining=None if limit is None else max(limit - processed, 0),
                 )
                 if not rows:
@@ -136,6 +140,7 @@ async def _select_next_batch(
     domain: str | None,
     batch_size: int,
     retry_failed: bool,
+    recover_processing: bool,
     remaining: int | None,
 ) -> list[Chunk]:
     if remaining is not None and remaining <= 0:
@@ -143,6 +148,8 @@ async def _select_next_batch(
     statuses = ["pending"]
     if retry_failed:
         statuses.append("failed")
+    if recover_processing:
+        statuses.append("processing")
     stmt = (
         select(Chunk)
         .where(Chunk.embedding_status.in_(statuses))
@@ -250,6 +257,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--batch-size", type=int, default=None)
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--retry-failed", action="store_true")
+    parser.add_argument(
+        "--no-recover-processing",
+        action="store_true",
+        help="Do not reclaim rows stuck in processing from a previous interrupted run.",
+    )
     parser.add_argument("--dry-run", action="store_true")
     return parser.parse_args()
 
@@ -262,6 +274,7 @@ async def main() -> None:
         batch_size=args.batch_size,
         limit=args.limit,
         retry_failed=args.retry_failed,
+        recover_processing=not args.no_recover_processing,
         dry_run=args.dry_run,
     )
     print(

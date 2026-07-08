@@ -150,6 +150,13 @@ async def test_qwen_provider_fail_fast_on_missing_config() -> None:
         QwenOpenAICompatibleEmbeddingProvider(
             settings=_settings(DASHSCOPE_OPENAI_COMPATIBLE_BASE_URL="")
         )
+    with pytest.raises(EmbeddingConfigurationError):
+        QwenOpenAICompatibleEmbeddingProvider(
+            settings=_settings(
+                EMBEDDING_MODEL="text-embedding-v4",
+                EMBEDDING_PROFILE="qwen-openai-compatible:other-model:1024:dense:v1",
+            )
+        )
 
 
 @pytest.mark.anyio
@@ -248,3 +255,8 @@ def test_embedding_factory_fixture_only_when_explicit() -> None:
 
     with pytest.raises(EmbeddingConfigurationError):
         create_embedding_provider(settings=_settings(EMBEDDING_PROVIDER="bge_m3"))
+
+    with pytest.raises(EmbeddingConfigurationError):
+        create_embedding_provider(
+            settings=_settings(EMBEDDING_PROVIDER="fixture", APP_ENV="production")
+        )
