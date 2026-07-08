@@ -517,10 +517,20 @@ backend/app/
 │     ├─ output_filter.py
 │     └─ prompt_injection_check.py
 │
-├─ llm/                               [planned] 模型客户端
-│  ├─ xfyun.py                        # 讯飞星火（A3 硬要求）
-│  ├─ deepseek.py                     # 备用
-│  └─ embedding.py                    # BGE-M3 / bge-large-zh
+├─ llm/                               [real] 模型客户端（2026-07-08 6-C-6 生产化）
+│  ├─ provider.py                     [real] BaseLLMProvider 抽象（A PR #35 merged）
+│  ├─ xfyun_provider.py               [real] 讯飞星火（A3 硬要求，OpenAI-Compatible）
+│  ├─ deepseek_provider.py            [real] DeepSeek 联调主选
+│  ├─ xfyun.py                        [legacy] 旧客户端，被 xfyun_provider.py 替代
+│  ├─ deepseek.py                     [legacy] 同上
+│  ├─ embedding.py                    [real] 薄兼容 façade
+│  └─ embeddings/                     [real] Embedding Provider 家族（6-C-6）
+│     ├─ base.py                      # EmbeddingProvider Protocol + EmbeddingResult
+│     ├─ errors.py                    # 8 种领域异常
+│     ├─ factory.py                   # Provider Router
+│     ├─ service.py                   # embed_query / embed_documents 语义接口
+│     ├─ qwen_openai_compatible.py    # Qwen text-embedding-v4（生产）
+│     └─ fixture.py                   # Deterministic Fixture（CI 用，差异化 1024D）
 │
 ├─ rag/                               [planned] 检索增强
 │  ├─ chunker.py
@@ -1235,7 +1245,7 @@ docker-compose 中 backend 服务依赖 PostgreSQL 16 的镜像（**待添加**�
 | 1 | **选课 + 收集原始资料**（1–2 天，人工） | — | 推荐《Web 安全基础》：1 本主教材 + 5–10 篇论文/RFC/博客 + 2–3 个实验手册 + OWASP Top 10 |
 | 2 | **文档切分 + 元数据标注** | LangChain `RecursiveCharacterTextSplitter`（500–800 tokens、overlap 100） | `documents` + `chunks` 表，`metadata = {kp_ids: [], difficulty: 1-5, type: '概念'/'案例'/'代码'/'实验'}` |
 | 3 | **知识点抽取 + 前置关系图** | LLM 辅助 + 人工校对 | `knowledge_nodes` + `knowledge_edges`（50–100 节点，`edge_type='prerequisite'`） |
-| 4 | **向量化入库** | BGE-M3 / bge-large-zh / 讯飞 embedding | `chunks.embedding` |
+| 4 | **向量化入库**（2026-07-08 6-C-6 生产化）| **Qwen `text-embedding-v4`**（阿里云百炼 OpenAI-Compatible，1024D dense，batch≤10）；见 `backend/app/llm/embeddings/qwen_openai_compatible.py` | `chunks.embedding` + `chunks.metadata.embedding_profile='qwen-openai-compatible:text-embedding-v4:1024:dense:v1'` |
 | 5 | **混合检索接口** | `rag/retriever.py`（BM25 + 向量 + RRF + rerank） | 输入：query + 画像 + kp 过滤 + domain；输出：带证据的 chunks |
 | 6 | **画像随学随新** | `outcome_evaluator.update_capability` + `career_planner.update_persona` | `user_profiles.dimensions.weak_points` 更新 |
 
@@ -1557,11 +1567,16 @@ data/processed/mineru/{document_id}/
 
 ## 11. LLM / Agent 框架技术决策
 
+> 2026-07-08 6-C-6 更新：Provider 家族（A PR #35）+ Embedding Provider（C 6-C-6）已生产化，非 planned。
+
 | 决策 | 选型 | 理由 |
 | --- | --- | --- |
-| **主模型** | **讯飞星火**（v4.0 Ultra 或当时主流） | A3 硬要求 |
-| **备用模型** | DeepSeek / Qwen | 讯飞额度耗尽 / 速率超限时降级 |
-| **Embedding** | BGE-M3（首选）/ bge-large-zh / 讯飞 embedding | 中文效果 + 1024 维向量适配 pgvector |
+| **主模型** | **讯飞星火**（v4.0 Ultra 或当时主流） | A3 硬要求；`backend/app/llm/xfyun_provider.py` [real] |
+| **备用模型** | DeepSeek | 联调主选（配置最简单）；`backend/app/llm/deepseek_provider.py` [real] |
+| **Provider 抽象** | `BaseLLMProvider` + `provider.py` Router + `runtime/exceptions.py`（7 种统一错误） | A PR #35 merged 2026-07-08 |
+| **Embedding** | **Qwen `text-embedding-v4`**（阿里云百炼 OpenAI-Compatible） | 6-C-6 完成生产化；1024D dense 适配 pgvector；单批 ≤10；`embedding_profile` 契约锁定禁止跨模型 fallback |
+| **Embedding Provider 抽象** | `backend/app/llm/embeddings/{base,errors,factory,service,fixture,qwen_openai_compatible}.py` [real] | 6-C-6 完成；参见 `docs/api/evidence-contract.md` v1.2 |
+| **~~BGE-M3~~ / ~~bge-large-zh~~** | deprecated | 6-C-6 迁移前的初步方案；已被 Qwen 生产化替代；Prompt/6-C-5 里 BGE-M3 尝试全部 revert |
 | **Agent 框架** | **LangGraph** | 显式 DAG + 节点级超时 / 重试 / 条件边 / human-in-loop；比 AutoGen / CrewAI 更适合"工作流可视化" |
 | **流式协议** | **SSE**（Server-Sent Events） | FastAPI 原生支持 `StreamingResponse(media_type="text/event-stream")`；前端 `EventSource` 一行接入；比 WebSocket 简单 |
 | **模型 client 封装位置** | `backend/app/llm/` | `xfyun.py` / `deepseek.py` / `embedding.py` |
@@ -2025,6 +2040,26 @@ forbidden: LLM 自由生成内容
 - **本项目（v2）**：新增 §10A，固定三人分工与 CODEOWNERS（成员 A：runtime/agents/harness/streaming；成员 B：前端 /course showcase；成员 C：knowledge/loaders/seeds/tests/crawling/CI）；共享高风险文件双签；先冻结 `docs/api/course-contract.md` 再写代码。
 - **理由**：并行开发期降低冲突，确保铁律不被任何一人单独绕过。
 - **不变**：9 agent / RAG / `agent_runs` / data-layer v2 等核心铁律。
+
+### 19.13 Embedding 迁移到 Qwen text-embedding-v4（2026-07-08）
+
+- **旧表述**：§10.1 SOP Step 4 与 §11 决策表都写"BGE-M3（首选）/ bge-large-zh / 讯飞 embedding"，`llm/embedding.py` 是 planned stub。
+- **6-C-5 尝试**：C 曾按 BGE-M3 方向做（Prompt/6-C-5.md），跑到 2096/3555 chunks 后暂停；发现三个工程缺陷：`embedding.py` 长期是 hash-based fake vector / retriever 动态猜维度 / API 故障被吞成空结果。
+- **本项目（6-C-6 生产版）**：**Embedding 基础设施完整迁移到 Qwen `text-embedding-v4`**（阿里云百炼 OpenAI-Compatible API），BGE-M3 相关代码 revert。
+  - 目录结构：`backend/app/llm/embeddings/{base,errors,factory,service,fixture,qwen_openai_compatible}.py`
+  - Provider Router：`fixture / qwen_openai_compatible`（`local_bge_m3` 不保留，避免误 fallback）
+  - Profile 契约：`embedding_profile = "qwen-openai-compatible:text-embedding-v4:1024:dense:v1"` 锁定，Retriever 仅召回同 profile
+  - retriever 三处最小安全接入：禁止动态猜维度（改用 `settings.EMBEDDING_DIM`）/ profile 过滤 / API 故障显式抛异常
+  - 全量重跑：3555 chunks 全部 Qwen embed（旧 2096 BGE-M3 legacy 无 profile 通过 `reset_embeddings --include-legacy-unprofiled-ready` 清空）
+  - Live smoke 通过：真跑 3 条 doc + query embedding，1024 维返回
+  - **rag/search `fallback=False`**（真向量检索达成，A3 竞赛 RAG 技术底座就绪）
+- **理由**：
+  - Qwen v4 中英文效果达 SOTA，与国产 A3 命题气候一致；
+  - OpenAI-Compatible 协议不需要新 SDK（沿用 A 的 httpx）；
+  - 阿里云百炼与讯飞星火共存，业务空间独立管理，符合"多国产 LLM Provider"策略；
+  - BGE-M3 本地跑 500 MB 模型对 CI / 部署都是拖累。
+- **依据**：`Plan/7-8-文本嵌入向量模型.md` §11-31（1500 行工程规格），PR #37 merged。
+- **契约演进**：`docs/api/evidence-contract.md` v1.1 → **v1.2 frozen**，`chunks.metadata.embedding_profile` 字段引入。
 
 ---
 

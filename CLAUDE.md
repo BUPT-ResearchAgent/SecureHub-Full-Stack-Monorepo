@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - **文档目的**：作为"安枢智梯 SecureHub / CyberLadder"项目所有后续 Claude Code / Codex / Cursor 会话的默认上下文。任何在本仓库工作的 AI 助手（或新加入的工程师）应当**首先读完本文件**，再开始触碰代码。
 - **读者**：本项目团队成员；后续接入的 AI 编码助手；A3 赛题答辩评委（架构理解参考）。
-- **最后更新时间**：2026-06-05（由 Claude Opus 4.7 基于 4 份外部文档 + 仓库代码生成）。
+- **最后更新时间**：2026-07-08（6-C-6 Embedding 迁移 Qwen text-embedding-v4 完成，同步更新 §11 决策表 + §10.1 SOP Step 4 + §6.3 目录树 + §0.1.2 技术栈；铁律 §3.8 强制同步 CLAUDE.md 与 AGENTS.md）。原始版本 2026-06-05（由 Claude Opus 4.7 基于 4 份外部文档 + 仓库代码生成）。
 - **本文件的权威性**：在仓库层面，本文件 > `README.md` / `docs/architecture.md` / `docs/backend-overview.md`。当本文件与代码现状冲突时，**以代码为准并立即更新本文件**；当本文件与外部 4 份文档冲突时，**以本文件 §19 的"差异说明"为准**。
 
 ### 阅读约定（什么时候回读外部文档？）
@@ -54,8 +54,8 @@ Scrapling、MediaCrawler、MindSpider 都是外部工具 / 数据采集参考，
 | Backend | FastAPI · Python 3.11+ · uv · Pydantic v2 · SQLAlchemy 2.0 async · Alembic |
 | Frontend | React 18 · Vite 6 · TypeScript · Tailwind v4 · shadcn/ui · Radix · React Router v7 |
 | Data | PostgreSQL 16 + **pgvector** · Redis 7 |
-| LLM | **iFLYTEK Spark（讯飞星火）— A3 hard requirement** · DeepSeek / Qwen as fallback |
-| Embedding | BGE-M3 / bge-large-zh / Spark embedding |
+| LLM | **iFLYTEK Spark（讯飞星火）— A3 hard requirement** · DeepSeek (dev主选) as fallback · Provider 家族已生产化（A PR #35） |
+| Embedding | **Qwen `text-embedding-v4`**（阿里云百炼 OpenAI-Compatible，1024D dense，6-C-6 生产化）· BGE-M3 已 deprecated |
 | Agent runtime | **LangGraph** (`StateGraph` + conditional edges) |
 | Streaming | SSE：`progress` / `evidence` / `token` / `artifact` / `trace` / `done` / `error` |
 | State mgmt (FE) | `useReducer` + `localStorage` per feature. **No Redux / Zustand.** |
@@ -499,10 +499,13 @@ backend/app/
 │     ├─ output_filter.py
 │     └─ prompt_injection_check.py
 │
-├─ llm/                               [planned] 模型客户端
-│  ├─ xfyun.py                        # 讯飞星火（A3 硬要求）
-│  ├─ deepseek.py                     # 备用
-│  └─ embedding.py                    # BGE-M3 / bge-large-zh
+├─ llm/                               [real] 模型客户端（2026-07-08 生产化）
+│  ├─ provider.py                     [real] BaseLLMProvider 抽象（A PR #35）
+│  ├─ xfyun_provider.py               [real] 讯飞星火 OpenAI-Compatible
+│  ├─ deepseek_provider.py            [real] DeepSeek 联调主选
+│  ├─ embedding.py                    [real] 薄兼容 façade
+│  └─ embeddings/                     [real] Embedding Provider 家族（6-C-6）
+│     └─ qwen_openai_compatible.py    # Qwen text-embedding-v4 生产模型
 │
 ├─ rag/                               [planned] 检索增强
 │  ├─ chunker.py
@@ -1026,7 +1029,7 @@ docker-compose 中 backend 服务依赖 PostgreSQL 16 的镜像（**待添加**�
 | 1 | **选课 + 收集原始资料**（1–2 天，人工） | — | 推荐《Web 安全基础》：1 本主教材 + 5–10 篇论文/RFC/博客 + 2–3 个实验手册 + OWASP Top 10 |
 | 2 | **文档切分 + 元数据标注** | LangChain `RecursiveCharacterTextSplitter`（500–800 tokens、overlap 100） | `documents` + `chunks` 表，`metadata = {kp_ids: [], difficulty: 1-5, type: '概念'/'案例'/'代码'/'实验'}` |
 | 3 | **知识点抽取 + 前置关系图** | LLM 辅助 + 人工校对 | `knowledge_points` + `kp_prerequisites`（50–100 节点） |
-| 4 | **向量化入库** | BGE-M3 / bge-large-zh / 讯飞 embedding | `chunks.embedding` |
+| 4 | **向量化入库**（2026-07-08 6-C-6 生产化）| **Qwen `text-embedding-v4`**（阿里云百炼 OpenAI-Compatible，1024D dense，batch≤10） | `chunks.embedding` + `metadata.embedding_profile='qwen-openai-compatible:text-embedding-v4:1024:dense:v1'` |
 | 5 | **混合检索接口** | `rag/retriever.py`（BM25 + 向量 + RRF + rerank） | 输入：query + 画像 + kp 过滤 + domain；输出：带证据的 chunks |
 | 6 | **画像随学随新** | `outcome_evaluator.update_capability` + `career_planner.update_persona` | `user_profiles.dimensions.weak_points` 更新 |
 
@@ -1063,11 +1066,16 @@ docker-compose 中 backend 服务依赖 PostgreSQL 16 的镜像（**待添加**�
 
 ## 11. LLM / Agent 框架技术决策
 
+> 2026-07-08 更新：Provider 家族已生产化（A PR #35）+ Embedding 迁移 Qwen（C 6-C-6 / PR #37）。
+
 | 决策 | 选型 | 理由 |
 | --- | --- | --- |
-| **主模型** | **讯飞星火**（v4.0 Ultra 或当时主流） | A3 硬要求 |
-| **备用模型** | DeepSeek / Qwen | 讯飞额度耗尽 / 速率超限时降级 |
-| **Embedding** | BGE-M3（首选）/ bge-large-zh / 讯飞 embedding | 中文效果 + 1024 维向量适配 pgvector |
+| **主模型** | **讯飞星火**（v4.0 Ultra 或当时主流） | A3 硬要求；`llm/xfyun_provider.py` [real] |
+| **备用模型** | **DeepSeek** | 联调主选（配置最简单）；`llm/deepseek_provider.py` [real] |
+| **Provider 抽象** | `BaseLLMProvider` + `provider.py` Router + `runtime/exceptions.py`（7 种） | A PR #35 merged |
+| **Embedding** | **Qwen `text-embedding-v4`**（阿里云百炼 OpenAI-Compatible） | 6-C-6 生产化；1024D dense；单批 ≤10；`embedding_profile` 契约锁定 |
+| **Embedding Provider 抽象** | `llm/embeddings/{base,errors,factory,service,fixture,qwen_openai_compatible}.py` [real] | 参见 `docs/api/evidence-contract.md` v1.2 |
+| **~~BGE-M3~~** | deprecated | 6-C-5 尝试过，6-C-6 完全 revert 并迁移到 Qwen |
 | **Agent 框架** | **LangGraph** | 显式 DAG + 节点级超时 / 重试 / 条件边 / human-in-loop；比 AutoGen / CrewAI 更适合"工作流可视化" |
 | **流式协议** | **SSE**（Server-Sent Events） | FastAPI 原生支持 `StreamingResponse(media_type="text/event-stream")`；前端 `EventSource` 一行接入；比 WebSocket 简单 |
 | **模型 client 封装位置** | `backend/app/llm/` | `xfyun.py` / `deepseek.py` / `embedding.py` |
