@@ -53,6 +53,42 @@ metrics        <- video_comment / comment_count, video_play_count / play_count,
 transcript     <- transcript / subtitle / asr_text / caption_text
 ```
 
+知乎真实 export 字段：
+
+```text
+content_id      -> media_id / content_id
+content_type    -> media_type
+content_text    -> raw_text 正文（纯文本，HTML entity 只做轻量 unescape）
+content_url     -> documents.url / metadata.source_url
+question_id     -> metadata.question_id
+title           -> documents.title
+created_time    -> metadata.published_at
+updated_time    -> metadata.updated_at
+voteup_count    -> metadata.metrics.voteup_count
+comment_count   -> metadata.metrics.comment_count
+user_nickname   -> metadata.author
+```
+
+知乎 PII 处理：
+
+```text
+drop: user_id / user_link / user_avatar / user_url_token
+keep: user_nickname（作者展示名）
+```
+
+小红书字段兼容：
+
+```text
+note_id / id                 -> media_id
+title / display_title        -> documents.title
+desc / content / text        -> raw_text 正文
+note_url / url               -> documents.url / metadata.source_url（去 query）
+nickname / user.nickname     -> metadata.author
+time / created_time          -> metadata.published_at
+image_list / images / cover  -> metadata.cover_or_images（只存 URL，不下载）
+liked_count / collected_count / comment_count / share_count -> metadata.metrics
+```
+
 ## 2026-07-08 B 站真实 export 导入
 
 输入目录：`data/raw/mediacrawler/bili/jsonl/`
@@ -75,11 +111,29 @@ ip_location / home_url / homepage / signature / sign
 
 评论导入时只保留 `content`、`nickname`、`created_time`、`like_count`；不保留 UID、头像、主页、签名、IP 属地等 PII。
 
+## 2026-07-08 知乎 / 小红书真实 export 解析
+
+输入目录：
+
+| platform | 文件 | 解析结果 | 入库策略 |
+|---|---|---:|---|
+| `zhihu` | `data/raw/mediacrawler/zhihu/jsonl/search_contents_2026-06-15.jsonl` | 18 items / 0 skipped | 全量导入 `documents` / `media_item_json` / `chunks` |
+| `xhs` | `data/raw/mediacrawler/xhs/jsonl/search_contents_2026-06-15.jsonl` | 20 items / 0 skipped | 全量导入；reader 已支持坏行逐行 skip |
+
+本机当前文件未复现“首行 delimiter 错”问题；为兼容后续 export，`mediacrawler_export_import._read_export_items` 已改为 JSONL 逐行 `try/except json.loads`，遇到坏行输出：
+
+```text
+warning: skipped line N: parse error: ...
+```
+
+知乎 / 小红书均只保存标题、正文摘要、平台链接、作者展示名、互动指标和 redacted JSON；不下载图片 / 视频本体。
+
 ## 合规边界
 
 - 仅支持离线导入公开样本，不执行登录、验证码、风控绕过或大规模采集。
 - 对平台内容保留 `platform / source_url / author / published_at / fetched_at / rights_note`。
 - B 站导入只消费人工提供的离线 export，不运行 MediaCrawler 爬虫本体，不下载原视频。
+- 知乎 / 小红书导入只消费人工提供的离线 export，不运行 MediaCrawler 爬虫本体，不下载图片或视频。
 - 版权不明内容仅作为学习与比赛演示的摘要、证据与切片来源，不做完整转载展示。
 - 不新增 `bili_chunks`、`zhihu_chunks`、`xhs_chunks` 等平台专用表。
 

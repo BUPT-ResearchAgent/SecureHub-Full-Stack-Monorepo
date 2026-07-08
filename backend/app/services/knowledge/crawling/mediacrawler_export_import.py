@@ -6,6 +6,7 @@ import csv
 from dataclasses import dataclass
 from hashlib import sha256
 import json
+import logging
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
@@ -23,6 +24,8 @@ from app.services.knowledge.crawling.media_source_normalizer import (
 from app.services.knowledge.ingestion_service import IngestionRequest, IngestionService
 from app.services.storage.storage_service import StorageService
 
+logger = logging.getLogger(__name__)
+
 
 @dataclass(slots=True)
 class MediaCrawlerImportResult:
@@ -31,6 +34,7 @@ class MediaCrawlerImportResult:
     asset_count: int
     content_count: int
     comment_count: int
+    skipped_count: int = 0
     domain: str = "course_websec"
 
 
@@ -46,8 +50,11 @@ async def import_mediacrawler_exports(
 ) -> MediaCrawlerImportResult:
     contents: list[tuple[dict[str, Any], Path]] = []
     comments: list[tuple[dict[str, Any], Path]] = []
+    skipped_count = 0
     for path in _expand_paths(paths):
-        for item in _read_export_items(path):
+        items, skipped = _read_export_items(path)
+        skipped_count += skipped
+        for item in items:
             item_type = infer_item_type(item, file_hint=path.name)
             if item_type == "comments":
                 comments.append((item, path))
@@ -91,6 +98,7 @@ async def import_mediacrawler_exports(
         asset_count=asset_count,
         content_count=len(contents),
         comment_count=len(comments),
+        skipped_count=skipped_count,
         domain=domain,
     )
 
@@ -204,29 +212,42 @@ def _expand_paths(paths: list[Path]) -> list[Path]:
     return expanded
 
 
-def _read_export_items(path: Path) -> list[dict[str, Any]]:
+def _read_export_items(path: Path) -> tuple[list[dict[str, Any]], int]:
     suffix = path.suffix.lower()
     if suffix == ".jsonl":
-        return [
-            json.loads(line)
-            for line in path.read_text(encoding="utf-8").splitlines()
-            if line.strip()
-        ]
+        items: list[dict[str, Any]] = []
+        skipped = 0
+        for line_no, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+            if not line.strip():
+                continue
+            try:
+                payload = json.loads(line)
+            except json.JSONDecodeError as exc:
+                skipped += 1
+                logger.warning("skipped line %s in %s: parse error: %s", line_no, path, exc)
+                print(f"warning: skipped line {line_no}: parse error: {exc}")
+                continue
+            if isinstance(payload, dict):
+                items.append(payload)
+            else:
+                skipped += 1
+                logger.warning("skipped line %s in %s: expected object", line_no, path)
+        return items, skipped
     if suffix == ".json":
         payload = json.loads(path.read_text(encoding="utf-8"))
         if isinstance(payload, list):
-            return [dict(item) for item in payload if isinstance(item, dict)]
+            return [dict(item) for item in payload if isinstance(item, dict)], 0
         if isinstance(payload, dict):
             for key in ("items", "contents", "data", "records"):
                 value = payload.get(key)
                 if isinstance(value, list):
-                    return [dict(item) for item in value if isinstance(item, dict)]
-            return [payload]
-        return []
+                    return [dict(item) for item in value if isinstance(item, dict)], 0
+            return [payload], 0
+        return [], 0
     if suffix == ".csv":
         with path.open("r", encoding="utf-8-sig", newline="") as fh:
-            return [dict(row) for row in csv.DictReader(fh)]
-    return []
+            return [dict(row) for row in csv.DictReader(fh)], 0
+    return [], 0
 
 
 def _platform_from_path(path: Path) -> str | None:
@@ -317,6 +338,8 @@ def _is_sensitive_key(key: str) -> bool:
         "user_home",
         "user_homepage",
         "user_id",
+        "user_link",
+        "user_url_token",
         "xsec_token",
     }
     sensitive_fragments = (
@@ -328,6 +351,8 @@ def _is_sensitive_key(key: str) -> bool:
         "homepage",
         "ip_location",
         "session",
+        "signature",
+        "sign",
         "token",
         "user_id",
         "userid",

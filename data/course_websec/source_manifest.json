@@ -521,5 +521,95 @@
         "ip_location/home_url/homepage/signature"
       ]
     }
+  ],
+  "mediacrawler_zhihu_xhs_sources_2026_07_08": [
+    {
+      "platform": "zhihu",
+      "title": "知乎 MediaCrawler 2026-06-15 search contents export",
+      "source_url": "multiple Zhihu answer URLs; see documents.metadata.source_url",
+      "author": "Zhihu UGC authors from offline export",
+      "license": "platform terms / non-commercial learning reference",
+      "rights_note": "知乎 UGC 用户内容；仅学习用途保留摘要与引用；不批量搬运。",
+      "source_type": "media_post",
+      "collection_mode": "mediacrawler",
+      "reliability": 0.65,
+      "status": "ready_for_import",
+      "raw_dir": "data/raw/mediacrawler/zhihu/jsonl/",
+      "raw_files": [
+        "search_contents_2026-06-15.jsonl"
+      ],
+      "contents": 18,
+      "comments": 0,
+      "documents": null,
+      "chunks": null,
+      "document_assets": null,
+      "storage_objects": null,
+      "asset_type": "media_item_json",
+      "cover_image_assets": 0,
+      "image_url_in_metadata": true,
+      "pii_redaction": [
+        "cookies",
+        "token/csrf/xsec_token/session/credential",
+        "user_id/uid/mid/sec_uid",
+        "avatar/avatar_url/face/head_url",
+        "ip_location/home_url/homepage/signature"
+      ]
+    },
+    {
+      "platform": "xhs",
+      "title": "小红书 MediaCrawler 2026-06-15 search contents export",
+      "source_url": "multiple Xiaohongshu note URLs; see documents.metadata.source_url",
+      "author": "Xiaohongshu UGC authors from offline export",
+      "license": "platform terms / non-commercial learning reference",
+      "rights_note": "小红书 UGC 用户内容；仅学习用途保留摘要与引用；不下载图片本体，不批量搬运。",
+      "source_type": "media_post",
+      "collection_mode": "mediacrawler",
+      "reliability": 0.65,
+      "status": "ready_for_import",
+      "raw_dir": "data/raw/mediacrawler/xhs/jsonl/",
+      "raw_files": [
+        "search_contents_2026-06-15.jsonl"
+      ],
+      "contents": 20,
+      "comments": 0,
+      "documents": null,
+      "chunks": null,
+      "document_assets": null,
+      "storage_objects": null,
+      "asset_type": "media_item_json",
+      "cover_image_assets": 0,
+      "image_url_in_metadata": true,
+      "pii_redaction": [
+        "cookies",
+        "token/csrf/xsec_token/session/credential",
+        "user_id/uid/mid/sec_uid",
+        "avatar/avatar_url/face/head_url",
+        "ip_location/home_url/homepage/signature"
+      ]
+    }
+  ],
+  "mindspider_reference_sources_2026_07_08": [
+    {
+      "platform": "mindspider_reference",
+      "title": "MindSpider P2 hot topics reference fixture",
+      "source_url": "local://data/raw/mindspider/hot_topics_fixture.json",
+      "author": "SecureHub fixture",
+      "license": "fixture-only",
+      "rights_note": "MindSpider 参考级；仅 hot_analyst P2 demo；不涉及实际爬虫",
+      "source_type": "reference_topic",
+      "collection_mode": "mindspider_reference",
+      "reliability": 0.55,
+      "status": "ready_for_import",
+      "raw_files": [
+        "data/raw/mindspider/hot_topics_fixture.json"
+      ],
+      "topics": 6,
+      "documents": null,
+      "chunks": null,
+      "asset_type": "media_item_json",
+      "pii_redaction": [
+        "fixture contains no real user_id/avatar/token/cookies/ip_location"
+      ]
+    }
   ]
 }

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
+import html
 import json
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
@@ -106,13 +107,18 @@ def _normalize_xhs(
     fetched_at: datetime | None,
     rights_note: str | None,
 ) -> NormalizedMediaSource:
-    title = _string_or_none(item.get("title")) or "小红书学习笔记"
-    desc = _string_or_none(item.get("desc")) or ""
+    title = _first_string(item, "title", "display_title") or "小红书学习笔记"
+    desc = _first_string(item, "desc", "content", "text") or ""
+    media_id = _first_string(item, "note_id", "id")
     url = _strip_url_query(
-        _string_or_none(item.get("note_url")) or f"https://www.xiaohongshu.com/explore/{item.get('note_id')}"
+        _first_string(item, "note_url", "url") or f"https://www.xiaohongshu.com/explore/{media_id}"
     )
-    author = _string_or_none(item.get("nickname")) or "小红书公开作者"
-    published_at = _timestamp_to_iso(item.get("time"))
+    author = (
+        _first_string(item, "nickname", "user_nickname", "author")
+        or _nested_string(item, "user", "nickname")
+        or "小红书公开作者"
+    )
+    published_at = _timestamp_to_iso(_first_present(item, "time", "created_time", "publish_time"))
     metadata = _base_metadata(
         platform="xhs",
         url=url,
@@ -121,7 +127,7 @@ def _normalize_xhs(
         fetched_at=fetched_at,
         rights_note=rights_note,
         extra={
-            "media_id": _string_or_none(item.get("note_id")),
+            "media_id": media_id,
             "media_type": _string_or_none(item.get("type")) or "note",
             "source_keyword": item.get("source_keyword"),
             "tags": _jsonish(item.get("tag_list")),
@@ -131,7 +137,9 @@ def _normalize_xhs(
                 "comment_count": item.get("comment_count"),
                 "share_count": item.get("share_count"),
             },
-            "cover_or_images": _jsonish(item.get("image_list")),
+            "cover_or_images": _public_media_value(
+                _jsonish(_first_present(item, "image_list", "images", "cover", "cover_url"))
+            ),
         },
     )
     return NormalizedMediaSource(
@@ -218,7 +226,7 @@ def _normalize_zhihu(
     rights_note: str | None,
 ) -> NormalizedMediaSource:
     title = _string_or_none(item.get("title")) or "知乎学习资料"
-    text = _string_or_none(item.get("content_text")) or _string_or_none(item.get("desc")) or ""
+    text = html.unescape(_string_or_none(item.get("content_text")) or _string_or_none(item.get("desc")) or "")
     url = _string_or_none(item.get("content_url")) or f"https://www.zhihu.com/question/{item.get('question_id')}"
     author = _string_or_none(item.get("user_nickname")) or "知乎公开作者"
     published_at = _timestamp_to_iso(item.get("created_time"))
@@ -232,8 +240,10 @@ def _normalize_zhihu(
         extra={
             "media_id": _string_or_none(item.get("content_id")),
             "media_type": _string_or_none(item.get("content_type")) or "content",
+            "content_id": _string_or_none(item.get("content_id")),
             "question_id": item.get("question_id"),
             "source_keyword": item.get("source_keyword"),
+            "updated_at": _timestamp_to_iso(item.get("updated_time")),
             "metrics": {
                 "voteup_count": item.get("voteup_count"),
                 "comment_count": item.get("comment_count"),
@@ -342,6 +352,15 @@ def _compact_dict(values: dict[str, object | None]) -> dict[str, object]:
     return {key: value for key, value in values.items() if value is not None and value != ""}
 
 
+def _nested_string(item: dict[str, Any], *path: str) -> str | None:
+    value: Any = item
+    for key in path:
+        if not isinstance(value, dict):
+            return None
+        value = value.get(key)
+    return _string_or_none(value)
+
+
 def _timestamp_to_iso(value: object) -> str | None:
     if value is None or value == "":
         return None
@@ -367,11 +386,68 @@ def _jsonish(value: object) -> object:
     return value
 
 
+def _public_media_value(value: object) -> object:
+    if isinstance(value, dict):
+        return {
+            str(key): _public_media_value(child)
+            for key, child in value.items()
+            if not _is_metadata_sensitive_key(str(key))
+        }
+    if isinstance(value, list):
+        return [_public_media_value(item) for item in value]
+    if isinstance(value, str) and _looks_like_url_with_query(value):
+        return _strip_url_query(value)
+    return value
+
+
+def _is_metadata_sensitive_key(key: str) -> bool:
+    compact = key.lower().strip().replace("-", "_")
+    flat = compact.replace("_", "")
+    exact_sensitive = {
+        "avatar",
+        "avatar_url",
+        "cookie",
+        "cookies",
+        "credential",
+        "csrf",
+        "csrf_token",
+        "face",
+        "head_url",
+        "homepage",
+        "home_url",
+        "ip_location",
+        "sec_uid",
+        "session",
+        "signature",
+        "sign",
+        "token",
+        "uid",
+        "user_avatar",
+        "user_id",
+        "user_link",
+        "user_signature",
+        "user_sign",
+        "user_url_token",
+        "xsec_token",
+    }
+    return (
+        compact in exact_sensitive
+        or flat in exact_sensitive
+        or compact.endswith("_signature")
+        or compact.endswith("_sign")
+    )
+
+
 def _string_or_none(value: object) -> str | None:
     if value is None:
         return None
     text = str(value).strip()
     return text or None
+
+
+def _looks_like_url_with_query(value: str) -> bool:
+    parts = urlsplit(value)
+    return bool(parts.scheme and parts.netloc and parts.query)
 
 
 def _strip_url_query(url: str) -> str:
