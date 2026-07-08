@@ -131,6 +131,256 @@ data/
 
 ---
 
+## 数据库服务运行选项
+
+**当前项目栈**：PostgreSQL 16 + pgvector 扩展 + Redis 7（`docker-compose.yml`）。
+
+### 选项 A · 本地 Docker Compose（默认，推荐日常开发）
+
+`docker-compose.yml` 里已配好 pgvector/pg16 镜像，端口映射到本机 **15432**（避免与本机既有 postgres 冲突）：
+
+```powershell
+cd D:\Nnutural\Desktop\BUPT大全\BUPT竞赛\26软件杯\SecureHub-Full-Stack-Monorepo
+
+# 起 postgres + redis
+docker compose up -d postgres redis
+
+# 检查健康
+docker compose ps
+docker compose logs postgres | Select-String "database system is ready"
+```
+
+**关键约定**：
+
+| 场景 | DATABASE_URL |
+|---|---|
+| 在 docker-compose 内部起的 backend | `postgresql+asyncpg://securehub:securehub@postgres:5432/securehub` |
+| 本机 `uv run` 跑 pytest / batch 脚本 | `postgresql+asyncpg://securehub:securehub@localhost:15432/securehub` |
+
+**这两个 URL 不一样**（容器内用容器名解析，本机用映射端口）。`.env.local` 里是容器内那份，本机跑脚本时可能需要临时改为 `localhost:15432` 或在 shell 里 `$env:DATABASE_URL="..."` 覆盖。
+
+**首次跑 migration + seed**：
+
+```powershell
+cd backend
+uv sync
+uv run alembic upgrade head              # 建 8 张表 + 装 pgvector 扩展
+uv run python -m app.db.seeds.seed_agents        # 9 个 agent
+uv run python -m app.db.seeds.seed_agent_skills  # skill 注册
+uv run python -m app.db.seeds.seed_demo_user     # demo 用户 + user_profile
+uv run python -m app.db.seeds.seed_course_websec # WebSec 演示 chunks
+```
+
+**停止和清理**：
+
+```powershell
+docker compose down                              # 停容器，保留数据（pgdata volume）
+docker compose down -v                           # 停容器 + 删数据（慎用！会清空 db）
+```
+
+### 选项 B · 云 PostgreSQL（长期 / 演示 / 团队协作推荐）
+
+| 服务 | 免费额度 | pgvector 支持 | 迁移难度 |
+|---|---|---|---|
+| **Neon**（推荐） | 3 GB / 项目暂停自动省钱 | ✅ 原生 | 一行改 DATABASE_URL |
+| **Supabase** | 500 MB / 需暖机 | ✅ 原生 | 同上 |
+| **Aiven** | 30 天试用 | ✅ | 同上 |
+| **阿里云 RDS** | 首年优惠 | ✅ 但需选 pgvector 版本 | 需白名单 IP |
+| **腾讯云 PostgreSQL** | 试用 | ⚠️ 部分版本支持 | 需白名单 IP |
+
+**切换到 Neon 的 5 步**：
+
+```powershell
+# 1. neon.tech 注册 → 建项目（选 PostgreSQL 16 + region us-east）
+# 2. Neon dashboard → SQL Editor → 执行 CREATE EXTENSION vector;
+# 3. 本地 pg_dump 备份
+docker compose exec postgres pg_dump -U securehub -Fc securehub > backup.dump
+
+# 4. pg_restore 到 Neon
+$NEON_URL = "postgresql://user:pass@ep-xxx.us-east.aws.neon.tech/securehub"
+pg_restore -d $NEON_URL backup.dump
+
+# 5. 改 backend/.env.local
+# DATABASE_URL=postgresql+asyncpg://user:pass@ep-xxx.us-east.aws.neon.tech/securehub
+# （注意去掉 ?sslmode=require，asyncpg 用 ssl=true 参数）
+```
+
+**何时应该切云**：
+
+- ✅ 三人 A / B / C 需要共享同一份 db（每人本地维护 pg_dump 同步成本太高）
+- ✅ 演示环境需外部访问（评委 / 教师从校外看 demo）
+- ✅ 数据量超过 3 GB（本机磁盘紧张）
+- ✅ 团队 CI / GitHub Actions 需要连数据库跑测试
+
+**何时不切云**：
+
+- ❌ 只有一个人开发，本机跑就够
+- ❌ 数据敏感（教材版权内容不宜上第三方）
+- ❌ 网络不稳定（Neon 需持续在线）
+
+### 选项 C · 本地原生 PostgreSQL
+
+**不推荐**（配置繁琐）：需自装 pg16 + 手动编译 pgvector 扩展 + 权限 / 网络配置。仅在无法用 Docker 时考虑（如 macOS ARM64 早期 pgvector 镜像有问题时）。
+
+---
+
+## 多设备 / 多成员数据同步
+
+### 分层同步矩阵
+
+| 数据层 | 同步方式 | 频率 | 存储介质 | 备注 |
+|---|---|---|---|---|
+| **代码 + 配置** | `git pull` / `git push` | 实时 | git upstream/dev | 权威源 |
+| **元数据 + full.md + README** | 同上 | 实时 | git | v1.1 起 full.md 已进 git |
+| **教材 PDF**（202 MB） | 云盘 / 外部硬盘 | 手动 | 云盘 | 不进 git（版权） |
+| **MinerU 转换产物**（39 MB） | 云盘 | 手动 | 云盘 | 或从 raw/pdf 重跑 MinerU 重建 |
+| **mineru/<slug>/assets/**（80+ MB） | 云盘 | 手动 | 云盘 | 或复制自 processed/mineru/ |
+| **mineru_ingested/**（20+ MB） | **不同步** | — | — | 每设备跑 batch 重建，10 分钟 |
+| **PostgreSQL db** | `pg_dump` / `pg_restore` 或**云 db 共享** | 增量 | 云盘 dump 文件 or 云 db | 教材 chunks 重跑 batch 也能重建 |
+| **MediaCrawler jsonl** | 云盘 | 手动 | 云盘 | 或再次跑 MediaCrawler |
+
+**核心原则**：**git 只同步"可编辑的规范化产物"，大文件走云盘，db 走 dump/restore 或云 db 共享**。
+
+### 场景 1 · 新设备首次搭建（20 分钟）
+
+```powershell
+# 1. clone repo
+git clone https://github.com/Nnutural/SecureHub-Full-Stack-Monorepo.git
+cd SecureHub-Full-Stack-Monorepo
+
+# 2. 从云盘拉大文件（本地 gitignore 排除的部分）
+# 手工下载到：
+#   data/raw/pdf/*.pdf                                          （202 MB）
+#   data/processed/mineru/**/*                                  （39 MB）
+#   data/storage/course_websec/mineru/**/assets/*.jpg           （80+ MB）
+#   data/storage/course_websec/mineru/**/*.pdf                  （202 MB，同 raw）
+# 用 rclone / OneDrive / 百度网盘 / 群晖 均可
+
+# 3. 起 db 服务
+docker compose up -d postgres redis
+
+# 4. 初始化 db
+cd backend
+uv sync
+uv run alembic upgrade head
+
+# 5. 恢复 seed（选一）
+# 5a. 从云盘拉 pg_dump 恢复（推荐，1 分钟）：
+docker compose exec -T postgres pg_restore -U securehub -d securehub < ..\backup.dump
+
+# 5b. 或从 seed + batch 重建（10 分钟）：
+uv run python -m app.db.seeds.seed_agents
+uv run python -m app.db.seeds.seed_agent_skills
+uv run python -m app.db.seeds.seed_demo_user
+uv run python -m app.db.seeds.seed_course_websec
+cd ..
+.\scripts\ingest\ingest_pdf_mineru_batch.ps1
+.\scripts\crawl\mediacrawler_bili_import.ps1
+
+# 6. 验证（30 秒快查）
+git ls-files "data/raw/pdf/*.pdf" | Measure-Object -Line     # 应为 0 行
+Get-ChildItem data\storage\course_websec\mineru\*\full.md | Measure-Object  # 应为 5
+cd backend
+uv run pytest -m "not llm_live" -q
+```
+
+### 场景 2 · 日常增量同步（多设备开发）
+
+```powershell
+# 代码 / 元数据 / full.md 变化：
+git pull origin dev
+git push origin dev
+
+# 教材 PDF / assets 新增或版本更新：
+# → 手动上传 / 下载云盘对应目录
+
+# Db 数据变化（新入库了教材 / 新采集了 bili）：
+# 方案 A：pg_dump 交换（快）
+docker compose exec postgres pg_dump -U securehub -Fc securehub > backup_$(Get-Date -Format yyyyMMdd).dump
+# 上传到云盘
+# 另一台设备下载 backup_YYYYMMDD.dump 后：
+docker compose exec -T postgres pg_restore -U securehub -d securehub --clean --if-exists < backup_YYYYMMDD.dump
+
+# 方案 B：让 batch 从 mineru/ 重跑（幂等，慢一点但可靠）
+.\scripts\ingest\ingest_pdf_mineru_batch.ps1
+```
+
+### 场景 3 · 灾难恢复（本机数据丢失）
+
+**假设**：本机 `data/` 目录被误删 + docker volume 被清 + 只有 git repo 剩下。
+
+**恢复顺序**（数据来源梯度）：
+
+1. **git 里有的**：`git pull` 拿到 `full.md` + README + 代码 + `source_manifest.json`（约 3 MB） ✅
+2. **云盘 pg_dump**：如果有备份，1 分钟恢复整个 db（含 chunks / assets / storage_objects） ✅
+3. **云盘大文件**：从云盘拉 `raw/pdf/` + `processed/mineru/` + `mineru/**/assets/`（几分钟到几十分钟）✅
+4. **重跑 batch**：从 `mineru/` 里重跑 `ingest_pdf_mineru_batch.ps1`（10 分钟）✅
+5. **重跑 MediaCrawler import**：`mediacrawler_bili_import.ps1`（1 分钟）✅
+
+**最坏情况**（连云盘 db 备份都没）：
+- 教材 PDF 必须重新下载（从原网站或 U 盘）
+- MinerU 转换必须重跑（一本 30 分钟）
+- 或从 `full.md`（git 里已有）反向工程出章节（能恢复 chunks 但没有 image assets）
+
+### 场景 4 · 云 db 三人共享（推荐长期）
+
+**目标**：A / B / C 三人共用同一个 Neon db，本地只放大文件。
+
+**架构**：
+
+```
+       [Neon cloud PostgreSQL]
+              ↑↓ (asyncpg over SSL)
+    ┌─────────┼─────────┐
+   [A 本机]  [B 本机]  [C 本机]
+    ├ code (git)      ├ code (git)      ├ code (git)
+    └ 无 data/*        └ 无 data/*       └ raw/pdf/ + processed/ (只 C 维护)
+```
+
+**约定**：
+- **只有 C 有权跑 batch / MediaCrawler**（避免多人重复入库）
+- A / B 通过 db 查询获取现有 chunks，本地不放大文件
+- C 每次入库新数据后在 team 频道 tag "@a @b db 已更新，schema 无变化"
+- Schema 变化（新迁移）时，A / B 只需 `alembic upgrade head`（对着云 db 跑）
+
+**Secret 管理**：
+- Neon connection string 存 `.env.local`（`.gitignore` 已排除）
+- 或用 GitHub Codespaces secrets（团队共享）
+- **绝不**把 Neon URL 提交到 git 或 PR body
+
+### 云盘工具推荐
+
+| 工具 | 大文件 | 增量同步 | 团队共享 | 免费额度 |
+|---|---|---|---|---|
+| **OneDrive** | ✅ | ✅ | ✅ | 5 GB |
+| **Google Drive** | ✅ | ✅ | ✅ | 15 GB |
+| **rclone**（推荐 CLI 用户） | ✅ | ✅（`rclone sync`）| 手动 | 依赖后端 |
+| **百度网盘**（大陆备选） | ✅ 但慢 | ⚠️ 需付费 | ⚠️ | 2 TB 免费但限速 |
+| **群晖 NAS**（校内 / 家用） | ✅ | ✅ | ✅ | 依设备 |
+
+**推荐目录约定**（云盘上）：
+
+```
+SecureHub-Data-Sync/                     ← 云盘共享目录
+├── raw/pdf/*.pdf                        （202 MB）
+├── processed/mineru/**/*                （39 MB）
+├── db-backups/
+│   ├── backup_20260707_after_6-C-2.dump
+│   ├── backup_20260708_after_6-C-3.dump
+│   └── LATEST.dump -> backup_20260708_after_6-C-3.dump  （软链接指向最新）
+└── mineru-input-cache/                  可选：mineru/**/assets/ 的备份
+```
+
+配套的**同步脚本**（放到 `scripts/sync/` 后续可维护）：
+
+```powershell
+# scripts/sync/pull_from_cloud.ps1     — 从云盘拉最新到本地
+# scripts/sync/push_db_to_cloud.ps1    — pg_dump 后上传到云盘
+# scripts/sync/verify_sync_state.ps1   — 校验本地 vs 云盘 diff
+```
+
+---
+
 ## 数据库整理与长期治理（沿用 6-C-2 事故经验 + Plan §6）
 
 ### 1. Content-hash 幂等模型
@@ -431,10 +681,11 @@ cd ..
 |---|---|---|
 | 2026-07-07 | v1 | 首次建立（6-C-2-cleanup），三层分离原则 |
 | 2026-07-08 | v1.1 | 追加：db 治理 SQL、周期性维护清单、教材换版流程、slug 命名规范、备份策略、A/B/C 边界表、扩展路线 |
+| 2026-07-08 | v1.2 | 追加：数据库服务运行（本地 Docker / Neon / 阿里云）、多设备/多成员同步矩阵、4 类场景 runbook（新设备 / 日常增量 / 灾难恢复 / 云 db 共享）、云盘工具与目录约定 |
 
 ---
 
 **维护者**：成员 C
 **首次建立**：2026-07-07（6-C-2-cleanup）
-**规范化状态**：v1.1，待 A / B / 项目负责人 review
+**规范化状态**：v1.2，待 A / B / 项目负责人 review
 
