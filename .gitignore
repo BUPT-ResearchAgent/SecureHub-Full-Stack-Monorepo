@@ -56,11 +56,14 @@ Plan/
 SecureHub-Full-Stack-Monorepo/data
 Workout/member_c_p0_handoff.md
 
-# ==== 教材版权保护（6-C-2 新增；6-C-2-cleanup 扩展）====
+# ==== 教材版权保护（6-C-2 新增；6-C-2-cleanup 扩展；6-C-3-followup 放宽 full.md）====
 # --- 工程副本目录（monorepo 内部工作目录） ---
 data/storage/course_websec/mineru/**/*.pdf
 data/storage/course_websec/mineru_ingested/**/*.pdf
-data/storage/course_websec/mineru/**/full.md
+# NOTE: 6-C-3-followup 之后，允许 `mineru/<slug>/full.md` 进入 git（供目录树 + RAG
+# 演示的最小上下文可见）。因为这是教材完整正文，仅在 upstream 为 private / 受限访问
+# 仓库时提交才合规。若 upstream 变为完全公开，请再次启用下方注释规则。
+# data/storage/course_websec/mineru/**/full.md
 data/storage/course_websec/mineru_ingested/**/full.md
 data/storage/course_websec/mineru/**/chapters/
 data/storage/course_websec/mineru_ingested/**/chapters/
