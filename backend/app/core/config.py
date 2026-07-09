@@ -1,7 +1,8 @@
 import json
 from functools import lru_cache
+from pathlib import Path
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -28,6 +29,25 @@ class Settings(BaseSettings):
     DEBUG: bool = True
     DATABASE_URL: str = "postgresql+asyncpg://securehub:securehub@localhost:5432/securehub"
     REDIS_URL: str = "redis://localhost:6379/0"
+    STORAGE_PROVIDER: str = "local"
+    STORAGE_LOCAL_ROOT: Path = Path("./data/storage")
+    COS_SECRET_ID: str = ""
+    COS_SECRET_KEY: str = ""
+    COS_REGION: str = "ap-beijing"
+    COS_BUCKET: str = ""
+    COS_SCHEME: str = "https"
+    COS_PRESIGNED_EXPIRES_SECONDS: int = 600
+    COS_UPLOAD_MAX_BYTES: int = 100 * 1024 * 1024
+    UPLOAD_GATE_ENABLED: bool = True
+    UPLOAD_GATE_SECRET_HASH: str = ""
+    UPLOAD_GATE_MAX_BYTES: int = 104857600
+    UPLOAD_GATE_ALLOWED_MIME_PREFIXES: list[str] = Field(
+        default_factory=lambda: ["image/", "application/pdf", "text/markdown"]
+    )
+    UPLOAD_GATE_ALLOWED_PREFIXES: list[str] = Field(
+        default_factory=lambda: ["uploads/", "tmp/uploads/"]
+    )
+    UPLOAD_GATE_PRESIGNED_EXPIRES_SECONDS: int = 600
     LLM_PROVIDER: str = "xfyun"
     XFYUN_APP_ID: str = ""
     XFYUN_API_KEY: str = ""
@@ -69,6 +89,16 @@ class Settings(BaseSettings):
             return [item.strip() for item in text.split(",") if item.strip()]
         return value
 
+    @field_validator("UPLOAD_GATE_ALLOWED_MIME_PREFIXES", "UPLOAD_GATE_ALLOWED_PREFIXES", mode="before")
+    @classmethod
+    def parse_upload_gate_lists(cls, value: object) -> object:
+        if isinstance(value, str):
+            text = value.strip()
+            if text.startswith("["):
+                return json.loads(text)
+            return [item.strip() for item in text.split(",") if item.strip()]
+        return value
+
     @field_validator("DEBUG", mode="before")
     @classmethod
     def parse_debug(cls, value: object) -> object:
@@ -79,6 +109,28 @@ class Settings(BaseSettings):
             if normalized in {"debug", "development", "dev", "true", "1", "yes"}:
                 return True
         return value
+
+    @model_validator(mode="after")
+    def validate_storage_config(self) -> "Settings":
+        self.STORAGE_PROVIDER = self.STORAGE_PROVIDER.strip().lower()
+        self.COS_SCHEME = self.COS_SCHEME.strip().lower()
+        if self.STORAGE_PROVIDER == "cos":
+            missing = [
+                name
+                for name in (
+                    "COS_SECRET_ID",
+                    "COS_SECRET_KEY",
+                    "COS_REGION",
+                    "COS_BUCKET",
+                )
+                if not str(getattr(self, name)).strip()
+            ]
+            if missing:
+                raise ValueError(
+                    "STORAGE_PROVIDER=cos requires non-empty settings: "
+                    + ", ".join(missing)
+                )
+        return self
 
 
 @lru_cache

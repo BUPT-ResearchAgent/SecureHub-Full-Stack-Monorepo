@@ -16,6 +16,7 @@ from app.api.v1.endpoints import (
     streaming,
     system,
     tutor,
+    uploads,
 )
 
 api_router = APIRouter()
@@ -50,3 +51,4 @@ api_router.include_router(rag.router, tags=["rag"])
 api_router.include_router(tutor.router, tags=["tutor"])
 api_router.include_router(assessment.router, tags=["assessment"])
 api_router.include_router(llm.router, tags=["llm"])
+api_router.include_router(uploads.router, tags=["uploads"])

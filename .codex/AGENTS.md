@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - **文档目的**：作为"安枢智梯 SecureHub / CyberLadder"项目所有后续 Claude Code / Codex / Cursor 会话的默认上下文。任何在本仓库工作的 AI 助手（或新加入的工程师）应当**首先读完本文件**，再开始触碰代码。
 - **读者**：本项目团队成员；后续接入的 AI 编码助手；A3 赛题答辩评委（架构理解参考）。
-- **最后更新时间**：2026-06-09（在 2026-06-05 初稿基础上，分别在 2026-06-08 引入 Data-layer v2，在 2026-06-09 引入 §8.5 Harness / §10.5 多源采集 / §10.6 PDF·MinerU / §10A 三人并行分工）。
+- **最后更新时间**：2026-07-09（统一 A/B/C 联调阶段语言规范；补充 7-COS 云存储口径：COS Provider 与 private/team-sync 小批量同步已验证，GitHub 外 data 全量同步未完成且最近一次全量尝试已手动中止）。
 - **本文件的权威性**：在仓库层面，本文件 > `README.md` / `docs/architecture.md` / `docs/backend-overview.md`。当本文件与代码现状冲突时，**以代码为准并立即更新本文件**；当本文件与外部 4 份文档冲突时，**以本文件 §19 的"差异说明"为准**。
 
 ### 阅读约定（什么时候回读外部文档？）
@@ -20,9 +20,28 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | 不确定项目整体愿景 / 商业逻辑 / 市场叙事 | **项目计划书**（挑战杯） | `D:/Nnutural/Desktop/BUPT大全/BUPT竞赛/26软件杯/Legacy/鸿雁杯/MinerU_markdown_项目计划书_2054945124833226752.md` |
 | 不确定某智能体内部算法 / 公式 / 输入输出契约 | **设计开发文档**（CyberLadder v1.8，1.5 节最重要） | `D:/Nnutural/Desktop/BUPT大全/BUPT竞赛/26软件杯/Legacy/2026037134-03 设计与开发文档/3 软件应用与开发类作品设计和开发文档模板（2026版）.md` |
 | 数据层 v2 改造任务（assets / resources / storage / 字段升级） | **Data-layer v2 工程化改造任务书** | `D:/Nnutural/Desktop/BUPT大全/BUPT竞赛/26软件杯/Chat/SecureHub_Data_Layer_V2_工程化改造任务书.md` |
+| COS / 云存储 / GitHub 外 data 同步边界 | **COS 接入实施方案 + 7-COS 交付报告** | `D:/Nnutural/Desktop/BUPT大全/BUPT竞赛/26软件杯/Plan/7-8-SecureHub-COS接入实施方案.md`；`D:/Nnutural/Desktop/BUPT大全/BUPT竞赛/26软件杯/Workout/7-COS-*.md` |
 | 三人并行分工（A / B / C 边界、CODEOWNERS、API 契约、Harness、Scrapling / MediaCrawler / MindSpider、MinerU） | **三人并行开发分工方案** | `D:/Nnutural/Desktop/BUPT大全/BUPT竞赛/26软件杯/Plan/SecureHub_三人并行开发分工方案.md` |
 
 ⚠️ **设计开发文档**与**A3 赛题规划**存在多处冲突（13 智能体 vs 9 智能体、多 DB vs PostgreSQL+pgvector），**冲突一律以"规划文档"为准**，并参考本文件 §19。
+
+---
+
+## 0A. 当前阶段与统一语言规范（2026-07-09）
+
+> 本节用于修正 2026-07-08 前后文档中的阶段漂移。后续回答、任务提示词、PR 描述均按本节措辞执行。
+
+| 维度 | 统一口径 |
+|---|---|
+| 当前阶段 | **A/B/C 真实联调校准期**：C 主线已完成；A/B 均已推进底座；下一步不是扩功能，而是压向 5 条主路径端到端验收 |
+| A 实际进度 | **约 70%+**。已合入 DeepSeek / 讯飞星火 Provider、`BaseLLMProvider` Router、统一异常、LLM health / skill execution service；Qwen Embedding Provider 与 retriever profile 校验也已合入 |
+| A 禁用表述 | 不再说"A 还没接模型"或"A 只是骨架"；应说"模型供应商与 Provider 抽象已落地，瓶颈转为 Harness 主路径真实执行 / 落库 / `agent_runs` 验收" |
+| B 实际进度 | **约 95%**。已合入 typed SSE、real-first API fallback、DTO 冻结、mock-to-real 前端适配、LLM status / error states |
+| B 禁用表述 | 不再说"B 只是纯 mock 页面"；应说"B 已有 real-first 集成底座，仍需用 A 的真实后端复跑并收敛 partial-real 契约" |
+| C 实际进度 | **100%，主线开发完成**。后续转数据支撑、证据校验、CI / demo smoke 辅助角色 |
+| COS 侧线进度 | **Provider 与私有同步链路已验证，但全量同步未完成**。7-COS-3 只确认 20 个 `allowed_runtime_asset` 已上传、manifest 20 行、`storage_objects` 20 条 ready；约 870 个默认 allowlist 资产的全量上传曾启动后手动中止 |
+| 当前主瓶颈 | A 的 Harness Wave 2 + 5 个 SSE 主路径：`courses/plan`、`courses/resources/generate`、`profile/chat`、`tutor/ask`、`assessment/run` |
+| 最大风险 | fallback / mock-to-real 适配被误认为真实联调完成；COS 20 个样本被误认为 GitHub 外 data 全量同步完成；必须在真 Provider + 真 RAG + 真 `agent_runs` + 前端 SSE 下同窗复跑 |
 
 ---
 
@@ -101,7 +120,7 @@ A3 新能力一律作为**现有 9 智能体的新 skill** 叠加，**绝不**�
 | 系统调度与多智能体编排（1.5.3.7） | `backend/app/runtime/router.py` + LangGraph conditional edge |
 | 安全监控与合规审核（1.5.3.8） | `backend/app/runtime/guardrails/`（middleware） |
 | **Skill 执行框架（Harness）** | `backend/app/runtime/harness/`（base / context / fixtures / errors / types） |
-| **对象存储抽象** | `backend/app/services/storage/`（local / minio / s3 / oss / cos / r2 后端，统一 `storage_objects.object_key`） |
+| **对象存储抽象** | `backend/app/services/storage/`（local / Tencent COS 已落地；minio / s3 / oss / r2 为后续备选；统一 `storage_objects.object_key`） |
 
 **严禁注册**：`crawler_agent` / `media_agent` / `spider_agent` / `pdf_agent` / `mineru_agent` / `harness_agent` / `storage_agent` —— 任何包装基础设施为"第 10 个智能体"的尝试都会被拒。Scrapling、MediaCrawler、MindSpider、MinerU 均为**外部工具**或**适配器**，仅在 service 层使用，**不进入** `agents` 表。
 
@@ -517,10 +536,20 @@ backend/app/
 │     ├─ output_filter.py
 │     └─ prompt_injection_check.py
 │
-├─ llm/                               [planned] 模型客户端
-│  ├─ xfyun.py                        # 讯飞星火（A3 硬要求）
-│  ├─ deepseek.py                     # 备用
-│  └─ embedding.py                    # BGE-M3 / bge-large-zh
+├─ llm/                               [real] 模型客户端（2026-07-08 6-C-6 生产化）
+│  ├─ provider.py                     [real] BaseLLMProvider 抽象（A PR #35 merged）
+│  ├─ xfyun_provider.py               [real] 讯飞星火（A3 硬要求，OpenAI-Compatible）
+│  ├─ deepseek_provider.py            [real] DeepSeek 联调主选
+│  ├─ xfyun.py                        [legacy] 旧客户端，被 xfyun_provider.py 替代
+│  ├─ deepseek.py                     [legacy] 同上
+│  ├─ embedding.py                    [real] 薄兼容 façade
+│  └─ embeddings/                     [real] Embedding Provider 家族（6-C-6）
+│     ├─ base.py                      # EmbeddingProvider Protocol + EmbeddingResult
+│     ├─ errors.py                    # 8 种领域异常
+│     ├─ factory.py                   # Provider Router
+│     ├─ service.py                   # embed_query / embed_documents 语义接口
+│     ├─ qwen_openai_compatible.py    # Qwen text-embedding-v4（生产）
+│     └─ fixture.py                   # Deterministic Fixture（CI 用，差异化 1024D）
 │
 ├─ rag/                               [planned] 检索增强
 │  ├─ chunker.py
@@ -935,16 +964,34 @@ error     可恢复 / 不可恢复错误
 
 ### 8.7 对象存储抽象（`backend/app/services/storage/`）
 
-**对应** `storage_objects` 表背后的多后端实现（local / minio / s3 / oss / cos / r2）。
+**对应** `storage_objects` 表背后的多后端实现。2026-07-09 的真实状态是：local provider + Tencent COS provider 已落地，minio / s3 / oss / r2 仍是后续备选，不得在报告里写成全部生产可用。
 
 | 文件 | 作用 |
 | --- | --- |
-| `storage/base.py` | `class StorageBackend`，统一 `put / get / sign_url / delete` |
-| `storage/local.py` | 本地文件系统后端（默认 dev / demo） |
-| `storage/minio.py` / `s3.py` / `oss.py` / `cos.py` / `r2.py` | 生产备选后端 |
-| `storage/service.py` | `StorageService`，封装 `storage_objects` 落库 + 后端选择 |
+| `backend/app/services/storage/storage_service.py` | `StorageService`，封装 provider-backed binary I/O + `storage_objects` upsert |
+| `backend/app/services/storage/provider_factory.py` | 根据 `STORAGE_PROVIDER` 选择 local / cos |
+| `backend/app/services/storage/providers/local.py` | 本地文件系统后端（默认 dev / loader 测试） |
+| `backend/app/services/storage/providers/cos.py` | Tencent COS 后端（7-COS-1 smoke 已通过） |
+| `backend/app/services/storage/upload_gate.py` | 后端上传门禁，使用 `UPLOAD_GATE_SECRET_HASH` 校验；前端不得硬编码明文密钥 |
 
 **调用关系**：`document_assets` / `generated_resources` 通过 `object_key` 指向 `storage_objects`，**不直接**写文件路径到主表。Harness 在 `artifact` 阶段触发 `StorageService.put` + `storage_objects` 写入 + 关联 ID。
+
+**COS 当前前缀约定**：
+
+| 前缀 | 用途 | 当前状态 |
+|---|---|---|
+| `runtime/` | 应用运行时可展示产物 | Put/Get/Head 已授权 |
+| `tmp/` | smoke / 临时上传 | Put/Get/Head/Delete 已授权 |
+| `private/team-sync/` | 团队私有同步 GitHub 外数据 | Put/Get/Head 已授权；7-COS-3 已验证 20 个对象 |
+| `backups/postgres/` | PostgreSQL dump 备份 | 仅在明确同步 db dump 时启用 |
+
+**必须保持的口径**：
+
+- 7-COS-1：Provider 与 smoke 通过。
+- 7-COS-2：`mineru_ingested/**/assets/*` 候选为 0，脚本骨架完成，不能写成 10 个样本迁移完成。
+- 7-COS-3：20 个 `allowed_runtime_asset` 已上传、manifest 20 行、`storage_objects` 20 条 ready；默认 allowlist 约 870 个资产未全量完成，最近一次全量上传已手动中止。
+- 继续全量同步前必须补 `skip existing` / 断点续传 / manifest 增量追加 / 限速或并发控制；不得把中断后的半成品当作完成。
+- 永久禁止上传 `.env*`、`SecretKey.csv`、`account.csv`、`.codegraph/**`、sqlite/db、raw MediaCrawler 数据；教材 PDF / `full.md` 只能在项目负责人明确确认后用私有前缀单独处理。
 
 ---
 
@@ -1235,7 +1282,7 @@ docker-compose 中 backend 服务依赖 PostgreSQL 16 的镜像（**待添加**�
 | 1 | **选课 + 收集原始资料**（1–2 天，人工） | — | 推荐《Web 安全基础》：1 本主教材 + 5–10 篇论文/RFC/博客 + 2–3 个实验手册 + OWASP Top 10 |
 | 2 | **文档切分 + 元数据标注** | LangChain `RecursiveCharacterTextSplitter`（500–800 tokens、overlap 100） | `documents` + `chunks` 表，`metadata = {kp_ids: [], difficulty: 1-5, type: '概念'/'案例'/'代码'/'实验'}` |
 | 3 | **知识点抽取 + 前置关系图** | LLM 辅助 + 人工校对 | `knowledge_nodes` + `knowledge_edges`（50–100 节点，`edge_type='prerequisite'`） |
-| 4 | **向量化入库** | BGE-M3 / bge-large-zh / 讯飞 embedding | `chunks.embedding` |
+| 4 | **向量化入库**（2026-07-08 6-C-6 生产化）| **Qwen `text-embedding-v4`**（阿里云百炼 OpenAI-Compatible，1024D dense，batch≤10）；见 `backend/app/llm/embeddings/qwen_openai_compatible.py` | `chunks.embedding` + `chunks.metadata.embedding_profile='qwen-openai-compatible:text-embedding-v4:1024:dense:v1'` |
 | 5 | **混合检索接口** | `rag/retriever.py`（BM25 + 向量 + RRF + rerank） | 输入：query + 画像 + kp 过滤 + domain；输出：带证据的 chunks |
 | 6 | **画像随学随新** | `outcome_evaluator.update_capability` + `career_planner.update_persona` | `user_profiles.dimensions.weak_points` 更新 |
 
@@ -1557,15 +1604,30 @@ data/processed/mineru/{document_id}/
 
 ## 11. LLM / Agent 框架技术决策
 
+> 2026-07-09 更新：Provider 家族（A PR #35）+ Embedding Provider（C 6-C-6）已生产化，非 planned；B 已具备 real-first API/SSE/DTO 集成底座。下一步优先验收 Harness 主路径真实执行，而非继续扩大 mock 展示面。
+
 | 决策 | 选型 | 理由 |
 | --- | --- | --- |
-| **主模型** | **讯飞星火**（v4.0 Ultra 或当时主流） | A3 硬要求 |
-| **备用模型** | DeepSeek / Qwen | 讯飞额度耗尽 / 速率超限时降级 |
-| **Embedding** | BGE-M3（首选）/ bge-large-zh / 讯飞 embedding | 中文效果 + 1024 维向量适配 pgvector |
+| **主模型** | **讯飞星火**（v4.0 Ultra 或当时主流） | A3 硬要求；`backend/app/llm/xfyun_provider.py` [real] |
+| **备用模型** | DeepSeek | 联调主选（配置最简单）；`backend/app/llm/deepseek_provider.py` [real] |
+| **Provider 抽象** | `BaseLLMProvider` + `provider.py` Router + `runtime/exceptions.py`（7 种统一错误） | A PR #35 merged 2026-07-08 |
+| **Embedding** | **Qwen `text-embedding-v4`**（阿里云百炼 OpenAI-Compatible） | 6-C-6 完成生产化；1024D dense 适配 pgvector；单批 ≤10；`embedding_profile` 契约锁定禁止跨模型 fallback |
+| **Embedding Provider 抽象** | `backend/app/llm/embeddings/{base,errors,factory,service,fixture,qwen_openai_compatible}.py` [real] | 6-C-6 完成；参见 `docs/api/evidence-contract.md` v1.2 |
+| **~~BGE-M3~~ / ~~bge-large-zh~~** | deprecated | 6-C-6 迁移前的初步方案；已被 Qwen 生产化替代；Prompt/6-C-5 里 BGE-M3 尝试全部 revert |
 | **Agent 框架** | **LangGraph** | 显式 DAG + 节点级超时 / 重试 / 条件边 / human-in-loop；比 AutoGen / CrewAI 更适合"工作流可视化" |
 | **流式协议** | **SSE**（Server-Sent Events） | FastAPI 原生支持 `StreamingResponse(media_type="text/event-stream")`；前端 `EventSource` 一行接入；比 WebSocket 简单 |
 | **模型 client 封装位置** | `backend/app/llm/` | `xfyun.py` / `deepseek.py` / `embedding.py` |
 | **TTS（视频音频）** | 讯飞 TTS（在线 API） | A3 用讯飞工具；轻量化避免本地模型 |
+
+### 11.0 A/B/C 联调验收口径（2026-07-09）
+
+5 条主路径只有同时满足以下条件，才允许标记为"真实联调完成"：
+
+1. 后端走真实 Harness skill 链路：`rag.retrieve → evidence_floor → LLM Provider → QualityCheck → generated_resources/storage_objects → agent_runs`。
+2. RAG 召回使用 Qwen `embedding_profile`，不跨模型 fallback，不静默吞掉 provider 错误。
+3. 前端经 B 的 real-first API/SSE 客户端消费 7 类事件，不能只看 mock replay。
+4. 每条路径至少产出一次可追溯 `run_id`、非空 `evidence_chunk_ids`、可展示 `trace` / `artifact`。
+5. A/B/C 在同一时间窗复跑并记录结果；单人本地 happy path 不等于联调完成。
 
 ### 11.1 SSE 事件类型规范（强制，7 种）
 
@@ -2026,6 +2088,49 @@ forbidden: LLM 自由生成内容
 - **理由**：并行开发期降低冲突，确保铁律不被任何一人单独绕过。
 - **不变**：9 agent / RAG / `agent_runs` / data-layer v2 等核心铁律。
 
+### 19.13 Embedding 迁移到 Qwen text-embedding-v4（2026-07-08）
+
+- **旧表述**：§10.1 SOP Step 4 与 §11 决策表都写"BGE-M3（首选）/ bge-large-zh / 讯飞 embedding"，`llm/embedding.py` 是 planned stub。
+- **6-C-5 尝试**：C 曾按 BGE-M3 方向做（Prompt/6-C-5.md），跑到 2096/3555 chunks 后暂停；发现三个工程缺陷：`embedding.py` 长期是 hash-based fake vector / retriever 动态猜维度 / API 故障被吞成空结果。
+- **本项目（6-C-6 生产版）**：**Embedding 基础设施完整迁移到 Qwen `text-embedding-v4`**（阿里云百炼 OpenAI-Compatible API），BGE-M3 相关代码 revert。
+  - 目录结构：`backend/app/llm/embeddings/{base,errors,factory,service,fixture,qwen_openai_compatible}.py`
+  - Provider Router：`fixture / qwen_openai_compatible`（`local_bge_m3` 不保留，避免误 fallback）
+  - Profile 契约：`embedding_profile = "qwen-openai-compatible:text-embedding-v4:1024:dense:v1"` 锁定，Retriever 仅召回同 profile
+  - retriever 三处最小安全接入：禁止动态猜维度（改用 `settings.EMBEDDING_DIM`）/ profile 过滤 / API 故障显式抛异常
+  - 全量重跑：3555 chunks 全部 Qwen embed（旧 2096 BGE-M3 legacy 无 profile 通过 `reset_embeddings --include-legacy-unprofiled-ready` 清空）
+  - Live smoke 通过：真跑 3 条 doc + query embedding，1024 维返回
+  - **rag/search `fallback=False`**（真向量检索达成，A3 竞赛 RAG 技术底座就绪）
+- **理由**：
+  - Qwen v4 中英文效果达 SOTA，与国产 A3 命题气候一致；
+  - OpenAI-Compatible 协议不需要新 SDK（沿用 A 的 httpx）；
+  - 阿里云百炼与讯飞星火共存，业务空间独立管理，符合"多国产 LLM Provider"策略；
+  - BGE-M3 本地跑 500 MB 模型对 CI / 部署都是拖累。
+- **依据**：`Plan/7-8-文本嵌入向量模型.md` §11-31（1500 行工程规格），PR #37 merged。
+- **契约演进**：`docs/api/evidence-contract.md` v1.1 → **v1.2 frozen**，`chunks.metadata.embedding_profile` 字段引入。
+
+### 19.14 A/B/C 真实联调阶段口径修正（2026-07-09）
+
+- **旧表述风险**：容易把 A 简化成"未接模型 / 只有骨架"，把 B 简化成"纯 mock 页面"，导致后续任务错误地重复建设 Provider 或前端 mock。
+- **本项目当前事实**：
+  - A 已合入 LLM Provider 家族、DeepSeek / 讯飞星火 Provider、统一异常、LLM health / skill execution service；Embedding Provider / Qwen / retriever profile 校验也已生产化。
+  - B 已合入 typed SSE、real-first API fallback、DTO 冻结、mock-to-real 适配、LLM status / error states。
+  - C 6-C 主线完成，转为数据支撑、证据校验、CI / demo smoke 辅助角色。
+- **新的统一口径**：当前瓶颈不是"有没有模型供应商"或"有没有前端展示"，而是 A 的 Harness Wave 2 + 5 条 SSE 主路径真实执行、落库、`agent_runs` 和前端 SSE 联调验收。
+- **验收边界**：只有 `courses/plan`、`courses/resources/generate`、`profile/chat`、`tutor/ask`、`assessment/run` 在真 Provider + 真 RAG + 真 `agent_runs` + 前端 SSE 下复跑通过，才算阶段闭环。
+- **不变铁律**：9 agent 固定；横切基础设施不算 agent；统一知识资产层；生成式 skill 必须先 RAG 后 LLM；所有 skill 必须写 `agent_runs`。
+
+### 19.15 Tencent COS 私有同步口径修正（2026-07-09）
+
+- **旧表述风险**：把对象存储仍视为 planned，或把 7-COS-3 的 20 个样本误读成 GitHub 外 data 全量同步完成。
+- **本项目当前事实**：
+  - `StorageService` 已支持 local / cos provider-backed I/O，7-COS-1 smoke 覆盖 put / head / get / signed URL / delete。
+  - Bucket `anshu-skq-1385633904` 位于 `ap-beijing`，保持私有读写；CAM 已覆盖 `runtime/*`、`tmp/*`、`private/team-sync/*` 的最小权限。
+  - 7-COS-3 已同步 20 个 `allowed_runtime_asset` 到 `private/team-sync/data/...`，manifest 20 行，`storage_objects` 20 条 ready。
+  - 默认 allowlist 约 870 个资产尚未全量完成；最近一次全量上传因为速度问题由项目负责人手动中止。
+- **新的统一口径**：COS Provider 与团队私有同步链路已验证，但 GitHub 外 data 全量同步未完成。
+- **下一步边界**：继续同步前优先补 `skip existing` / 断点续传 / manifest 增量追加 / 限速或并发控制；不得上传 Secret、`.env*`、Secret CSV、raw MediaCrawler、sqlite/db、`.codegraph`；教材 PDF / `full.md` 只能在项目负责人明确确认后私有同步。
+- **不变铁律**：COS / Storage 是横切基础设施，不是 agent；大文件实体仍通过 `storage_objects.object_key` 抽象，不新增并列表。
+
 ---
 
 ## 20. 后续会话快速上手清单
@@ -2107,7 +2212,8 @@ forbidden: LLM 自由生成内容
 1. **读完本文档 §3（铁律）**——它最重要
 2. **读完本文档 §19（差异说明）**——避免引入已被否决的设计
 3. **检查目标代码现状是 `[real]` / `[mock]` / `[planned]` / `[legacy]`**——决定改造方式
-4. **如果不确定，回读 §0 表格中对应的外部文档**
+4. **读 §0A 当前阶段口径**——不要再把 A 说成未接模型，也不要把 B 说成纯 mock
+5. **如果不确定，回读 §0 表格中对应的外部文档**
 
 ---
 
