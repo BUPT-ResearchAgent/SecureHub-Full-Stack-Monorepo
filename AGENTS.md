@@ -2,6 +2,24 @@
 
 > 权威文档：`CLAUDE.md` 是项目宪法，本文件不复述细节，仅约束 Codex 子智能体的使用边界。
 > 文档冲突时以 `CLAUDE.md` 为准。
+> 最后更新：2026-07-09（同步 A/B/C 真实联调阶段口径 + 7-COS 云存储口径：A/B 均已有实际推进；COS Provider 与 private/team-sync 小批量同步已验证，但 GitHub 外 data 全量同步未完成）。
+
+---
+
+## 0. 当前阶段口径（2026-07-09）
+
+子智能体在审查、写码、起草报告时统一使用以下表述：
+
+| 对象 | 正确口径 | 禁用口径 |
+|---|---|---|
+| A | A 已合入 DeepSeek / 讯飞星火 Provider、统一异常、LLM health / skill execution service；Qwen Embedding Provider 与 retriever profile 校验也已合入。当前瓶颈是 Harness Wave 2 + 5 条 SSE 主路径真实执行 / 落库 / `agent_runs` 验收。 | "A 还没接模型"、"A 只是骨架" |
+| B | B 已合入 typed SSE、real-first API fallback、DTO 冻结、mock-to-real 前端适配、LLM status / error states。当前任务是用 A 的真实后端复跑并收敛 partial-real 契约。 | "B 只是纯 mock 页面" |
+| C | C 6-C 主线完成，转为数据支撑、证据校验、CI / demo smoke 辅助角色。 | "继续扩 C 的采集主线" |
+| COS / Storage | COS Provider 与私有同步链路已验证：7-COS-1 smoke 通过，7-COS-3 已上传 20 个 `allowed_runtime_asset` 并写 manifest / `storage_objects`。GitHub 外 data 全量同步未完成，约 870 个默认 allowlist 资产的全量上传曾启动后手动中止。 | "所有 data 都已上传 COS"、"storage 是一个 agent" |
+
+5 条主路径 `courses/plan`、`courses/resources/generate`、`profile/chat`、`tutor/ask`、`assessment/run` 只有在真 Provider + 真 RAG + 真 `agent_runs` + 前端 SSE 下复跑通过，才算真实联调完成。fallback / mock replay 只能作为演示兜底，不能作为验收依据。
+
+COS 侧线只能表述为"Provider 与 20 个私有同步样本闭环已验证"。后续继续同步前应补 `skip existing` / 断点续传 / 增量 manifest / 限速或并发控制，不能把中断后的半成品写成完成。
 
 ---
 
@@ -28,7 +46,7 @@ topic_explorer / doc_archivist / task_orchestrator / outcome_evaluator
 - 在 `agents` 表插入第 10 行
 - 把横切基础设施注册成业务智能体：
   - 禁止：`crawler_agent` / `media_agent` / `spider_agent` / `pdf_agent` / `mineru_agent` / `harness_agent` / `storage_agent`
-  - 这些都是 `services/`、`runtime/`、`knowledge/` 下的中间件，不进 `agents` 表
+  - 这些都是 `services/`、`runtime/`、`knowledge/` 下的中间件，不进 `agents` 表；Tencent COS 也只是 `services/storage` provider
 
 ---
 
@@ -70,6 +88,8 @@ validate → rag.retrieve → evidence_floor → llm → quality_check → gener
 所有外部来源必须保留：`platform / source_url / author / published_at / fetched_at / license / rights_note`。
 
 统一知识资产层：所有 domain 共用 `documents + document_assets + chunks + knowledge_nodes + knowledge_edges`，禁止建并列表（`course_chunks` / `policy_chunks` / `bilibili_chunks` 等）。
+
+对象存储规则：`runtime/` 用于应用运行时产物，`tmp/` 用于 smoke / 临时上传，`private/team-sync/` 用于团队私有同步。禁止上传 `.env*`、`SecretKey.csv`、`account.csv`、`.codegraph/**`、sqlite/db、raw MediaCrawler 数据；教材 PDF / `full.md` 只能在项目负责人明确确认后单独私有同步。
 
 ---
 
@@ -131,6 +151,7 @@ docker compose up   # 启动 PostgreSQL / Redis / 其他依赖
 - 数据层 schema 变更
 - 横切基础设施边界变化（rag / harness / guardrails / storage）
 - 9 个业务智能体的 skill 增删
+- COS 前缀策略 / GitHub 外 data 同步口径 / 上传门禁规则变化
 
 ---
 

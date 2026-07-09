@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - **文档目的**：作为"安枢智梯 SecureHub / CyberLadder"项目所有后续 Claude Code / Codex / Cursor 会话的默认上下文。任何在本仓库工作的 AI 助手（或新加入的工程师）应当**首先读完本文件**，再开始触碰代码。
 - **读者**：本项目团队成员；后续接入的 AI 编码助手；A3 赛题答辩评委（架构理解参考）。
-- **最后更新时间**：2026-07-08（6-C-6 Embedding 迁移 Qwen text-embedding-v4 完成，同步更新 §11 决策表 + §10.1 SOP Step 4 + §6.3 目录树 + §0.1.2 技术栈；铁律 §3.8 强制同步 CLAUDE.md 与 AGENTS.md）。原始版本 2026-06-05（由 Claude Opus 4.7 基于 4 份外部文档 + 仓库代码生成）。
+- **最后更新时间**：2026-07-09（统一 A/B/C 联调阶段语言规范；补充 7-COS 云存储口径：COS Provider 与 private/team-sync 小批量同步已验证，GitHub 外 data 全量同步未完成且最近一次全量尝试已手动中止）。原始版本 2026-06-05（由 Claude Opus 4.7 基于 4 份外部文档 + 仓库代码生成）。
 - **本文件的权威性**：在仓库层面，本文件 > `README.md` / `docs/architecture.md` / `docs/backend-overview.md`。当本文件与代码现状冲突时，**以代码为准并立即更新本文件**；当本文件与外部 4 份文档冲突时，**以本文件 §19 的"差异说明"为准**。
 
 ### 阅读约定（什么时候回读外部文档？）
@@ -19,6 +19,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | 不确定 A3 硬性需求边界 | **A3 赛题原文** | `D:/Nnutural/Desktop/BUPT大全/BUPT竞赛/26软件杯/CompetitionTheme/A3赛题.md` |
 | 不确定项目整体愿景 / 商业逻辑 / 市场叙事 | **项目计划书**（挑战杯） | `D:/Nnutural/Desktop/BUPT大全/BUPT竞赛/26软件杯/Legacy/鸿雁杯/MinerU_markdown_项目计划书_2054945124833226752.md` |
 | 不确定某智能体内部算法 / 公式 / 输入输出契约 | **设计开发文档**（CyberLadder v1.8，1.5 节最重要） | `D:/Nnutural/Desktop/BUPT大全/BUPT竞赛/26软件杯/Legacy/2026037134-03 设计与开发文档/3 软件应用与开发类作品设计和开发文档模板（2026版）.md` |
+| 不确定 COS / 云存储 / GitHub 外 data 同步边界 | **COS 接入实施方案 + 7-COS 交付报告** | `D:/Nnutural/Desktop/BUPT大全/BUPT竞赛/26软件杯/Plan/7-8-SecureHub-COS接入实施方案.md`；`D:/Nnutural/Desktop/BUPT大全/BUPT竞赛/26软件杯/Workout/7-COS-*.md` |
 
 ⚠️ **设计开发文档**与**A3 赛题规划**存在多处冲突（13 智能体 vs 9 智能体、多 DB vs PostgreSQL+pgvector），**冲突一律以"规划文档"为准**，并参考本文件 §19。
 
@@ -56,11 +57,39 @@ Scrapling、MediaCrawler、MindSpider 都是外部工具 / 数据采集参考，
 | Data | PostgreSQL 16 + **pgvector** · Redis 7 |
 | LLM | **iFLYTEK Spark（讯飞星火）— A3 hard requirement** · DeepSeek (dev主选) as fallback · Provider 家族已生产化（A PR #35） |
 | Embedding | **Qwen `text-embedding-v4`**（阿里云百炼 OpenAI-Compatible，1024D dense，6-C-6 生产化）· BGE-M3 已 deprecated |
+| Storage | Local provider + **Tencent COS**（`anshu-skq-1385633904` / `ap-beijing` / private read-write；7-COS-1 provider smoke 通过；7-COS-3 private/team-sync 小批量同步验证） |
 | Agent runtime | **LangGraph** (`StateGraph` + conditional edges) |
 | Streaming | SSE：`progress` / `evidence` / `token` / `artifact` / `trace` / `done` / `error` |
 | State mgmt (FE) | `useReducer` + `localStorage` per feature. **No Redux / Zustand.** |
 
 不要引入：Milvus、Neo4j、MongoDB、Doris、Elasticsearch、MUI、Redux。
+
+### 0.1.3 当前阶段与统一语言规范（2026-07-09）
+
+> 本节用于修正 2026-07-08 前后文档中的阶段漂移。后续回答、任务提示词、PR 描述均按本节措辞执行。
+
+| 维度 | 统一口径 |
+|---|---|
+| 当前阶段 | **A/B/C 真实联调校准期**：C 主线已完成；A/B 均已推进底座；下一步不是扩功能，而是压向 5 条主路径端到端验收 |
+| A 实际进度 | **约 70%+**。已合入 DeepSeek / 讯飞星火 Provider、`BaseLLMProvider` Router、统一异常、LLM health / skill execution service；Qwen Embedding Provider 与 retriever profile 校验也已合入 |
+| A 禁用表述 | 不再说"A 还没接模型"或"A 只是骨架"；应说"模型供应商与 Provider 抽象已落地，瓶颈转为 Harness 主路径真实执行 / 落库 / `agent_runs` 验收" |
+| B 实际进度 | **约 95%**。已合入 typed SSE、real-first API fallback、DTO 冻结、mock-to-real 前端适配、LLM status / error states |
+| B 禁用表述 | 不再说"B 只是纯 mock 页面"；应说"B 已有 real-first 集成底座，仍需用 A 的真实后端复跑并收敛 partial-real 契约" |
+| C 实际进度 | **100%，主线开发完成**。后续转数据支撑、证据校验、CI / demo smoke 辅助角色 |
+| COS 侧线进度 | **Provider 与私有同步链路已验证，但全量同步未完成**。7-COS-3 只确认 20 个 `allowed_runtime_asset` 已上传、manifest 20 行、`storage_objects` 20 条 ready；约 870 个默认 allowlist 资产的全量上传曾启动后手动中止 |
+| 当前主瓶颈 | A 的 Harness Wave 2 + 5 个 SSE 主路径：`courses/plan`、`courses/resources/generate`、`profile/chat`、`tutor/ask`、`assessment/run` |
+| 最大风险 | fallback / mock-to-real 适配被误认为真实联调完成；COS 20 个样本被误认为 GitHub 外 data 全量同步完成；必须在真 Provider + 真 RAG + 真 `agent_runs` + 前端 SSE 下同窗复跑 |
+
+### 0.1.4 COS / 云存储当前事实（2026-07-09）
+
+- COS 是 `services/storage/` 横切基础设施，**不是 agent**，不得注册 `storage_agent` 或第 10 个业务智能体。
+- Bucket：Tencent COS `anshu-skq-1385633904`，region `ap-beijing`，保持私有读写；禁止公共读 / 公共读写。
+- Provider：`StorageService` 已具备 provider-backed I/O；`LocalStorageProvider`、`CosStorageProvider` 与 provider factory 已落地；7-COS-1 smoke 覆盖 put / head / get / signed URL / delete。
+- 前缀边界：`runtime/` 仅用于应用运行时可展示产物；`tmp/` 用于 smoke / 临时上传；`private/team-sync/` 用于团队私有同步 GitHub 外数据；`backups/postgres/` 仅在明确同步 db dump 时使用。
+- 7-COS-2 事实：`mineru_ingested/**/assets/*` 候选为 0，脚本骨架和 manifest 规范完成，但不能表述为“10 个样本迁移完成”。
+- 7-COS-3 事实：已上传并校验 20 个 `allowed_runtime_asset`；manifest 20 行；`storage_objects` 20 条 ready；**GitHub 外 data 未全量上云**。
+- 最近一次全量同步尝试已被项目负责人手动中止。继续同步前，优先补 `skip existing` / 断点续传 / manifest 增量追加 / 限速或并发控制，不要直接把半成品当作完成。
+- 上传门禁必须在后端校验：`UPLOAD_GATE_SECRET_HASH` + 常量时间比较；前端输入密钥只是演示入口，不得把明文密钥写入前端、`.env.example`、manifest、报告或 Git。
 
 ---
 
@@ -1066,7 +1095,7 @@ docker-compose 中 backend 服务依赖 PostgreSQL 16 的镜像（**待添加**�
 
 ## 11. LLM / Agent 框架技术决策
 
-> 2026-07-08 更新：Provider 家族已生产化（A PR #35）+ Embedding 迁移 Qwen（C 6-C-6 / PR #37）。
+> 2026-07-09 更新：Provider 家族已生产化（A PR #35）+ Embedding 迁移 Qwen（C 6-C-6 / PR #37）；B 已具备 real-first API/SSE/DTO 集成底座。下一步优先验收 Harness 主路径真实执行，而非继续扩大 mock 展示面。
 
 | 决策 | 选型 | 理由 |
 | --- | --- | --- |
@@ -1080,6 +1109,16 @@ docker-compose 中 backend 服务依赖 PostgreSQL 16 的镜像（**待添加**�
 | **流式协议** | **SSE**（Server-Sent Events） | FastAPI 原生支持 `StreamingResponse(media_type="text/event-stream")`；前端 `EventSource` 一行接入；比 WebSocket 简单 |
 | **模型 client 封装位置** | `backend/app/llm/` | `xfyun.py` / `deepseek.py` / `embedding.py` |
 | **TTS（视频音频）** | 讯飞 TTS（在线 API） | A3 用讯飞工具；轻量化避免本地模型 |
+
+### 11.0 A/B/C 联调验收口径（2026-07-09）
+
+5 条主路径只有同时满足以下条件，才允许标记为"真实联调完成"：
+
+1. 后端走真实 Harness skill 链路：`rag.retrieve → evidence_floor → LLM Provider → QualityCheck → generated_resources/storage_objects → agent_runs`。
+2. RAG 召回使用 Qwen `embedding_profile`，不跨模型 fallback，不静默吞掉 provider 错误。
+3. 前端经 B 的 real-first API/SSE 客户端消费 7 类事件，不能只看 mock replay。
+4. 每条路径至少产出一次可追溯 `run_id`、非空 `evidence_chunk_ids`、可展示 `trace` / `artifact`。
+5. A/B/C 在同一时间窗复跑并记录结果；单人本地 happy path 不等于联调完成。
 
 ### 11.1 SSE 事件类型规范（强制）
 
@@ -1438,6 +1477,8 @@ forbidden: LLM 自由生成内容
 | 8 | **演示账号画像初始数据** | 写一个 Alembic 数据迁移 + 1 个 fixture user | 演示无需"从零问起"，可直接进 5 类资源演示 |
 | 9 | **`legacy` 页面是否删除** | **不删**，保留作为视觉素材库 | 节省时间；只在 README / Layout navItems 里不暴露 |
 | 10 | **A3 视频"多智能体可视化"用 mermaid 还是 react-flow** | react-flow（动态更高、可点击节点弹出 skill 细节） | mermaid 静态但简单；react-flow 演示效果碾压 |
+| 11 | **A/B 已有推进后，当前还要不要继续扩 C 的采集任务** | **不继续扩 C 主线**；C 转数据支撑与验收辅助，把资源压到 A Harness 主路径和 B 真实联调 | 新采集 ROI 低，还会稀释联调窗口；代价是暂缓 6-C-4 手工主题整理 |
+| 12 | **B 的 fallback 链路是否可以算真实联调完成** | **不可以**；fallback 是演示兜底，不是验收标准 | 保留 fallback 可提升演示稳定性，但进度评估必须以真 Provider + 真 RAG + 真 `agent_runs` 为准 |
 
 ---
 
@@ -1486,6 +1527,29 @@ forbidden: LLM 自由生成内容
 - **原文档**：分散在"知识检索智能体"（证据可信度 $C(q,d)$）和"安全监控智能体"（输出审核）
 - **本项目**：合并为"三道闸" = 检索门槛（RAG 强制 ≥ N 条证据） + 证据回链（前端卡片） + `outcome_evaluator.QualityCheck`（二次校验）
 - **理由**：工程化更清晰，A3 演示更易讲
+
+### 19.8 A/B/C 真实联调阶段口径修正（2026-07-09）
+
+- **旧表述风险**：容易把 A 简化成"未接模型 / 只有骨架"，把 B 简化成"纯 mock 页面"，导致后续任务错误地重复建设 Provider 或前端 mock。
+- **本项目当前事实**：
+  - A 已合入 LLM Provider 家族、DeepSeek / 讯飞星火 Provider、统一异常、LLM health / skill execution service；Embedding Provider / Qwen / retriever profile 校验也已生产化。
+  - B 已合入 typed SSE、real-first API fallback、DTO 冻结、mock-to-real 适配、LLM status / error states。
+  - C 6-C 主线完成，转为数据支撑、证据校验、CI / demo smoke 辅助角色。
+- **新的统一口径**：当前瓶颈不是"有没有模型供应商"或"有没有前端展示"，而是 A 的 Harness Wave 2 + 5 条 SSE 主路径真实执行、落库、`agent_runs` 和前端 SSE 联调验收。
+- **验收边界**：只有 `courses/plan`、`courses/resources/generate`、`profile/chat`、`tutor/ask`、`assessment/run` 在真 Provider + 真 RAG + 真 `agent_runs` + 前端 SSE 下复跑通过，才算阶段闭环。
+- **不变铁律**：9 agent 固定；横切基础设施不算 agent；统一知识资产层；生成式 skill 必须先 RAG 后 LLM；所有 skill 必须写 `agent_runs`。
+
+### 19.9 Tencent COS 私有同步口径修正（2026-07-09）
+
+- **旧表述风险**：把对象存储仍视为 planned，或把 7-COS-3 的 20 个样本误读成 GitHub 外 data 全量同步完成。
+- **本项目当前事实**：
+  - `StorageService` 已支持 local / cos provider-backed I/O，7-COS-1 smoke 覆盖 put / head / get / signed URL / delete。
+  - Bucket `anshu-skq-1385633904` 位于 `ap-beijing`，保持私有读写；CAM 已覆盖 `runtime/*`、`tmp/*`、`private/team-sync/*` 的最小权限。
+  - 7-COS-3 已同步 20 个 `allowed_runtime_asset` 到 `private/team-sync/data/...`，manifest 20 行，`storage_objects` 20 条 ready。
+  - 默认 allowlist 约 870 个资产尚未全量完成；最近一次全量上传因为速度问题由项目负责人手动中止。
+- **新的统一口径**：COS Provider 与团队私有同步链路已验证，但 GitHub 外 data 全量同步未完成。
+- **下一步边界**：继续同步前优先补 `skip existing` / 断点续传 / manifest 增量追加 / 限速或并发控制；不得上传 Secret、`.env*`、Secret CSV、raw MediaCrawler、sqlite/db、`.codegraph`；教材 PDF / `full.md` 只能在项目负责人明确确认后私有同步。
+- **不变铁律**：COS / Storage 是横切基础设施，不是 agent；大文件实体仍通过 `storage_objects.object_key` 抽象，不新增并列表。
 
 ---
 
