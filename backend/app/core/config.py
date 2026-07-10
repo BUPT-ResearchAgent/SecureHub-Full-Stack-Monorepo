@@ -55,6 +55,12 @@ class Settings(BaseSettings):
     XFYUN_MODEL: str = "spark-v4"
     DEEPSEEK_API_KEY: str = ""
     DEEPSEEK_MODEL: str = "deepseek-chat"
+    AGENT_RUN_REAL_ENABLED: bool = False
+    AGENT_RUN_REAL_MAX_CONCURRENCY: int = Field(default=1, ge=1, le=16)
+    AGENT_RUN_REAL_MAX_TOKENS: int = Field(default=800, ge=1, le=4096)
+    AGENT_RUN_EVENT_HISTORY_LIMIT: int = Field(default=2048, ge=1, le=10000)
+    AGENT_RUN_EVENT_SUBSCRIBER_QUEUE_LIMIT: int = Field(default=256, ge=1, le=4096)
+    AGENT_RUN_COMPLETED_TTL_SECONDS: int = Field(default=3600, ge=1, le=86400)
     EMBEDDING_PROVIDER: str = "qwen_openai_compatible"
     EMBEDDING_MODEL: str = "text-embedding-v4"
     EMBEDDING_DIM: int = 1024

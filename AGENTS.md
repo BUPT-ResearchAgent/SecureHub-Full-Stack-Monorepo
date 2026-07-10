@@ -2,11 +2,31 @@
 
 > 权威文档：`CLAUDE.md` 是项目宪法，本文件不复述细节，仅约束 Codex 子智能体的使用边界。
 > 文档冲突时以 `CLAUDE.md` 为准。
-> 最后更新：2026-07-09（同步 A/B/C 真实联调阶段口径 + 7-COS 云存储口径：A/B 均已有实际推进；COS Provider 与 private/team-sync 小批量同步已验证，但 GitHub 外 data 全量同步未完成）。
+> 最后更新：2026-07-10（默认上下文读取改为凝练索引优先；Agent Run API 真实闭环已签收；同步 A/B/C 其余主路径联调口径与 7-COS 云存储口径）。
 
 ---
 
-## 0. 当前阶段口径（2026-07-09）
+## 0. 默认上下文读取策略（2026-07-10）
+
+不要默认全量读取 Layer B 长规划文件或 Layer C Prompt / Workout。日常判断当前阶段、三人分工、进度、瓶颈、LLM / Embedding / COS / data-layer 决策时，先读：
+
+```text
+D:/Nnutural/Desktop/BUPT大全/BUPT竞赛/26软件杯/Plan/2026-07-10_SecureHub_权威规划凝练索引.md
+D:/Nnutural/Desktop/BUPT大全/BUPT竞赛/26软件杯/Plan/2026-07-10_SecureHub_执行轨迹凝练索引.md
+```
+
+只有当任务需要追证具体决策、修改契约、验收某一轮交付或生成新执行提示词时，才按索引中的 `file_path:line_number` 回读源文件。
+
+涉及 workflow-runs、fixed multi-agent workflow、SSE replay、agent_runs 或 cancel 时，再额外读：
+
+~~~text
+D:/Nnutural/Desktop/BUPT大全/BUPT竞赛/26软件杯/Plan/2026-07-10_Agent_Run_API_真实闭环凝练索引.md
+~~~
+
+它替代 Agent-Run 原始 Plan / Prompt / Workout 的逐份阅读；修改 HTTP/SSE 契约时才回读
+docs/api/agent-run-contract.md。
+
+## 0.1 当前阶段口径（2026-07-10）
 
 子智能体在审查、写码、起草报告时统一使用以下表述：
 
@@ -15,9 +35,10 @@
 | A | A 已合入 DeepSeek / 讯飞星火 Provider、统一异常、LLM health / skill execution service；Qwen Embedding Provider 与 retriever profile 校验也已合入。当前瓶颈是 Harness Wave 2 + 5 条 SSE 主路径真实执行 / 落库 / `agent_runs` 验收。 | "A 还没接模型"、"A 只是骨架" |
 | B | B 已合入 typed SSE、real-first API fallback、DTO 冻结、mock-to-real 前端适配、LLM status / error states。当前任务是用 A 的真实后端复跑并收敛 partial-real 契约。 | "B 只是纯 mock 页面" |
 | C | C 6-C 主线完成，转为数据支撑、证据校验、CI / demo smoke 辅助角色。 | "继续扩 C 的采集主线" |
+| Agent Run API | 固定五节点 workflow 已在真 DeepSeek、真 RAG、真 PostgreSQL agent_runs 下完成 success、SSE replay 与 token 后 cancel。它是已签收专项，不等于五条产品 endpoint 已联调完成。 | "整个 SecureHub 已完成多智能体联调"、"QualityCheck 被放宽后才通过" |
 | COS / Storage | COS Provider 与私有同步链路已验证：7-COS-1 smoke 通过，7-COS-3 已上传 20 个 `allowed_runtime_asset` 并写 manifest / `storage_objects`。GitHub 外 data 全量同步未完成，约 870 个默认 allowlist 资产的全量上传曾启动后手动中止。 | "所有 data 都已上传 COS"、"storage 是一个 agent" |
 
-5 条主路径 `courses/plan`、`courses/resources/generate`、`profile/chat`、`tutor/ask`、`assessment/run` 只有在真 Provider + 真 RAG + 真 `agent_runs` + 前端 SSE 下复跑通过，才算真实联调完成。fallback / mock replay 只能作为演示兜底，不能作为验收依据。
+固定 Agent Run API 已从主瓶颈移除。5 条产品主路径 `courses/plan`、`courses/resources/generate`、`profile/chat`、`tutor/ask`、`assessment/run` 只有在真 Provider + 真 RAG + 真 `agent_runs` + 前端 SSE 下复跑通过，才算真实联调完成。fallback / mock replay 只能作为演示兜底，不能作为验收依据。
 
 COS 侧线只能表述为"Provider 与 20 个私有同步样本闭环已验证"。后续继续同步前应补 `skip existing` / 断点续传 / 增量 manifest / 限速或并发控制，不能把中断后的半成品写成完成。
 

@@ -8,20 +8,23 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - **文档目的**：作为"安枢智梯 SecureHub / CyberLadder"项目所有后续 Claude Code / Codex / Cursor 会话的默认上下文。任何在本仓库工作的 AI 助手（或新加入的工程师）应当**首先读完本文件**，再开始触碰代码。
 - **读者**：本项目团队成员；后续接入的 AI 编码助手；A3 赛题答辩评委（架构理解参考）。
-- **最后更新时间**：2026-07-09（统一 A/B/C 联调阶段语言规范；补充 7-COS 云存储口径：COS Provider 与 private/team-sync 小批量同步已验证，GitHub 外 data 全量同步未完成且最近一次全量尝试已手动中止）。
+- **最后更新时间**：2026-07-10（默认上下文读取改为凝练索引优先；Agent Run API 真实闭环已签收；统一 A/B/C 联调阶段语言规范；COS Provider 与 private/team-sync 小批量同步已验证但 GitHub 外 data 全量同步未完成）。
 - **本文件的权威性**：在仓库层面，本文件 > `README.md` / `docs/architecture.md` / `docs/backend-overview.md`。当本文件与代码现状冲突时，**以代码为准并立即更新本文件**；当本文件与外部 4 份文档冲突时，**以本文件 §19 的"差异说明"为准**。
 
 ### 阅读约定（什么时候回读外部文档？）
 
 | 场景 | 回读哪份文档 | 路径 |
 | --- | --- | --- |
+| 日常判断当前阶段 / 三人分工 / 主瓶颈 / LLM、Embedding、Storage 决策 | **权威规划凝练索引**（默认替代 Layer B 长规划源文件） | `D:/Nnutural/Desktop/BUPT大全/BUPT竞赛/26软件杯/Plan/2026-07-10_SecureHub_权威规划凝练索引.md` |
+| 日常判断近期交付事实 / Prompt / Workout / 6-C / 7-COS 轨迹 | **执行轨迹凝练索引**（默认替代 Layer C 执行档全量读取） | `D:/Nnutural/Desktop/BUPT大全/BUPT竞赛/26软件杯/Plan/2026-07-10_SecureHub_执行轨迹凝练索引.md` |
+| 任务涉及 workflow-runs / fixed multi-agent workflow / SSE replay / agent_runs / cancel | **Agent Run API 真实闭环凝练索引**（只在该专项任务时读，替代 Agent-Run 原始 Plan / Prompt / Workout） | `D:/Nnutural/Desktop/BUPT大全/BUPT竞赛/26软件杯/Plan/2026-07-10_Agent_Run_API_真实闭环凝练索引.md` |
 | 不确定"做什么、优先级、新增到哪里" | **A3 赛题规划**（最权威开发指导） | `D:/Nnutural/Desktop/BUPT大全/BUPT竞赛/26软件杯/CompetitionTheme/A3赛题规划.md` |
 | 不确定 A3 硬性需求边界 | **A3 赛题原文** | `D:/Nnutural/Desktop/BUPT大全/BUPT竞赛/26软件杯/CompetitionTheme/A3赛题.md` |
 | 不确定项目整体愿景 / 商业逻辑 / 市场叙事 | **项目计划书**（挑战杯） | `D:/Nnutural/Desktop/BUPT大全/BUPT竞赛/26软件杯/Legacy/鸿雁杯/MinerU_markdown_项目计划书_2054945124833226752.md` |
 | 不确定某智能体内部算法 / 公式 / 输入输出契约 | **设计开发文档**（CyberLadder v1.8，1.5 节最重要） | `D:/Nnutural/Desktop/BUPT大全/BUPT竞赛/26软件杯/Legacy/2026037134-03 设计与开发文档/3 软件应用与开发类作品设计和开发文档模板（2026版）.md` |
-| 数据层 v2 改造任务（assets / resources / storage / 字段升级） | **Data-layer v2 工程化改造任务书** | `D:/Nnutural/Desktop/BUPT大全/BUPT竞赛/26软件杯/Chat/SecureHub_Data_Layer_V2_工程化改造任务书.md` |
-| COS / 云存储 / GitHub 外 data 同步边界 | **COS 接入实施方案 + 7-COS 交付报告** | `D:/Nnutural/Desktop/BUPT大全/BUPT竞赛/26软件杯/Plan/7-8-SecureHub-COS接入实施方案.md`；`D:/Nnutural/Desktop/BUPT大全/BUPT竞赛/26软件杯/Workout/7-COS-*.md` |
-| 三人并行分工（A / B / C 边界、CODEOWNERS、API 契约、Harness、Scrapling / MediaCrawler / MindSpider、MinerU） | **三人并行开发分工方案** | `D:/Nnutural/Desktop/BUPT大全/BUPT竞赛/26软件杯/Plan/SecureHub_三人并行开发分工方案.md` |
+| 数据层 v2 改造任务（assets / resources / storage / 字段升级） | **先读权威规划凝练索引 §7；必要时再反查 Data-layer v2 原文** | `D:/Nnutural/Desktop/BUPT大全/BUPT竞赛/26软件杯/Plan/2026-07-10_SecureHub_权威规划凝练索引.md` |
+| COS / 云存储 / GitHub 外 data 同步边界 | **先读执行轨迹凝练索引 §4；必要时再反查 COS 方案 + 7-COS 交付报告** | `D:/Nnutural/Desktop/BUPT大全/BUPT竞赛/26软件杯/Plan/2026-07-10_SecureHub_执行轨迹凝练索引.md` |
+| 三人并行分工（A / B / C 边界、CODEOWNERS、API 契约、Harness、Scrapling / MediaCrawler / MindSpider、MinerU） | **先读权威规划凝练索引 §4 / §8；必要时再反查原始分工文档** | `D:/Nnutural/Desktop/BUPT大全/BUPT竞赛/26软件杯/Plan/2026-07-10_SecureHub_权威规划凝练索引.md` |
 
 ⚠️ **设计开发文档**与**A3 赛题规划**存在多处冲突（13 智能体 vs 9 智能体、多 DB vs PostgreSQL+pgvector），**冲突一律以"规划文档"为准**，并参考本文件 §19。
 
@@ -42,6 +45,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | COS 侧线进度 | **Provider 与私有同步链路已验证，但全量同步未完成**。7-COS-3 只确认 20 个 `allowed_runtime_asset` 已上传、manifest 20 行、`storage_objects` 20 条 ready；约 870 个默认 allowlist 资产的全量上传曾启动后手动中止 |
 | 当前主瓶颈 | A 的 Harness Wave 2 + 5 个 SSE 主路径：`courses/plan`、`courses/resources/generate`、`profile/chat`、`tutor/ask`、`assessment/run` |
 | 最大风险 | fallback / mock-to-real 适配被误认为真实联调完成；COS 20 个样本被误认为 GitHub 外 data 全量同步完成；必须在真 Provider + 真 RAG + 真 `agent_runs` + 前端 SSE 下同窗复跑 |
+| Agent Run API 专项 | **已真实闭环签收**：固定五节点 workflow 已在真 DeepSeek、真 RAG、真 PostgreSQL `agent_runs` 下通过 success、SSE replay 与 token 后 cancel；这不代表五条产品主路径已完成 |
 
 ---
 
@@ -2130,6 +2134,23 @@ forbidden: LLM 自由生成内容
 - **新的统一口径**：COS Provider 与团队私有同步链路已验证，但 GitHub 外 data 全量同步未完成。
 - **下一步边界**：继续同步前优先补 `skip existing` / 断点续传 / manifest 增量追加 / 限速或并发控制；不得上传 Secret、`.env*`、Secret CSV、raw MediaCrawler、sqlite/db、`.codegraph`；教材 PDF / `full.md` 只能在项目负责人明确确认后私有同步。
 - **不变铁律**：COS / Storage 是横切基础设施，不是 agent；大文件实体仍通过 `storage_objects.object_key` 抽象，不新增并列表。
+
+### 19.16 Agent Run API 真实闭环签收（2026-07-10）
+
+- **范围**：固定 9 agent manifest 与固定五节点 `course_learning_minimal` 的 HTTP start / status /
+  SSE observe and replay / strict real / `agent_runs` persistence / token 后 cancel。
+- **真实证据**：success root `e467671e-52a8-408a-b8f7-68087b7cd366` 为
+  `real / deepseek / deepseek-v4-pro / succeeded`，QualityCheck 为 `accept=true`、
+  `quality_score=0.92`；5 条 child 与 PostgreSQL、SSE trace、evidence IDs 对齐，replay 一致。
+  cancel root `54d66622-d672-4ced-99ce-92d379eb42a0` 在第一条真实 token 后进入
+  `cancelled`，cursor 后无 token/artifact。
+- **关键判断**：通过将学习路径、课程文档、题目 artifact 投影进 QualityCheck prompt 修复真实输入缺口；
+  未放宽 evidence floor、strict JSON、QualityCheck 或 persistence。
+- **边界**：这只签收 Agent Run API。五条产品 endpoint 的真 Provider + 真 RAG + 真 `agent_runs` +
+  前端 SSE 同窗联调仍是全局主瓶颈；不得将本专项完成写成整个 SecureHub 已完成。
+- **阅读收敛**：涉及该专项时先读
+  `Plan/2026-07-10_Agent_Run_API_真实闭环凝练索引.md`，再按其 source:line 追证，不默认逐份读
+  Agent-Run 原始 Plan / Prompt / Workout。
 
 ---
 

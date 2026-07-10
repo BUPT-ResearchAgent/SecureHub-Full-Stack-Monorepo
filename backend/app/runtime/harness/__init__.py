@@ -18,10 +18,13 @@ Every generative skill in SecureHub MUST run through this harness so that:
 from app.runtime.harness.base import Harness, SkillSpec, run_skill
 from app.runtime.harness.context import HarnessConfig, HarnessContext
 from app.runtime.harness.errors import (
+    AgentRunPersistenceFailed,
+    CancellationRequested,
     GuardrailBlocked,
     GuardrailViolation,
     HarnessError,
     InsufficientEvidence,
+    LLMOutputInvalid,
     QualityCheckFailed,
     QualityRejected,
     SafetyBlocked,
@@ -44,6 +47,9 @@ __all__ = [
     "GuardrailViolation",
     "HarnessError",
     "InsufficientEvidence",
+    "LLMOutputInvalid",
+    "AgentRunPersistenceFailed",
+    "CancellationRequested",
     "QualityCheckFailed",
     "QualityRejected",
     "SafetyBlocked",

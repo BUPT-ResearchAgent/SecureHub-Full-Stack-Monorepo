@@ -59,6 +59,7 @@ class DeepSeekProvider(BaseLLMProvider):
         stream: bool,
         temperature: float,
         max_tokens: int | None,
+        response_format: dict[str, str] | None = None,
     ) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "model": self.model_name,
@@ -68,6 +69,41 @@ class DeepSeekProvider(BaseLLMProvider):
         }
         if max_tokens:
             payload["max_tokens"] = max_tokens
+        if response_format is not None:
+            payload["response_format"] = response_format
+            # deepseek-v4-pro enables thinking by default. Structured JSON
+            # workflows need the final answer within the configured output
+            # budget, so JSON mode explicitly disables private reasoning.
+            payload["thinking"] = {"type": "disabled"}
+        return payload
+
+    @staticmethod
+    def _final_content(value: Any) -> str:
+        """Read only the provider's final answer content field.
+
+        DeepSeek-compatible responses may also carry ``reasoning_content``.
+        That field is deliberately not a fallback: reasoning must never become
+        the answer sent to the strict JSON parser or to SSE clients.
+        """
+        return value if isinstance(value, str) else ""
+
+    @classmethod
+    def _choice(cls, body: Any) -> dict[str, Any]:
+        if not isinstance(body, dict):
+            return {}
+        choices = body.get("choices")
+        if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
+            return {}
+        return choices[0]
+
+    @classmethod
+    def _decode_stream_data(cls, data: str) -> dict[str, Any]:
+        try:
+            payload = json.loads(data)
+        except json.JSONDecodeError as exc:
+            raise ValueError("DeepSeek stream contained malformed JSON") from exc
+        if not isinstance(payload, dict):
+            raise ValueError("DeepSeek stream payload must be a JSON object")
         return payload
 
     async def generate(
@@ -76,8 +112,15 @@ class DeepSeekProvider(BaseLLMProvider):
         *,
         temperature: float = 0.2,
         max_tokens: int | None = None,
+        response_format: dict[str, str] | None = None,
     ) -> LLMResponse:
-        payload = self._build_payload(messages, stream=False, temperature=temperature, max_tokens=max_tokens)
+        payload = self._build_payload(
+            messages,
+            stream=False,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            response_format=response_format,
+        )
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 resp = await client.post(
@@ -92,9 +135,12 @@ class DeepSeekProvider(BaseLLMProvider):
         except httpx.TimeoutException as exc:
             raise self.map_error(exc) from exc
 
-        choice = (body.get("choices") or [{}])[0]
-        content = (choice.get("message") or {}).get("content", "")
-        usage_raw = body.get("usage", {})
+        choice = self._choice(body)
+        message = choice.get("message") if isinstance(choice.get("message"), dict) else {}
+        content = self._final_content(message.get("content"))
+        usage_raw = body.get("usage", {}) if isinstance(body, dict) else {}
+        if not isinstance(usage_raw, dict):
+            usage_raw = {}
         return LLMResponse(
             content=content,
             usage=TokenUsage(
@@ -113,8 +159,15 @@ class DeepSeekProvider(BaseLLMProvider):
         *,
         temperature: float = 0.2,
         max_tokens: int | None = None,
+        response_format: dict[str, str] | None = None,
     ) -> AsyncIterator[LLMChunk]:
-        payload = self._build_payload(messages, stream=True, temperature=temperature, max_tokens=max_tokens)
+        payload = self._build_payload(
+            messages,
+            stream=True,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            response_format=response_format,
+        )
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 async with client.stream(
@@ -126,22 +179,30 @@ class DeepSeekProvider(BaseLLMProvider):
                     response.raise_for_status()
                     index = 0
                     async for line in response.aiter_lines():
-                        if not line or not line.startswith("data: "):
+                        if not line or not line.startswith("data:"):
                             continue
-                        data = line[len("data: "):].strip()
+                        data = line[len("data:"):].strip()
                         if data == "[DONE]":
                             return
                         try:
-                            chunk = json.loads(data)
-                        except json.JSONDecodeError:
-                            continue
-                        delta = ((chunk.get("choices") or [{}])[0]).get("delta", {})
-                        content = delta.get("content")
-                        if content:
-                            yield LLMChunk(content=content, index=index)
+                            chunk = self._decode_stream_data(data)
+                        except ValueError as exc:
+                            raise self.map_error(exc) from exc
+                        choice = self._choice(chunk)
+                        delta = choice.get("delta") if isinstance(choice.get("delta"), dict) else {}
+                        content = self._final_content(delta.get("content"))
+                        finish_reason = choice.get("finish_reason")
+                        if content or finish_reason is not None:
+                            yield LLMChunk(
+                                content=content,
+                                index=index,
+                                finish_reason=finish_reason,
+                            )
                             index += 1
         except httpx.HTTPStatusError as exc:
             raise self.map_error(exc, exc.response.status_code) from exc
+        except httpx.TimeoutException as exc:
+            raise self.map_error(exc) from exc
 
     async def health_check(self) -> HealthStatus:
         if not self.api_key:

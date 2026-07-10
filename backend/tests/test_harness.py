@@ -37,6 +37,10 @@ class _Output(__import__("pydantic").BaseModel):
     evidence_chunk_ids: list[str] = []
 
 
+class _ArtifactInput(_Input):
+    artifact: dict[str, object]
+
+
 PROMPT = """You are demo agent.
 Evidence:
 {evidence_text}
@@ -116,6 +120,58 @@ def test_happy_path_runs_through_harness():
     out = asyncio.run(go())
     assert out.content == "ok"
     assert len(out.evidence_chunk_ids) == 3
+
+
+def test_compose_prompt_projects_structured_artifact_input():
+    captured: dict[str, str] = {}
+
+    async def capture_llm(
+        prompt: str,
+        *,
+        skill_name: str,
+        stream: bool = False,
+        emit=None,
+    ) -> dict[str, Any]:
+        del skill_name, stream, emit
+        captured["prompt"] = prompt
+        return {"content": "checked", "quality_score": 0.9}
+
+    spec = SkillSpec(
+        name="ArtifactCheck",
+        agent_name="outcome_evaluator",
+        input_model=_ArtifactInput,
+        output_model=_Output,
+        prompt_template=(
+            "Evidence:\n{evidence_text}\nArtifact:\n{artifact_text}\n"
+            "Schema:\n{output_schema_hint}"
+        ),
+        evidence_floor=3,
+        quality_check=False,
+    )
+    artifact = {
+        "learning_path": {"nodes": [{"title": "path-sentinel"}]},
+        "course_doc": {"markdown": "doc-sentinel"},
+        "quiz": {"quiz_items": [{"question": "quiz-sentinel"}]},
+    }
+
+    async def go() -> _Output:
+        harness = Harness(rag_retrieve=_fake_rag_with_3, llm_complete=capture_llm)
+        ctx = HarnessContext(user_id="demo", workflow_name="test")
+        return await harness.run(
+            spec,
+            _ArtifactInput(artifact=artifact),
+            ctx,
+        )
+
+    asyncio.run(go())
+
+    prompt = captured["prompt"]
+    assert '"learning_path"' in prompt
+    assert '"course_doc"' in prompt
+    assert '"quiz"' in prompt
+    assert "path-sentinel" in prompt
+    assert "doc-sentinel" in prompt
+    assert "quiz-sentinel" in prompt
 
 
 def test_insufficient_evidence_blocks_llm():

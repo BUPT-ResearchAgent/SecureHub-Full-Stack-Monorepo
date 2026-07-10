@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from app.agents.doc_archivist.skills.generate_course_doc import (
+    PROMPT_TEMPLATE,
     GenerateCourseDoc,
     GenerateCourseDocInput,
     GenerateCourseDocOutput,
@@ -52,3 +53,9 @@ def test_generate_course_doc_runs_with_mocks():
         assert len(out.markdown) > 0
 
     asyncio.run(go())
+
+
+def test_course_doc_prompt_requires_strict_json_safe_markdown():
+    assert "JSON validity is mandatory" in PROMPT_TEMPLATE
+    assert "fenced code blocks" in PROMPT_TEMPLATE
+    assert "internal double quote" in PROMPT_TEMPLATE

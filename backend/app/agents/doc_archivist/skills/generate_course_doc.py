@@ -25,7 +25,14 @@ You are doc_archivist generating a course explanation document.
 [Task]
 {task_instruction}
 
-Return Markdown content with evidence references as JSON matching:
+Return concise Markdown content with evidence references as JSON matching the
+schema below. JSON validity is mandatory: encode content and markdown as JSON
+strings, escaping every newline, backslash, and internal double quote. Do not
+use fenced code blocks. Express any code as short inline pseudocode that does
+not contain double quotes. Keep the document focused enough to finish the JSON
+object without truncation.
+
+Return JSON matching:
 {output_schema_hint}
 """
 
