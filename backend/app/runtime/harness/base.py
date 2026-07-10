@@ -647,11 +647,26 @@ class Harness:
             for i, card in enumerate(evidence)
         )
         task_instruction = getattr(inp, "query", "") or getattr(inp, "topic", "") or spec.name
+        input_payload = inp.model_dump(mode="json")
+        artifact_payload = input_payload.get("artifact")
+        artifact_text = json.dumps(
+            artifact_payload if artifact_payload is not None else {},
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
         try:
             return spec.prompt_template.format(
                 evidence_text=evidence_text,
                 persona_text=ctx.persona_summary or "(persona not provided)",
                 task_instruction=task_instruction,
+                artifact_text=artifact_text,
+                input_payload_text=json.dumps(
+                    input_payload,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                    sort_keys=True,
+                ),
                 output_schema_hint=json.dumps(
                     _compact_json_schema(spec.output_model),
                     ensure_ascii=False,

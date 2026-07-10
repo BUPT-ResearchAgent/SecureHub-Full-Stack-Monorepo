@@ -31,6 +31,7 @@ JSON_ONLY_SYSTEM_MESSAGE = (
     "The server, not the model, owns evidence_chunk_ids."
 )
 JSON_RESPONSE_FORMAT = {"type": "json_object"}
+STREAM_TOKEN_EVENT_MIN_CHARS = 64
 
 
 class StrictProviderUnavailable(ToolUnavailable):
@@ -209,7 +210,21 @@ class StrictLiveAdapters:
         try:
             if stream:
                 parts: list[str] = []
+                pending_event_parts: list[str] = []
+                pending_event_chars = 0
                 finish_reason: str | None = None
+
+                async def flush_token_event() -> None:
+                    nonlocal pending_event_chars
+                    if emit is None or not pending_event_parts:
+                        return
+                    self._raise_if_cancelled()
+                    content = "".join(pending_event_parts)
+                    pending_event_parts.clear()
+                    pending_event_chars = 0
+                    await emit({"event": "token", "content": content})
+                    self._raise_if_cancelled()
+
                 async for chunk in self._provider.stream_generate(
                     messages,
                     temperature=0.2,
@@ -221,9 +236,13 @@ class StrictLiveAdapters:
                         finish_reason = chunk.finish_reason
                     if chunk.content:
                         parts.append(chunk.content)
-                    if emit is not None and chunk.content:
-                        await emit({"event": "token", "content": chunk.content})
+                        if emit is not None:
+                            pending_event_parts.append(chunk.content)
+                            pending_event_chars += len(chunk.content)
+                            if pending_event_chars >= STREAM_TOKEN_EVENT_MIN_CHARS:
+                                await flush_token_event()
                     self._raise_if_cancelled()
+                await flush_token_event()
                 raw_content = "".join(parts)
                 prompt_tokens = self._provider.estimate_tokens(prompt)
                 completion_tokens = self._provider.estimate_tokens(raw_content)

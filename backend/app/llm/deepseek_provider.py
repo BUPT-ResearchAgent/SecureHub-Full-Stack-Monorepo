@@ -71,6 +71,10 @@ class DeepSeekProvider(BaseLLMProvider):
             payload["max_tokens"] = max_tokens
         if response_format is not None:
             payload["response_format"] = response_format
+            # deepseek-v4-pro enables thinking by default. Structured JSON
+            # workflows need the final answer within the configured output
+            # budget, so JSON mode explicitly disables private reasoning.
+            payload["thinking"] = {"type": "disabled"}
         return payload
 
     @staticmethod

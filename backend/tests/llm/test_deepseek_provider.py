@@ -99,6 +99,7 @@ def test_generate_reads_message_content_and_forwards_response_format(monkeypatch
     assert response.content == '{"answer":true}'
     assert response.finish_reason == "stop"
     assert calls["json"]["response_format"] == {"type": "json_object"}
+    assert calls["json"]["thinking"] == {"type": "disabled"}
 
 
 def test_generate_does_not_promote_reasoning_only_to_final_content(monkeypatch):
@@ -148,6 +149,7 @@ def test_stream_aggregates_delta_content_and_preserves_finish_reason(monkeypatch
     assert chunks[-1].finish_reason == "stop"
     assert all("private" not in chunk.content for chunk in chunks)
     assert calls["json"]["response_format"] == {"type": "json_object"}
+    assert calls["json"]["thinking"] == {"type": "disabled"}
 
 
 def test_stream_reasoning_only_yields_no_final_content_but_keeps_finish_reason(monkeypatch):

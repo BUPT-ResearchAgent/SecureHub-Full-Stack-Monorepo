@@ -163,6 +163,7 @@ def test_deepseek_payload_can_request_json_object_without_network():
         response_format={"type": "json_object"},
     )
     assert payload["response_format"] == {"type": "json_object"}
+    assert payload["thinking"] == {"type": "disabled"}
 
 
 def test_strict_json_diagnostic_exposes_only_safe_parse_metadata():
@@ -232,3 +233,46 @@ def test_strict_adapter_rejects_reasoning_only_stream_without_sse_token():
         asyncio.run(run())
     assert error.value.diagnostics["parse_category"] == "no_final_content"
     assert events == []
+
+
+def test_strict_adapter_coalesces_small_provider_deltas_without_changing_json():
+    payload = json.dumps(
+        {
+            "content": "x" * 256,
+            "quality_score": 0.9,
+        }
+    )
+
+    class CharacterDeltaProvider:
+        provider_name = "deepseek"
+        model_name = "fake-deepseek-v4"
+
+        def estimate_tokens(self, text: str) -> int:
+            return max(1, len(text) // 4)
+
+        async def stream_generate(self, *_args, **_kwargs):
+            for index, character in enumerate(payload):
+                yield LLMChunk(content=character, index=index)
+            yield LLMChunk(content="", index=len(payload), finish_reason="stop")
+
+    events: list[dict[str, object]] = []
+
+    async def emit(event: dict[str, object]) -> None:
+        events.append(event)
+
+    async def run() -> dict[str, object]:
+        adapters = StrictLiveAdapters(provider=CharacterDeltaProvider())
+        return await adapters.llm_complete(
+            "redacted prompt",
+            skill_name="GenerateCourseDoc",
+            stream=True,
+            emit=emit,
+        )
+
+    result = asyncio.run(run())
+    streamed = "".join(str(event["content"]) for event in events)
+
+    assert result["content"] == "x" * 256
+    assert streamed == payload
+    assert 1 < len(events) < len(payload) // 8
+    assert all(event["event"] == "token" for event in events)
