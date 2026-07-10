@@ -1,0 +1,139 @@
+# Status: partial-real
+
+"""Application service for the fixed workflow Run API."""
+
+from __future__ import annotations
+
+import asyncio
+from collections.abc import AsyncIterator
+from dataclasses import dataclass
+from typing import Any
+from uuid import UUID
+
+from app.runtime.capability_manifest import list_agents, register_agents
+from app.runtime.run_registry import (
+    GLOBAL_RUN_REGISTRY,
+    RunRegistry,
+    WorkflowRunNotActive,
+    WorkflowRunNotFound,
+)
+from app.runtime.workflows.course_learning_minimal import (
+    FIXTURE_MODEL,
+    FIXTURE_PROVIDER,
+    WORKFLOW_NAME,
+    run_course_learning_minimal,
+    workflow_nodes,
+)
+from app.schemas.agent_control import (
+    AgentManifestItem,
+    AgentManifestResponse,
+    WorkflowRunCancelResponse,
+    WorkflowRunResponse,
+    WorkflowRunStartRequest,
+    WorkflowRunStartResponse,
+)
+
+
+@dataclass
+class WorkflowControlError(RuntimeError):
+    code: str
+    message: str
+    status_code: int
+
+
+class AgentControlService:
+    """Thin orchestration layer over the process-local RunRegistry."""
+
+    def __init__(self, registry: RunRegistry | None = None) -> None:
+        self.registry = registry or GLOBAL_RUN_REGISTRY
+
+    async def manifest(self) -> AgentManifestResponse:
+        register_agents()
+        agents = [AgentManifestItem.model_validate(agent.manifest()) for agent in list_agents()]
+        if len(agents) != 9:
+            raise WorkflowControlError(
+                code="AGENT_MANIFEST_INVALID",
+                message="SecureHub must expose exactly nine fixed agents",
+                status_code=500,
+            )
+        return AgentManifestResponse(agents=agents, total=len(agents))
+
+    async def start(self, request: WorkflowRunStartRequest) -> WorkflowRunStartResponse:
+        if request.workflow != WORKFLOW_NAME:
+            raise WorkflowControlError(
+                code="INVALID_WORKFLOW",
+                message=f"unsupported workflow: {request.workflow}",
+                status_code=422,
+            )
+        if request.mode != "fixture":
+            raise WorkflowControlError(
+                code="PROVIDER_UNAVAILABLE",
+                message=(
+                    "Agent-Run-1 currently enables only explicit Harness fixture mode; "
+                    "real provider execution is deferred to Agent-Run-2"
+                ),
+                status_code=503,
+            )
+
+        record = await self.registry.create(
+            workflow=WORKFLOW_NAME,
+            user_id=request.user_id,
+            mode="fixture",
+            provider=FIXTURE_PROVIDER,
+            model=FIXTURE_MODEL,
+            input_payload=request.model_dump(mode="json"),
+            nodes=workflow_nodes(),
+        )
+        task = asyncio.create_task(
+            run_course_learning_minimal(record.run_id, self.registry),
+            name=f"securehub-workflow-{record.run_id}",
+        )
+        await self.registry.attach_task(record.run_id, task)
+        return WorkflowRunStartResponse(
+            run_id=record.run_id,
+            workflow=record.workflow,
+            status=record.status,
+            events_url=f"/api/v1/workflow-runs/{record.run_id}/events",
+            cancel_url=f"/api/v1/workflow-runs/{record.run_id}/cancel",
+            mode=record.mode,
+            provider=record.provider,
+            model=record.model,
+        )
+
+    async def get(self, run_id: UUID) -> WorkflowRunResponse:
+        try:
+            return WorkflowRunResponse.model_validate(await self.registry.snapshot(run_id))
+        except WorkflowRunNotFound as exc:
+            raise WorkflowControlError(
+                code="RUN_NOT_FOUND",
+                message=f"workflow run not found: {run_id}",
+                status_code=404,
+            ) from exc
+
+    async def events(self, run_id: UUID) -> AsyncIterator[dict[str, Any]]:
+        try:
+            await self.registry.get(run_id)
+        except WorkflowRunNotFound as exc:
+            raise WorkflowControlError(
+                code="RUN_NOT_FOUND",
+                message=f"workflow run not found: {run_id}",
+                status_code=404,
+            ) from exc
+        return self.registry.iter_events(run_id)
+
+    async def cancel(self, run_id: UUID) -> WorkflowRunCancelResponse:
+        try:
+            record = await self.registry.request_cancel(run_id)
+        except WorkflowRunNotFound as exc:
+            raise WorkflowControlError(
+                code="RUN_NOT_FOUND",
+                message=f"workflow run not found: {run_id}",
+                status_code=404,
+            ) from exc
+        except WorkflowRunNotActive as exc:
+            raise WorkflowControlError(
+                code="RUN_NOT_ACTIVE",
+                message=f"workflow run is already terminal: {exc}",
+                status_code=409,
+            ) from exc
+        return WorkflowRunCancelResponse(run_id=record.run_id, status=record.status)
