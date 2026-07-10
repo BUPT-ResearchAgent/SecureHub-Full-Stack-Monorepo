@@ -1,10 +1,10 @@
 # Status: partial-real
 
-"""Fixed five-agent workflow used by the Agent-Run-1 API.
+"""Fixed five-agent workflow for fixture and controlled strict real runs.
 
-The first slice deliberately executes the existing Harness with injected,
-deterministic fixtures.  It is therefore observable and contract-valid without
-claiming that a fixture response is a real provider result.
+The fixture path remains deterministic and non-durable.  ``mode=real`` uses
+only the strict RAG/DeepSeek adapters and verifies every child ``agent_runs``
+write before emitting its trace event.  The node order is intentionally fixed.
 """
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from pydantic import BaseModel
 
@@ -49,7 +49,15 @@ from app.agents.task_orchestrator.skills.generate_learning_path import (
     GenerateLearningPathOutput,
 )
 from app.runtime.harness import Harness, HarnessConfig, HarnessContext, InsufficientEvidence
+from app.runtime.harness.errors import CancellationRequested, HarnessError
 from app.runtime.harness.fixtures import default_evidence_fixtures, default_llm_output
+from app.runtime.harness.live_adapters import (
+    AgentRunPersistenceFailed,
+    StrictLLMOutputInvalid,
+    StrictLiveAdapters,
+    StrictProviderUnavailable,
+    persist_strict_agent_run,
+)
 from app.runtime.harness.types import EvidenceCard
 from app.runtime.run_registry import RunRegistry, WorkflowRunRecord
 
@@ -65,6 +73,7 @@ class WorkflowCancelled(RuntimeError):
 
 
 InputBuilder = Callable[[WorkflowRunRecord, dict[str, dict[str, Any]]], BaseModel]
+StrictPersistFn = Callable[..., Awaitable[None]]
 
 
 @dataclass(frozen=True)
@@ -226,6 +235,10 @@ def _fixture_harness() -> Harness:
     return Harness(rag_retrieve=_fixture_rag_retrieve, llm_complete=_fixture_llm_complete)
 
 
+def _strict_harness(adapters: StrictLiveAdapters) -> Harness:
+    return Harness(rag_retrieve=adapters.rag_retrieve, llm_complete=adapters.llm_complete)
+
+
 def _enrich_event(
     event: dict[str, Any],
     *,
@@ -242,12 +255,86 @@ def _enrich_event(
     payload.setdefault("model", record.model)
     if payload.get("event") == "trace":
         payload.setdefault("agent_run_id", payload.get("run_id"))
+        payload.setdefault(
+            "persistence",
+            "agent_runs" if record.mode == "real" else "registry",
+        )
     return payload
 
 
 async def _raise_if_cancelled(record: WorkflowRunRecord) -> None:
     if record.cancellation_event.is_set():
         raise WorkflowCancelled("workflow cancellation requested")
+
+
+def _fixture_log_run(
+    registry: RunRegistry,
+    record: WorkflowRunRecord,
+    node: WorkflowNodeDefinition,
+) -> Callable[..., Awaitable[None]]:
+    async def log_run(**kwargs: Any) -> None:
+        raw_run_id = kwargs.get("run_id")
+        agent_run_id = raw_run_id if isinstance(raw_run_id, UUID) else None
+        evidence_ids = list(kwargs.get("evidence_chunk_ids") or [])
+        await registry.record_node_result(
+            record.run_id,
+            node.node_id,
+            status=str(kwargs.get("status") or "success"),
+            agent_run_id=agent_run_id,
+            persistence="registry",
+            duration_ms=kwargs.get("duration_ms"),
+            quality_score=kwargs.get("quality_score"),
+            evidence_count=len(evidence_ids),
+        )
+
+    return log_run
+
+
+def _strict_log_run(
+    registry: RunRegistry,
+    record: WorkflowRunRecord,
+    node: WorkflowNodeDefinition,
+    *,
+    persist_real_run: StrictPersistFn | None,
+) -> Callable[..., Awaitable[None]]:
+    async def log_run(**kwargs: Any) -> None:
+        raw_run_id = kwargs.get("run_id")
+        if not isinstance(raw_run_id, UUID):
+            raise AgentRunPersistenceFailed("strict child run id must be a UUID")
+
+        input_summary = dict(kwargs.get("input_summary") or {})
+        input_summary["workflow_run_id"] = str(record.run_id)
+        output_summary = dict(kwargs.get("output_summary") or {})
+        evidence_ids = list(kwargs.get("evidence_chunk_ids") or [])
+        status = str(kwargs.get("status") or "failed")
+        persister = persist_real_run or persist_strict_agent_run
+        await persister(
+            run_id=raw_run_id,
+            workflow_run_id=record.run_id,
+            workflow_name=WORKFLOW_NAME,
+            user_id=record.user_id,
+            agent_name=node.agent_name,
+            skill_name=node.skill_name,
+            input_summary=input_summary,
+            output_summary=output_summary,
+            evidence_chunk_ids=evidence_ids,
+            quality_score=kwargs.get("quality_score"),
+            status=status,
+            duration_ms=kwargs.get("duration_ms"),
+            token_usage=dict(kwargs.get("token_usage") or {}),
+        )
+        await registry.record_node_result(
+            record.run_id,
+            node.node_id,
+            status=status,
+            agent_run_id=raw_run_id,
+            persistence="agent_runs",
+            duration_ms=kwargs.get("duration_ms"),
+            quality_score=kwargs.get("quality_score"),
+            evidence_count=len(evidence_ids),
+        )
+
+    return log_run
 
 
 async def _run_node(
@@ -257,6 +344,8 @@ async def _run_node(
     outputs: dict[str, dict[str, Any]],
     *,
     persona_summary: str,
+    strict_adapters: StrictLiveAdapters | None,
+    persist_real_run: StrictPersistFn | None,
 ) -> dict[str, Any]:
     await _raise_if_cancelled(record)
     if not await registry.begin_node(record.run_id, node.node_id):
@@ -278,45 +367,60 @@ async def _run_node(
         },
     )
 
-    await asyncio.sleep(FIXTURE_STEP_DELAY_SECONDS)
-    await _raise_if_cancelled(record)
+    if record.mode == "fixture":
+        await asyncio.sleep(FIXTURE_STEP_DELAY_SECONDS)
+        await _raise_if_cancelled(record)
 
     async def emit(event: dict[str, Any]) -> None:
+        if record.cancellation_event.is_set() and event.get("event") in {"token", "artifact"}:
+            raise CancellationRequested("workflow cancellation requested")
         await registry.publish(
             record.run_id,
             _enrich_event(event, record=record, node=node),
         )
 
-    async def log_run(**kwargs: Any) -> None:
-        raw_run_id = kwargs.get("run_id")
-        agent_run_id = raw_run_id if isinstance(raw_run_id, UUID) else None
-        evidence_ids = list(kwargs.get("evidence_chunk_ids") or [])
-        status = str(kwargs.get("status") or "success")
-
-        # Fixture executions intentionally remain non-durable.  They still keep
-        # stable child-run trace records in the RunRegistry and never claim to
-        # be real ``agent_runs`` rows.
-        await registry.record_node_result(
-            record.run_id,
-            node.node_id,
-            status=status,
-            agent_run_id=agent_run_id,
-            persistence="registry",
-            duration_ms=kwargs.get("duration_ms"),
-            quality_score=kwargs.get("quality_score"),
-            evidence_count=len(evidence_ids),
+    if record.mode == "fixture":
+        context = HarnessContext(
+            user_id=record.user_id,
+            workflow_name=WORKFLOW_NAME,
+            persona_summary=persona_summary,
+            stream=False,
+            config=HarnessConfig(min_evidence=3, mock_mode=True, llm_provider=FIXTURE_PROVIDER),
+            emit=emit,
+            log_run=_fixture_log_run(registry, record, node),
+            course_id=str(record.input_payload.get("course_id") or "course-websec"),
         )
+        harness = _fixture_harness()
+        spec_overrides: dict[str, Any] = {"fallback": "error"}
+    elif record.mode == "real":
+        if strict_adapters is None:
+            raise StrictProviderUnavailable("strict real adapters were not initialized")
+        context = HarnessContext(
+            user_id=record.user_id,
+            workflow_name=WORKFLOW_NAME,
+            persona_summary=persona_summary,
+            stream=bool(record.input_payload.get("stream", True)),
+            config=HarnessConfig(min_evidence=3, mock_mode=False, llm_provider="deepseek"),
+            emit=emit,
+            log_run=_strict_log_run(
+                registry,
+                record,
+                node,
+                persist_real_run=persist_real_run,
+            ),
+            course_id=str(record.input_payload.get("course_id") or "course-websec"),
+            extras={"agent_run_id": uuid4()},
+        )
+        harness = _strict_harness(strict_adapters)
+        spec_overrides = {
+            "fallback": "error",
+            "strict_output": True,
+            "strict_log_run": True,
+            "strict_quality_check": True,
+        }
+    else:
+        raise RuntimeError(f"unsupported workflow mode: {record.mode}")
 
-    context = HarnessContext(
-        user_id=record.user_id,
-        workflow_name=WORKFLOW_NAME,
-        persona_summary=persona_summary,
-        stream=False,
-        config=HarnessConfig(min_evidence=3, mock_mode=True, llm_provider=FIXTURE_PROVIDER),
-        emit=emit,
-        log_run=log_run,
-        course_id=str(record.input_payload.get("course_id") or "course-websec"),
-    )
     output = await run_through_harness(
         node.skill_factory(),
         node.input_builder(record, outputs),
@@ -326,23 +430,79 @@ async def _run_node(
         agent_name=node.agent_name,
         applicable_domains=["course_websec"],
         evidence_floor=3,
-        spec_overrides={"fallback": "error"},
-        harness=_fixture_harness(),
+        spec_overrides=spec_overrides,
+        harness=harness,
     )
     await _raise_if_cancelled(record)
     return _as_json(output)
 
 
-async def run_course_learning_minimal(run_id: UUID, registry: RunRegistry) -> None:
-    """Execute the fixed sequential collaboration and publish terminal events."""
+async def _mark_current_node_failed(
+    registry: RunRegistry,
+    record: WorkflowRunRecord,
+    node: WorkflowNodeDefinition | None,
+) -> None:
+    if node is not None:
+        await registry.record_node_result(
+            record.run_id,
+            node.node_id,
+            status="failed",
+        )
+
+
+async def _publish_failure(
+    registry: RunRegistry,
+    record: WorkflowRunRecord,
+    node: WorkflowNodeDefinition | None,
+    *,
+    code: str,
+    message: str,
+    blocked: bool = False,
+) -> None:
+    await _mark_current_node_failed(registry, record, node)
+    await registry.mark_failed(record.run_id, code=code, message=message, blocked=blocked)
+    await registry.publish(
+        record.run_id,
+        {
+            "event": "error",
+            "workflow_run_id": str(record.run_id),
+            "code": code,
+            "message": message,
+            "recoverable": False,
+            "mode": record.mode,
+            "provider": record.provider,
+            "model": record.model,
+            "_terminal": True,
+        },
+    )
+
+
+async def run_course_learning_minimal(
+    run_id: UUID,
+    registry: RunRegistry,
+    *,
+    strict_adapters: StrictLiveAdapters | None = None,
+    persist_real_run: StrictPersistFn | None = None,
+) -> None:
+    """Execute the five fixed nodes in sequence and publish lifecycle events."""
     record = await registry.get(run_id)
     outputs: dict[str, dict[str, Any]] = {}
     current_node: WorkflowNodeDefinition | None = None
     persona_summary = ""
 
     try:
-        if record.mode != "fixture":
-            raise RuntimeError("Agent-Run-1 only enables explicit fixture mode")
+        if record.mode not in {"fixture", "real"}:
+            raise RuntimeError(f"unsupported workflow mode: {record.mode}")
+        if record.mode == "real":
+            if record.provider != "deepseek":
+                raise StrictProviderUnavailable("real mode requires provider=deepseek")
+            strict_adapters = strict_adapters or StrictLiveAdapters(
+                cancellation_requested=record.cancellation_event.is_set,
+            )
+            if strict_adapters.provider_name != "deepseek":
+                raise StrictProviderUnavailable("real mode requires provider=deepseek")
+            record.model = strict_adapters.model_name
+
         if not await registry.mark_running(run_id):
             raise WorkflowCancelled("workflow cancellation requested")
 
@@ -354,13 +514,14 @@ async def run_course_learning_minimal(run_id: UUID, registry: RunRegistry) -> No
                 node,
                 outputs,
                 persona_summary=persona_summary,
+                strict_adapters=strict_adapters,
+                persist_real_run=persist_real_run,
             )
             outputs[node.node_id] = output
             if node.node_id == "build_learning_persona":
                 persona_summary = str(output.get("content") or "")
 
         quality_output = outputs.get("quality_check", {})
-        quality_score = quality_output.get("quality_score")
         await registry.mark_succeeded(run_id, outputs)
         await registry.publish(
             run_id,
@@ -370,13 +531,13 @@ async def run_course_learning_minimal(run_id: UUID, registry: RunRegistry) -> No
                 "status": "succeeded",
                 "final_output_ref": f"workflow-runs/{run_id}",
                 "child_run_count": len(NODE_DEFINITIONS),
-                "quality_score": quality_score,
+                "quality_score": quality_output.get("quality_score"),
                 "mode": record.mode,
                 "provider": record.provider,
                 "model": record.model,
             },
         )
-    except WorkflowCancelled:
+    except (WorkflowCancelled, CancellationRequested):
         await registry.mark_cancelled(run_id)
         await registry.publish(
             run_id,
@@ -393,55 +554,51 @@ async def run_course_learning_minimal(run_id: UUID, registry: RunRegistry) -> No
             },
         )
     except InsufficientEvidence as exc:
-        if current_node is not None:
-            await registry.record_node_result(
-                run_id,
-                current_node.node_id,
-                status="failed",
-            )
-        await registry.mark_failed(
-            run_id,
+        await _publish_failure(
+            registry,
+            record,
+            current_node,
             code="INSUFFICIENT_EVIDENCE",
             message=str(exc),
             blocked=True,
         )
-        await registry.publish(
-            run_id,
-            {
-                "event": "error",
-                "workflow_run_id": str(run_id),
-                "code": "INSUFFICIENT_EVIDENCE",
-                "message": str(exc),
-                "recoverable": False,
-                "mode": record.mode,
-                "provider": record.provider,
-                "model": record.model,
-                "_terminal": True,
-            },
-        )
-    except Exception as exc:  # noqa: BLE001 - final workflow boundary
-        if current_node is not None:
-            await registry.record_node_result(
-                run_id,
-                current_node.node_id,
-                status="failed",
-            )
-        await registry.mark_failed(
-            run_id,
-            code="WORKFLOW_FAILED",
+    except StrictProviderUnavailable as exc:
+        await _publish_failure(
+            registry,
+            record,
+            current_node,
+            code="PROVIDER_UNAVAILABLE",
             message=str(exc),
         )
-        await registry.publish(
-            run_id,
-            {
-                "event": "error",
-                "workflow_run_id": str(run_id),
-                "code": "WORKFLOW_FAILED",
-                "message": str(exc),
-                "recoverable": False,
-                "mode": record.mode,
-                "provider": record.provider,
-                "model": record.model,
-                "_terminal": True,
-            },
+    except StrictLLMOutputInvalid as exc:
+        await _publish_failure(
+            registry,
+            record,
+            current_node,
+            code="LLM_OUTPUT_INVALID",
+            message=str(exc),
+        )
+    except AgentRunPersistenceFailed as exc:
+        await _publish_failure(
+            registry,
+            record,
+            current_node,
+            code="AGENT_RUN_PERSIST_FAILED",
+            message=str(exc),
+        )
+    except HarnessError as exc:
+        await _publish_failure(
+            registry,
+            record,
+            current_node,
+            code=str(getattr(exc, "code", "WORKFLOW_FAILED")).upper(),
+            message=str(exc),
+        )
+    except Exception as exc:
+        await _publish_failure(
+            registry,
+            record,
+            current_node,
+            code="WORKFLOW_FAILED",
+            message=str(exc),
         )

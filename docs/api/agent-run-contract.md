@@ -1,188 +1,188 @@
-# Agent Run API Contract v0.1
+# Agent Run API Contract v0.2
 
-> Status: **partial-real** — Agent-Run-1 provides a fixed Harness-backed
-> fixture workflow with in-memory run state and buffered SSE. It does not add
-> a `workflow_runs` table or claim a fixture execution is a real LLM run.
+## Scope
 
-## 1. Scope
+This API controls instances of the fixed `course_learning_minimal` workflow. It
+does not dynamically create, delete, rename, or register agents. The manifest
+always exposes the same nine business agents; Harness, RAG, storage, registry,
+and SSE are cross-cutting infrastructure, not agents.
 
-This API controls **workflow runs**, not agent definitions. SecureHub keeps the
-same nine fixed business agents:
-
-`policy_interpreter` · `hot_analyst` · `job_analyst` ·
-`competition_advisor` · `career_planner` · `topic_explorer` ·
-`doc_archivist` · `task_orchestrator` · `outcome_evaluator`.
-
-Clients cannot create, delete, rename, or dynamically compose agents through
-this API. Agent-Run-1 supports exactly one sequential workflow:
+The fixed workflow order is:
 
 ```text
-course_learning_minimal
-  -> career_planner.BuildLearningPersona
+career_planner.BuildLearningPersona
   -> task_orchestrator.GenerateLearningPath
   -> doc_archivist.GenerateCourseDoc
   -> competition_advisor.GenerateQuiz
   -> outcome_evaluator.QualityCheck
 ```
 
-Each node runs through the existing Harness with evidence retrieval, the
-evidence floor, safety/quality processing, and child trace logging hooks.
+## Endpoints
 
-## 2. Endpoints
+### `GET /api/v1/agents/manifest`
 
-| Method | Path | Purpose |
-|---|---|---|
-| `GET` | `/api/v1/agents/manifest` | Return the fixed nine-agent manifest only. |
-| `POST` | `/api/v1/workflow-runs` | Start `course_learning_minimal`. |
-| `GET` | `/api/v1/workflow-runs/{run_id}` | Read current run and child-node state. |
-| `GET` | `/api/v1/workflow-runs/{run_id}/events` | Consume buffered `text/event-stream` events. |
-| `POST` | `/api/v1/workflow-runs/{run_id}/cancel` | Request cooperative cancellation. |
-
-### 2.1 `GET /agents/manifest`
+Returns the fixed nine-agent manifest.
 
 ```json
 {
   "total": 9,
-  "agents": [
-    {
-      "name": "career_planner",
-      "role_description": "...",
-      "capability_vector": [0.0],
-      "tools": ["rag.retrieve", "llm.xfyun"],
-      "risk_level": "high",
-      "skills": ["BuildLearningPersona"]
-    }
-  ]
+  "agents": [{"name": "career_planner", "skills": ["BuildLearningPersona"]}]
 }
 ```
 
-### 2.2 `POST /workflow-runs`
+### `POST /api/v1/workflow-runs`
 
-Agent-Run-1 accepts explicit fixture execution. `real` is recognized as a
-mode request but currently returns `503 PROVIDER_UNAVAILABLE` rather than
-silently falling back to fixture.
+Starts only `course_learning_minimal` and returns `202 Accepted`.
 
 ```json
 {
   "workflow": "course_learning_minimal",
-  "user_id": "00000000-0000-0000-0000-000000000001",
+  "user_id": "uuid",
   "course_id": "course-websec",
   "topic": "SQL 注入",
-  "goal": "为初学者生成 SQL 注入学习路径和入门资源",
+  "goal": "生成证据驱动学习闭环",
   "mode": "fixture",
   "provider": "fixture",
   "stream": true
 }
 ```
 
-Successful creation returns `202 Accepted`:
+The response contains `run_id`, `events_url`, `cancel_url`, `status`, `mode`,
+`provider`, and `model`.
 
-```json
-{
-  "run_id": "00000000-0000-0000-0000-000000000701",
-  "workflow": "course_learning_minimal",
-  "status": "queued",
-  "events_url": "/api/v1/workflow-runs/00000000-0000-0000-0000-000000000701/events",
-  "cancel_url": "/api/v1/workflow-runs/00000000-0000-0000-0000-000000000701/cancel",
-  "mode": "fixture",
-  "provider": "fixture",
-  "model": "fixture-canned"
-}
+`mode=real` requires the explicit pair `provider=deepseek`. Other providers
+return `422 INVALID_PROVIDER`. Before creating a real run, the server checks:
+
+- `AGENT_RUN_REAL_ENABLED=true`; otherwise `503 REAL_MODE_DISABLED`.
+- an actual DeepSeek provider can be constructed; a development fixture fallback
+  is rejected as `503 PROVIDER_UNAVAILABLE`.
+- active real runs are below `AGENT_RUN_REAL_MAX_CONCURRENCY`; otherwise
+  `429 REAL_CONCURRENCY_LIMIT`.
+
+The safe repository default is `AGENT_RUN_REAL_ENABLED=false` and real
+concurrency `1`. `AGENT_RUN_REAL_MAX_TOKENS` bounds one provider call. Set
+these non-secret fields in the server process environment; do not place any
+secret in requests or source files.
+
+### `GET /api/v1/workflow-runs/{run_id}`
+
+Returns root status and five child traces. A child trace includes
+`agent_name`, `skill_name`, `status`, `agent_run_id`, `persistence`, timing,
+quality, and evidence count. `persistence="registry"` means non-durable
+fixture trace; `persistence="agent_runs"` is emitted only after its database
+row has been committed.
+
+### `GET /api/v1/workflow-runs/{run_id}/events`
+
+Returns `text/event-stream`. Each payload has a positive, per-run monotonically
+increasing `event_id`; SSE also emits the same value in the standard `id:`
+field. Resume after a delivered event with either:
+
+```text
+Last-Event-ID: 42
 ```
 
-### 2.3 `GET /workflow-runs/{run_id}`
+or:
 
-The response exposes root state and child trace metadata. Fixture child traces
-use `persistence="registry"`; a future real mode must use
-`persistence="agent_runs"` only after the child record is written.
-
-```json
-{
-  "run_id": "00000000-0000-0000-0000-000000000701",
-  "workflow": "course_learning_minimal",
-  "status": "succeeded",
-  "mode": "fixture",
-  "provider": "fixture",
-  "model": "fixture-canned",
-  "cancel_requested": false,
-  "child_run_count": 5,
-  "child_runs": [
-    {
-      "node_id": "build_learning_persona",
-      "agent_name": "career_planner",
-      "skill_name": "BuildLearningPersona",
-      "status": "succeeded",
-      "persistence": "registry"
-    }
-  ]
-}
+```text
+GET .../events?after_event_id=42
 ```
 
-## 3. State Machine
+When both are supplied they must match. The endpoint replays retained events
+strictly after the cursor, then continues with a private subscriber queue.
+Two active subscribers receive the same events; one reader never destructively
+consumes another reader's queue.
+
+Events are held in a bounded in-process history
+(`AGENT_RUN_EVENT_HISTORY_LIMIT`, default `2048`) and terminal, unsubscribed
+runs are lazily pruned by registry cleanup after
+`AGENT_RUN_COMPLETED_TTL_SECONDS` (default `3600`). A completed run can be
+replayed in full while its history remains retained.
+Slow subscribers can detect a retained-history gap with `event_id`. This is a
+single-process facility: a process restart does not restore runs or events.
+
+### `POST /api/v1/workflow-runs/{run_id}/cancel`
+
+Requests cooperative cancellation. Active runs become `cancelling` immediately
+and converge to `cancelled`; terminal runs return `409 RUN_NOT_ACTIVE`. The
+workflow never kills a process or force-terminates a thread. It checks the
+cancellation token before each node and before forwarding each streamed token.
+Completed child traces remain, the current node becomes `cancelled`, and
+unstarted nodes become `skipped`. After cancellation no new `token` or
+`artifact` event is forwarded.
+
+## State Machine
 
 ```text
 queued -> running -> succeeded
-                 -> failed
-                 -> blocked
-                 -> cancelling -> cancelled
+                  -> failed
+                  -> blocked
+queued/running -> cancelling -> cancelled
 ```
 
-Child node states are `pending`, `running`, `succeeded`, `failed`, `skipped`,
-and `cancelled`. A cancelled run preserves completed child traces, marks a
-currently active child `cancelled`, and marks not-yet-started children
-`skipped`.
+`blocked` is used for evidence-floor refusal. All terminal states remain
+queryable through the status endpoint until in-memory TTL cleanup.
 
-## 4. SSE
+## SSE Payloads
 
-`GET /workflow-runs/{run_id}/events` returns `text/event-stream`. The event
-set is fixed and must remain exactly:
+The event vocabulary is fixed to exactly seven types:
 
-```text
-progress / evidence / token / artifact / trace / done / error
-```
+| Event | Meaning |
+| --- | --- |
+| `progress` | node lifecycle and percentage |
+| `evidence` | normalized retrieved evidence cards |
+| `token` | streamed real DeepSeek token fragment |
+| `artifact` | only a successfully persisted generated resource |
+| `trace` | child execution trace with `agent_run_id` |
+| `done` | successful or cancelled workflow terminal state |
+| `error` | explicit failed or blocked terminal/error state |
 
-| Event | Required payload fields |
-|---|---|
-| `progress` | `workflow_run_id`, `node_id`, `agent_name`, `skill_name`, `status`, `percentage`, `mode`, `provider` |
-| `evidence` | `workflow_run_id`, `node_id`, `agent_name`, `skill_name`, `chunks: EvidenceChunkDTO[]`; each chunk follows `evidence-contract.md` v1.2 and has no free `metadata` fallback |
-| `token` | `workflow_run_id`, `node_id`, `agent_name`, `skill_name`, `content`, `mode`, `provider` |
-| `artifact` | `workflow_run_id`, `node_id`, `agent_name`, `skill_name`, `resource_id`, `resource_type`, `object_key`, `title` |
-| `trace` | `workflow_run_id`, `node_id`, `agent_run_id`, `agent_name`, `skill_name`, `status`, `duration_ms`, `quality_score` |
-| `done` | `workflow_run_id`, `status`, `final_output_ref`, `child_run_count`, `quality_score` |
-| `error` | `workflow_run_id`, `code`, `message`, `recoverable` |
+`event_id` is a payload field and SSE cursor, not an eighth event type. All
+workflow events carry `workflow_run_id`, `mode`, `provider`, and `model`; node
+events additionally carry `node_id`, `agent_name`, and `skill_name`.
 
-Fixture execution emits `progress`, `evidence`, `trace`, and terminal `done`
-events. It intentionally does not pretend to stream real `token` output or
-persist a real `artifact`. A future real generation mode must emit `token` and
-`artifact` only while its cancellation token remains unset.
+Current Agent-Run-2 does not persist `generated_resources`, so it correctly
+emits no `artifact` events. A future implementation may emit one only after the
+resource database write succeeds.
 
-## 5. Mode, Provider, and Fallback Labels
+## Execution Labels
 
-| Label | Meaning | Agent-Run-1 behavior |
-|---|---|---|
-| `fixture` | Deterministic Harness-injected evidence and LLM output; no provider call and no durable child `agent_runs` claim | Supported. Always returns `mode="fixture"`, `provider="fixture"`, `model="fixture-canned"`. **Fixture must never be labeled `real`.** |
-| `real` | A configured LLM provider plus real RAG evidence floor and durable `agent_runs` logging | Reserved for Agent-Run-2. This endpoint rejects it explicitly; it never silently becomes fixture. |
-| `fallback` | A declared provider fallback after a real-path failure | Not emitted by Agent-Run-1. If enabled later, it must be explicit in every status/SSE payload and never presented as `real`. |
+| Label | Provider / model | Persistence | Meaning |
+| --- | --- | --- | --- |
+| `fixture` | `fixture` / `fixture-canned` | `registry` | deterministic Harness fixtures for tests and demos |
+| `real` | `deepseek` / configured actual model | `agent_runs` | strict RAG + DeepSeek + verified child persistence |
+| `fallback` | explicit fallback identity | depends on implementation | reserved; Agent-Run-2 does not auto-fallback |
 
-## 6. Cancellation
+A fixture can never be labelled `real`. A real failure remains a `real` failure
+with an explicit error code; it never silently changes to fixture, XFYun, or
+another provider.
 
-`POST /workflow-runs/{run_id}/cancel` sets a cooperative cancellation token.
-It returns `cancelling` immediately for active runs and does not kill a process
-or terminate a thread. The runner checks the token before every node and before
-any future token/artifact emission. The final status is queryable through the
-status endpoint and the event stream finishes with `done` and
-`status="cancelled"`.
+## Strict Real Path
 
-Error codes are `RUN_NOT_FOUND`, `RUN_NOT_ACTIVE`, `INVALID_WORKFLOW`,
-`INSUFFICIENT_EVIDENCE`, `PROVIDER_UNAVAILABLE`, `QUALITY_REJECTED`, and
-`RUN_CANCELLED` when their corresponding runtime path is enabled.
+For every real child node:
 
-## 7. Persistence Boundary
+1. The strict adapter directly calls `app.rag.retriever.retrieve()`.
+2. Fewer than three chunks raises `INSUFFICIENT_EVIDENCE` before the LLM call.
+3. The adapter calls only `get_llm_provider("deepseek")` and rejects any
+   fixture-provider result.
+4. DeepSeek receives a JSON-only instruction. Invalid JSON or schema output is
+   `LLM_OUTPUT_INVALID`; provider failure is `PROVIDER_UNAVAILABLE`.
+5. Retrieved `evidence_chunk_ids` overwrite any IDs claimed by model output.
+6. Harness quality checks run, then `ctx.log_run(...)` persists the supplied
+   child `agent_run_id` through `AgentRunService`.
+7. The persistence callback injects `input_summary.workflow_run_id`, resolves
+   real `users`, `agents`, and `agent_skills` rows, commits the row, and only
+   then records `persistence="agent_runs"` and emits the success trace.
 
-The active RunRegistry is process-local and deliberately has no restart
-recovery. Each run owns one buffered event queue for its SSE consumer.
-Agent-Run-1 does not add a migration. Fixture traces satisfy the development/test
-observability contract only; they are not evidence of a real `agent_runs` write.
-Before real mode is enabled, every real child skill must write `agent_runs` with
-a stable `workflow_run_id` in its summaries, then report
-`persistence="agent_runs"`.
+If persistence cannot be verified, the root run fails with
+`AGENT_RUN_PERSIST_FAILED`; it cannot report `succeeded`.
+
+## Known Limits
+
+- No `workflow_runs` table, Redis, migration, restart recovery, or distributed
+  coordination is introduced in this version.
+- Cancellation cannot guarantee that an already-issued remote HTTP request is
+  instantly aborted, but later stream chunks are not forwarded and a cancelled
+  root run is never rewritten as `succeeded`.
+- Real live smoke is manual only. CI uses fixture or fake providers and must not
+  send DeepSeek requests.

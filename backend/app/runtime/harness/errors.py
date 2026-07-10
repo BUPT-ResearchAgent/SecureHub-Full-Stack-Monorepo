@@ -29,6 +29,24 @@ class ToolUnavailable(HarnessError):
     code = "tool_unavailable"
 
 
+class LLMOutputInvalid(HarnessError):
+    """A strict provider response was not valid JSON for the required schema."""
+
+    code = "llm_output_invalid"
+
+
+class AgentRunPersistenceFailed(HarnessError):
+    """A strict real skill could not verify its ``agent_runs`` write."""
+
+    code = "agent_run_persist_failed"
+
+
+class CancellationRequested(HarnessError):
+    """Cooperative cancellation signal propagated through a streaming skill."""
+
+    code = "cancellation_requested"
+
+
 class SafetyBlocked(HarnessError):
     """Input or output guardrail flagged the request as unsafe."""
 

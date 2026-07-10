@@ -10,7 +10,12 @@ from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
+from app.core.config import get_settings
 from app.runtime.capability_manifest import list_agents, register_agents
+from app.runtime.harness.live_adapters import (
+    StrictProviderUnavailable,
+    get_strict_deepseek_provider,
+)
 from app.runtime.run_registry import (
     GLOBAL_RUN_REGISTRY,
     RunRegistry,
@@ -46,6 +51,7 @@ class AgentControlService:
 
     def __init__(self, registry: RunRegistry | None = None) -> None:
         self.registry = registry or GLOBAL_RUN_REGISTRY
+        self._real_start_lock = asyncio.Lock()
 
     async def manifest(self) -> AgentManifestResponse:
         register_agents()
@@ -65,25 +71,65 @@ class AgentControlService:
                 message=f"unsupported workflow: {request.workflow}",
                 status_code=422,
             )
-        if request.mode != "fixture":
+        if request.mode == "fixture":
+            record = await self.registry.create(
+                workflow=WORKFLOW_NAME,
+                user_id=request.user_id,
+                mode="fixture",
+                provider=FIXTURE_PROVIDER,
+                model=FIXTURE_MODEL,
+                input_payload=request.model_dump(mode="json"),
+                nodes=workflow_nodes(),
+            )
+            return await self._launch(record.run_id)
+        return await self._start_real(request)
+
+    async def _start_real(self, request: WorkflowRunStartRequest) -> WorkflowRunStartResponse:
+        if request.provider != "deepseek":
             raise WorkflowControlError(
-                code="PROVIDER_UNAVAILABLE",
-                message=(
-                    "Agent-Run-1 currently enables only explicit Harness fixture mode; "
-                    "real provider execution is deferred to Agent-Run-2"
-                ),
+                code="INVALID_PROVIDER",
+                message="Agent-Run-2 real mode requires provider=deepseek",
+                status_code=422,
+            )
+
+        settings = get_settings()
+        if not settings.AGENT_RUN_REAL_ENABLED:
+            raise WorkflowControlError(
+                code="REAL_MODE_DISABLED",
+                message="server-side AGENT_RUN_REAL_ENABLED is false",
                 status_code=503,
             )
 
-        record = await self.registry.create(
-            workflow=WORKFLOW_NAME,
-            user_id=request.user_id,
-            mode="fixture",
-            provider=FIXTURE_PROVIDER,
-            model=FIXTURE_MODEL,
-            input_payload=request.model_dump(mode="json"),
-            nodes=workflow_nodes(),
-        )
+        try:
+            provider = get_strict_deepseek_provider()
+        except StrictProviderUnavailable as exc:
+            raise WorkflowControlError(
+                code="PROVIDER_UNAVAILABLE",
+                message=str(exc),
+                status_code=503,
+            ) from exc
+
+        async with self._real_start_lock:
+            active_count = await self.registry.active_count(mode="real")
+            if active_count >= settings.AGENT_RUN_REAL_MAX_CONCURRENCY:
+                raise WorkflowControlError(
+                    code="REAL_CONCURRENCY_LIMIT",
+                    message="real workflow concurrency limit reached",
+                    status_code=429,
+                )
+            record = await self.registry.create(
+                workflow=WORKFLOW_NAME,
+                user_id=request.user_id,
+                mode="real",
+                provider="deepseek",
+                model=provider.model_name,
+                input_payload=request.model_dump(mode="json"),
+                nodes=workflow_nodes(),
+            )
+        return await self._launch(record.run_id)
+
+    async def _launch(self, run_id: UUID) -> WorkflowRunStartResponse:
+        record = await self.registry.get(run_id)
         task = asyncio.create_task(
             run_course_learning_minimal(record.run_id, self.registry),
             name=f"securehub-workflow-{record.run_id}",
@@ -110,7 +156,12 @@ class AgentControlService:
                 status_code=404,
             ) from exc
 
-    async def events(self, run_id: UUID) -> AsyncIterator[dict[str, Any]]:
+    async def events(
+        self,
+        run_id: UUID,
+        *,
+        after_event_id: int | None = None,
+    ) -> AsyncIterator[dict[str, Any]]:
         try:
             await self.registry.get(run_id)
         except WorkflowRunNotFound as exc:
@@ -119,7 +170,7 @@ class AgentControlService:
                 message=f"workflow run not found: {run_id}",
                 status_code=404,
             ) from exc
-        return self.registry.iter_events(run_id)
+        return self.registry.iter_events(run_id, after_event_id=after_event_id)
 
     async def cancel(self, run_id: UUID) -> WorkflowRunCancelResponse:
         try:

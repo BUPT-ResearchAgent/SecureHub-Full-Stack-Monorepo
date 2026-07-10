@@ -30,8 +30,11 @@ from pydantic import BaseModel, ValidationError
 from app.runtime.harness.context import HarnessContext
 from app.llm.embeddings.errors import EmbeddingError
 from app.runtime.harness.errors import (
+    AgentRunPersistenceFailed,
+    CancellationRequested,
     HarnessError,
     InsufficientEvidence,
+    LLMOutputInvalid,
     QualityCheckFailed,
     QualityRejected,
     SafetyBlocked,
@@ -64,6 +67,19 @@ def _summarize(obj: Any, max_chars: int = 800) -> dict[str, Any]:
     return payload
 
 
+def _context_run_id(ctx: HarnessContext) -> UUID:
+    """Use a workflow-supplied child id when strict persistence requires it."""
+    raw_run_id = ctx.extras.get("agent_run_id")
+    if isinstance(raw_run_id, UUID):
+        return raw_run_id
+    if raw_run_id is not None:
+        try:
+            return UUID(str(raw_run_id))
+        except (TypeError, ValueError):
+            pass
+    return uuid4()
+
+
 @dataclass
 class SkillSpec(Generic[InputModel, OutputModel]):
     """Static skill description consumed by the harness.
@@ -85,6 +101,9 @@ class SkillSpec(Generic[InputModel, OutputModel]):
     log_run: bool = True
     timeout_sec: float = 60.0
     fallback: str = "mock"  # mock | error
+    strict_output: bool = False
+    strict_log_run: bool = False
+    strict_quality_check: bool = False
     capability_dim: str = "doc"
 
     # Optional pluggable hooks (default to in-process implementations resolved
@@ -247,7 +266,7 @@ class Harness:
             except ValidationError as exc:
                 raise HarnessError(f"input validation failed: {exc}") from exc
 
-        run_id = uuid4()
+        run_id = _context_run_id(ctx)
         start = time.perf_counter()
         telemetry = HarnessTelemetry(agent_id=spec.agent_id, skill_id=spec.skill_id)
         await self._emit_progress(ctx, spec, status="started", percentage=5)
@@ -263,7 +282,12 @@ class Harness:
                 filters=getattr(inp, "filters", None),
             )
         except Exception as exc:  # pragma: no cover - safety net
-            await self._fail(ctx, spec, run_id, telemetry, "tool_unavailable", str(exc))
+            if isinstance(exc, CancellationRequested):
+                raise
+            code = getattr(exc, "code", "tool_unavailable")
+            await self._fail(ctx, spec, run_id, telemetry, str(code), str(exc))
+            if isinstance(exc, HarnessError):
+                raise
             raise ToolUnavailable(f"RAG retrieval failed: {exc}") from exc
 
         if spec.require_evidence and len(evidence) < spec.evidence_floor:
@@ -296,17 +320,25 @@ class Harness:
                 emit=ctx.emit,
             )
         except Exception as exc:
+            if isinstance(exc, CancellationRequested):
+                raise
             if spec.fallback == "mock":
                 llm_output = default_llm_output(spec.name)
             else:
-                await self._fail(ctx, spec, run_id, telemetry, "tool_unavailable", str(exc))
+                code = getattr(exc, "code", "tool_unavailable")
+                await self._fail(ctx, spec, run_id, telemetry, str(code), str(exc))
+                if isinstance(exc, HarnessError):
+                    raise
                 raise ToolUnavailable(f"LLM call failed: {exc}") from exc
 
         # === 4. parse output ===
         evidence_ids = [card.chunk_id for card in evidence]
         try:
             output = self._parse_output(spec, llm_output, evidence_ids)
-        except ValidationError as exc:
+        except (TypeError, ValueError, ValidationError) as exc:
+            if spec.strict_output:
+                await self._fail(ctx, spec, run_id, telemetry, "LLM_OUTPUT_INVALID", str(exc))
+                raise LLMOutputInvalid("strict LLM output did not match the skill schema") from exc
             # Fallback: build the output by filling in known fields + defaults
             output = self._coerce_output(spec, llm_output, evidence_ids)
             if output is None:
@@ -331,7 +363,13 @@ class Harness:
                     output_payload=output.model_dump(),
                     evidence=evidence,
                 )
-            except Exception as exc:  # noqa: BLE001 - degrade gracefully
+            except Exception as exc:  # noqa: BLE001 - fixture compatibility path
+                if spec.strict_quality_check:
+                    code = getattr(exc, "code", "tool_unavailable")
+                    await self._fail(ctx, spec, run_id, telemetry, str(code), str(exc))
+                    if isinstance(exc, HarnessError):
+                        raise
+                    raise ToolUnavailable(f"quality check failed: {exc}") from exc
                 quality_result = {"accept": True, "quality_score": 0.6, "error": str(exc)}
             if not quality_result.get("accept", True):
                 await self._fail(
@@ -380,8 +418,12 @@ class Harness:
                     duration_ms=telemetry.duration_ms,
                     token_usage=telemetry.token_usage.model_dump(),
                 )
-            except Exception:  # noqa: BLE001 - logging must not break skill output
-                pass
+            except Exception as exc:  # noqa: BLE001 - fixture compatibility path
+                if spec.strict_log_run:
+                    await self._emit_persistence_error(ctx)
+                    raise AgentRunPersistenceFailed(
+                        "strict agent_runs persistence could not be verified"
+                    ) from exc
 
         await self._emit_done(ctx, spec, run_id, new_quality)
         return output
@@ -557,7 +599,7 @@ class Harness:
         evidence_ids: list[str],
     ) -> OutputModel:
         merged = dict(llm_output)
-        merged.setdefault("evidence_chunk_ids", evidence_ids)
+        merged["evidence_chunk_ids"] = evidence_ids
         merged.setdefault("content", llm_output.get("content", ""))
         return spec.output_model.model_validate(merged)
 
@@ -574,7 +616,7 @@ class Harness:
             for name in schema:
                 if name in llm_output:
                     allowed[name] = llm_output[name]
-            allowed.setdefault("evidence_chunk_ids", evidence_ids)
+            allowed["evidence_chunk_ids"] = evidence_ids
             allowed.setdefault("content", llm_output.get("content", ""))
             allowed.setdefault("quality_score", llm_output.get("quality_score", 0.6))
             return spec.output_model.model_validate(allowed)
@@ -646,6 +688,16 @@ class Harness:
             }
         )
 
+    async def _emit_persistence_error(self, ctx: HarnessContext) -> None:
+        await ctx.emit(
+            {
+                "event": "error",
+                "code": "AGENT_RUN_PERSIST_FAILED",
+                "message": "agent_runs persistence could not be verified",
+                "recoverable": False,
+            }
+        )
+
     async def _fail(
         self,
         ctx: HarnessContext,
@@ -661,7 +713,8 @@ class Harness:
                 "event": "error",
                 "code": code,
                 "message": message,
-                "recoverable": code in {"tool_unavailable", "insufficient_evidence"},
+                "recoverable": str(code).lower()
+                in {"tool_unavailable", "insufficient_evidence", "provider_unavailable"},
             }
         )
         if spec.log_run:
@@ -681,8 +734,12 @@ class Harness:
                     duration_ms=None,
                     token_usage={},
                 )
-            except Exception:
-                pass
+            except Exception as exc:
+                if spec.strict_log_run:
+                    await self._emit_persistence_error(ctx)
+                    raise AgentRunPersistenceFailed(
+                        "strict agent_runs persistence could not be verified"
+                    ) from exc
 
 
 # Default process-wide harness used by skill helper functions.

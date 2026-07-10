@@ -14,10 +14,14 @@ from time import perf_counter
 from typing import Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import select
+from sqlalchemy import String, cast, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
+
+
+class AgentRunResolutionError(RuntimeError):
+    """A strict real run could not resolve its required seeded entities."""
 
 
 class AgentRunService:
@@ -33,15 +37,31 @@ class AgentRunService:
         user_id: UUID | None = None,
         parent_run_id: UUID | None = None,
         input_summary: dict[str, Any] | None = None,
+        run_id: UUID | None = None,
+        require_resolution: bool = False,
     ) -> UUID:
         """插入一条 status='running' 的 agent_runs 行，返回 run_id。"""
         from app.db.models.agent.agent_run import AgentRun
 
         agent_id = await self._resolve_agent_id(agent_name)
         skill_id = await self._resolve_skill_id(agent_id, skill_name)
+        if require_resolution:
+            missing = [
+                name
+                for name, value in (
+                    ("user", user_id and await self._resolve_user_id(user_id)),
+                    ("agent", agent_id),
+                    ("agent_skill", skill_id),
+                )
+                if not value
+            ]
+            if missing:
+                raise AgentRunResolutionError(
+                    "strict agent_runs resolution failed: " + ", ".join(missing)
+                )
 
         run = AgentRun(
-            id=uuid4(),
+            id=run_id or uuid4(),
             workflow_name=workflow_name,
             user_id=user_id,
             agent_id=agent_id,
@@ -74,9 +94,12 @@ class AgentRunService:
         if run is None:
             logger.warning("finish_success: run_id %s not found", run_id)
             return
+        resolved_evidence_ids: list[UUID | str] = evidence_chunk_ids or []
+        if self.session.bind is not None and self.session.bind.dialect.name == "sqlite":
+            resolved_evidence_ids = [str(chunk_id) for chunk_id in resolved_evidence_ids]
         run.status = "success"
         run.output_summary = output_summary
-        run.evidence_chunk_ids = evidence_chunk_ids or []
+        run.evidence_chunk_ids = resolved_evidence_ids
         run.quality_score = quality_score
         run.duration_ms = duration_ms
         run.token_usage = token_usage or {}
@@ -158,6 +181,29 @@ class AgentRunService:
                 select(AgentSkill.id)
                 .where(AgentSkill.agent_id == agent_id, AgentSkill.skill_name == skill_name)
                 .limit(1)
+            )
+            resolved = result.scalar_one_or_none()
+            if resolved is not None:
+                return resolved
+
+            fallback = await self.session.execute(
+                select(AgentSkill.id)
+                .where(
+                    cast(AgentSkill.agent_id, String) == str(agent_id),
+                    AgentSkill.skill_name == skill_name,
+                )
+                .limit(1)
+            )
+            return fallback.scalar_one_or_none()
+        except Exception:
+            return None
+
+    async def _resolve_user_id(self, user_id: UUID) -> UUID | None:
+        try:
+            from app.db.models.identity.user import User
+
+            result = await self.session.execute(
+                select(User.id).where(User.id == user_id).limit(1)
             )
             return result.scalar_one_or_none()
         except Exception:

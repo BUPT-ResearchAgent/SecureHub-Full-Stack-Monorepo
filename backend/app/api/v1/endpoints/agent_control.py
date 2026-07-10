@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Header, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
 
 from app.schemas.agent_control import (
@@ -64,9 +64,42 @@ async def get_workflow_run(run_id: UUID) -> WorkflowRunResponse:
 
 
 @router.get("/workflow-runs/{run_id}/events")
-async def stream_workflow_run_events(run_id: UUID) -> StreamingResponse:
+async def stream_workflow_run_events(
+    run_id: UUID,
+    after_event_id: int | None = Query(default=None, ge=0),
+    last_event_id: str | None = Header(default=None, alias="Last-Event-ID"),
+) -> StreamingResponse:
     try:
-        events = await _service.events(run_id)
+        header_cursor: int | None = None
+        if last_event_id is not None:
+            try:
+                header_cursor = int(last_event_id)
+            except ValueError as exc:
+                raise WorkflowControlError(
+                    code="INVALID_EVENT_CURSOR",
+                    message="Last-Event-ID must be a non-negative integer",
+                    status_code=422,
+                ) from exc
+            if header_cursor < 0:
+                raise WorkflowControlError(
+                    code="INVALID_EVENT_CURSOR",
+                    message="Last-Event-ID must be a non-negative integer",
+                    status_code=422,
+                )
+        if (
+            after_event_id is not None
+            and header_cursor is not None
+            and after_event_id != header_cursor
+        ):
+            raise WorkflowControlError(
+                code="INVALID_EVENT_CURSOR",
+                message="after_event_id and Last-Event-ID must match when both are supplied",
+                status_code=422,
+            )
+        events = await _service.events(
+            run_id,
+            after_event_id=after_event_id if after_event_id is not None else header_cursor,
+        )
     except WorkflowControlError as exc:
         _raise_control_error(exc)
     return agent_event_response(events)
