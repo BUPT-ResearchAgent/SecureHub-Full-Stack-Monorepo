@@ -1,4 +1,4 @@
-# Agent Run API Contract v0.3
+# Agent Run API Contract v0.4
 
 ## Scope
 
@@ -212,3 +212,26 @@ separate:
   root run is never rewritten as `succeeded`.
 - Real live smoke is manual only. CI uses fixture or fake providers and must not
   send DeepSeek requests.
+
+## Reproducible Real Smoke
+
+`backend/scripts/smoke_agent_run_real.py` is the opt-in HTTP smoke client. It
+uses the seeded `DEMO_USER_ID` and `course_websec` constants, calls only the
+manifest/start/status/events/cancel endpoints, and performs the PostgreSQL
+`agent_runs` check as a read-only SQLAlchemy query. Without
+`--confirm-live`, it exits before opening a network or database connection.
+
+The supported modes are `success` and `cancel-after-first-token`; `both` runs
+them sequentially. A success is accepted only when the root is `succeeded`,
+the SSE stream contains `progress / evidence / token / trace / done`, all five
+children have `persistence="agent_runs"`, the `Last-Event-ID` replay matches,
+and the database UUID/evidence sets match the API. A cancel is accepted only
+after a token has been observed and when no later `token` or `artifact` event
+appears. The client prints identifiers, counts, statuses, profiles, and error
+codes only; it never prints credentials, headers, prompts, token content, or
+generated content.
+
+Strict real evidence projection may use the referenced `documents.url` or
+document metadata source URL when a chunk's own metadata omits it. If a
+non-manual evidence card still has no source URL, real execution fails rather
+than weakening the Evidence v1.2 contract.

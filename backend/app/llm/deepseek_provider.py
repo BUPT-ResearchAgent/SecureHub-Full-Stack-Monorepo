@@ -59,6 +59,7 @@ class DeepSeekProvider(BaseLLMProvider):
         stream: bool,
         temperature: float,
         max_tokens: int | None,
+        response_format: dict[str, str] | None = None,
     ) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "model": self.model_name,
@@ -68,6 +69,8 @@ class DeepSeekProvider(BaseLLMProvider):
         }
         if max_tokens:
             payload["max_tokens"] = max_tokens
+        if response_format is not None:
+            payload["response_format"] = response_format
         return payload
 
     async def generate(
@@ -76,8 +79,15 @@ class DeepSeekProvider(BaseLLMProvider):
         *,
         temperature: float = 0.2,
         max_tokens: int | None = None,
+        response_format: dict[str, str] | None = None,
     ) -> LLMResponse:
-        payload = self._build_payload(messages, stream=False, temperature=temperature, max_tokens=max_tokens)
+        payload = self._build_payload(
+            messages,
+            stream=False,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            response_format=response_format,
+        )
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 resp = await client.post(
@@ -113,8 +123,15 @@ class DeepSeekProvider(BaseLLMProvider):
         *,
         temperature: float = 0.2,
         max_tokens: int | None = None,
+        response_format: dict[str, str] | None = None,
     ) -> AsyncIterator[LLMChunk]:
-        payload = self._build_payload(messages, stream=True, temperature=temperature, max_tokens=max_tokens)
+        payload = self._build_payload(
+            messages,
+            stream=True,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            response_format=response_format,
+        )
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 async with client.stream(

@@ -30,6 +30,7 @@ JSON_ONLY_SYSTEM_MESSAGE = (
     "Do not use Markdown fences or prose outside the JSON object. "
     "The server, not the model, owns evidence_chunk_ids."
 )
+JSON_RESPONSE_FORMAT = {"type": "json_object"}
 
 
 class StrictProviderUnavailable(ToolUnavailable):
@@ -78,6 +79,7 @@ class StrictLiveAdapters:
         if getattr(self._provider, "provider_name", None) != "deepseek":
             raise StrictProviderUnavailable("real mode requires provider=deepseek")
         settings = get_settings()
+        self._uses_default_retriever = retrieve_fn is None
         self._retrieve_fn = retrieve_fn or retrieve
         self._cancellation_requested = cancellation_requested or (lambda: False)
         self._max_tokens = max_tokens or settings.AGENT_RUN_REAL_MAX_TOKENS
@@ -116,7 +118,51 @@ class StrictLiveAdapters:
         except Exception as exc:
             raise StrictProviderUnavailable("real RAG retrieval is unavailable") from exc
         self._raise_if_cancelled()
-        return [self._evidence_card(hit) for hit in hits]
+        source_urls = await self._document_source_urls(hits) if self._uses_default_retriever else {}
+        cards = [
+            self._evidence_card(hit, document_source_url=source_urls.get(str(getattr(hit, "document_id", ""))))
+            for hit in hits
+        ]
+        incomplete = [
+            card
+            for card in cards
+            if (card.metadata.get("platform") or "manual") != "manual" and not card.source
+        ]
+        if incomplete:
+            raise StrictProviderUnavailable("real evidence source metadata is incomplete")
+        return cards
+
+    async def _document_source_urls(self, hits: list[Any]) -> dict[str, str]:
+        document_ids = {
+            str(getattr(hit, "document_id", ""))
+            for hit in hits
+            if getattr(hit, "document_id", None)
+        }
+        if not document_ids:
+            return {}
+        try:
+            from sqlalchemy import select
+
+            from app.db.models.knowledge.document import Document
+            from app.db.session import get_sessionmaker
+
+            async with get_sessionmaker()() as session:
+                rows = (
+                    await session.execute(
+                        select(Document.id, Document.url, Document.metadata_).where(
+                            Document.id.in_(document_ids)
+                        )
+                    )
+                ).all()
+        except Exception as exc:
+            raise StrictProviderUnavailable("real evidence source metadata is unavailable") from exc
+        source_urls: dict[str, str] = {}
+        for document_id, document_url, document_metadata in rows:
+            metadata = document_metadata or {}
+            source_url = document_url or metadata.get("source_url") or metadata.get("url")
+            if source_url:
+                source_urls[str(document_id)] = str(source_url)
+        return source_urls
 
     async def llm_complete(
         self,
@@ -141,6 +187,7 @@ class StrictLiveAdapters:
                     messages,
                     temperature=0.2,
                     max_tokens=self._max_tokens,
+                    response_format=JSON_RESPONSE_FORMAT,
                 ):
                     self._raise_if_cancelled()
                     parts.append(chunk.content)
@@ -156,6 +203,7 @@ class StrictLiveAdapters:
                     messages,
                     temperature=0.2,
                     max_tokens=self._max_tokens,
+                    response_format=JSON_RESPONSE_FORMAT,
                 )
                 raw_content = response.content
                 prompt_tokens = response.usage.prompt_tokens
@@ -178,18 +226,26 @@ class StrictLiveAdapters:
         return payload
 
     @staticmethod
-    def _evidence_card(hit: Any) -> EvidenceCard:
+    def _evidence_card(hit: Any, *, document_source_url: str | None = None) -> EvidenceCard:
         if isinstance(hit, EvidenceCard):
-            return hit
+            if hit.source or not document_source_url:
+                return hit
+            return hit.model_copy(update={"source": document_source_url})
+        metadata = dict(getattr(hit, "metadata", {}) or {})
         return EvidenceCard(
             chunk_id=str(hit.chunk_id),
             document_id=str(hit.document_id) if getattr(hit, "document_id", None) else None,
             domain=str(hit.domain),
-            source=getattr(hit, "source", None),
+            source=(
+                getattr(hit, "source", None)
+                or metadata.get("source_url")
+                or metadata.get("url")
+                or document_source_url
+            ),
             excerpt=str(getattr(hit, "chunk_text", getattr(hit, "excerpt", "")))[:500],
             reliability=float(getattr(hit, "reliability", 0.0)),
             score=float(getattr(hit, "score", 0.0)),
-            metadata=dict(getattr(hit, "metadata", {}) or {}),
+            metadata=metadata,
         )
 
     @staticmethod
