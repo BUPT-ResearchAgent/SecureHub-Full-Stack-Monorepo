@@ -60,3 +60,8 @@ uv run pytest tests/api/test_agent_control.py tests/runtime/test_course_learning
 - 风险：单进程 registry 无重启恢复；SSE history 有上限；远端 HTTP 已发起时只能停止消费和转发，不能强杀线程。
 - 回滚：保持 `AGENT_RUN_REAL_ENABLED=false`，或回滚本轮 strict real commit；fixture API 保持可用且不触碰 Agent-Run-1 提交。
 - Agent-Run-3 前先恢复本地 Postgres，确认 demo user、9 agents、agent_skills 和至少 3 条 `course_websec` ready chunks，再以显式 gate 执行最多一次 real smoke，并按 root `workflow_run_id` 核对 5 条 `agent_runs`。
+
+## TPM 文档校正（Agent-Run-2.1）
+
+- 原报告称 `Prompt\Agent-Run-2.md` 在工作区及上级目录均未找到，此表述不准确。
+- Agent-Run-2 指令位于项目根 `D:\Nnutural\Desktop\BUPT大全\BUPT竞赛\26软件杯\Prompt\Agent-Run-2.md` 的 TPM 指定逻辑位置；当前工作区对应文件以 `Prompt\7-Agent-Run-2.md` 名称保存。

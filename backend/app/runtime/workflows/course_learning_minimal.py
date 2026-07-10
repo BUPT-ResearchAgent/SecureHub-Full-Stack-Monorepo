@@ -522,6 +522,16 @@ async def run_course_learning_minimal(
                 persona_summary = str(output.get("content") or "")
 
         quality_output = outputs.get("quality_check", {})
+        if quality_output.get("accept") is not True:
+            await _publish_failure(
+                registry,
+                record,
+                None,
+                code="QUALITY_REJECTED",
+                message="outcome_evaluator.QualityCheck rejected the workflow output",
+                blocked=True,
+            )
+            return
         await registry.mark_succeeded(run_id, outputs)
         await registry.publish(
             run_id,

@@ -24,9 +24,50 @@ class AgentRunResolutionError(RuntimeError):
     """A strict real run could not resolve its required seeded entities."""
 
 
+class AgentRunInvalidUserId(ValueError):
+    """A real workflow request did not contain a valid UUID user id."""
+
+
+class AgentRunPrerequisitesUnavailable(RuntimeError):
+    """A real workflow's database user, agent, or skill prerequisite is absent."""
+
+
 class AgentRunService:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
+
+    @staticmethod
+    def normalize_user_id(user_id: UUID | str) -> UUID:
+        try:
+            return user_id if isinstance(user_id, UUID) else UUID(str(user_id))
+        except (TypeError, ValueError) as exc:
+            raise AgentRunInvalidUserId("user_id must be a UUID") from exc
+
+    async def ensure_real_workflow_prerequisites(
+        self,
+        *,
+        user_id: UUID | str,
+        nodes: Sequence[tuple[str, str, str]],
+    ) -> UUID:
+        normalized_user_id = self.normalize_user_id(user_id)
+        try:
+            if await self._resolve_user_id(normalized_user_id) is None:
+                raise AgentRunPrerequisitesUnavailable(
+                    "real workflow user prerequisite is unavailable"
+                )
+            for _node_id, agent_name, skill_name in nodes:
+                agent_id = await self._resolve_agent_id(agent_name)
+                if agent_id is None or await self._resolve_skill_id(agent_id, skill_name) is None:
+                    raise AgentRunPrerequisitesUnavailable(
+                        "real workflow agent skill prerequisite is unavailable"
+                    )
+        except AgentRunPrerequisitesUnavailable:
+            raise
+        except Exception as exc:
+            raise AgentRunPrerequisitesUnavailable(
+                "real workflow database prerequisites are unavailable"
+            ) from exc
+        return normalized_user_id
 
     async def begin_run(
         self,

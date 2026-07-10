@@ -4,13 +4,17 @@ from __future__ import annotations
 
 import asyncio
 import json
+from types import SimpleNamespace
 from uuid import UUID, uuid4
 
 import pytest
+from sqlalchemy import delete, select
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.pool import StaticPool
 
 from app.llm.provider import LLMChunk, LLMResponse, TokenUsage
 from app.runtime.harness.fixtures import default_llm_output
-from app.runtime.harness.live_adapters import StrictLiveAdapters
+from app.runtime.harness.live_adapters import AgentRunPersistenceFailed, StrictLiveAdapters
 from app.runtime.harness.types import EvidenceCard
 from app.runtime.run_registry import RunRegistry
 from app.runtime.workflows.course_learning_minimal import (
@@ -61,9 +65,16 @@ class FakeDeepSeekProvider:
     provider_name = "deepseek"
     model_name = "fake-deepseek-v4"
 
-    def __init__(self, *, fail: bool = False, invalid_json: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        fail: bool = False,
+        invalid_json: bool = False,
+        quality_accept: bool | None = None,
+    ) -> None:
         self.fail = fail
         self.invalid_json = invalid_json
+        self.quality_accept = quality_accept
         self.calls = 0
 
     def estimate_tokens(self, text: str) -> int:
@@ -74,7 +85,10 @@ class FakeDeepSeekProvider:
         self.calls += 1
         if self.invalid_json:
             return "this is not json"
-        return json.dumps(default_llm_output(skill_name), ensure_ascii=False)
+        payload = default_llm_output(skill_name)
+        if skill_name == "QualityCheck" and self.quality_accept is not None:
+            payload["accept"] = self.quality_accept
+        return json.dumps(payload, ensure_ascii=False)
 
     async def generate(self, *_args, **_kwargs) -> LLMResponse:
         if self.fail:
@@ -135,6 +149,28 @@ def _memory_persister(rows: list[dict[str, object]]):
 
 async def _collect_events(registry: RunRegistry, run_id: UUID) -> list[dict[str, object]]:
     return [event async for event in registry.iter_events(run_id)]
+
+
+async def _seeded_sqlite_sessionmaker():
+    from app.db.base import Base
+    from app.db.seeds.seed_agent_skills import run as seed_agent_skills
+    from app.db.seeds.seed_agents import run as seed_agents
+    from app.db.seeds.seed_demo_user import run as seed_demo_user
+
+    engine = create_async_engine(
+        "sqlite+aiosqlite://",
+        poolclass=StaticPool,
+        connect_args={"check_same_thread": False},
+    )
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+    sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
+    async with sessionmaker() as session:
+        await seed_demo_user(session)
+        await seed_agents(session)
+        await seed_agent_skills(session)
+        await session.commit()
+    return engine, sessionmaker
 
 
 def test_fixture_workflow_runs_five_fixed_agents_with_trace_events():
@@ -321,6 +357,46 @@ def test_strict_real_workflow_uses_fake_deepseek_and_persists_matching_trace_ids
         assert int(evidence_event["event_id"]) < int(token_event["event_id"])
 
 
+def test_quality_rejection_blocks_root_and_keeps_completed_child_traces():
+    async def scenario():
+        registry = RunRegistry()
+        record = await registry.create(
+            workflow=WORKFLOW_NAME,
+            user_id=USER_ID,
+            mode="real",
+            provider="deepseek",
+            model="placeholder",
+            input_payload=_real_payload(),
+            nodes=workflow_nodes(),
+        )
+        persisted: list[dict[str, object]] = []
+        adapters = StrictLiveAdapters(
+            provider=FakeDeepSeekProvider(quality_accept=False),
+            retrieve_fn=_strict_retriever(3),
+            cancellation_requested=record.cancellation_event.is_set,
+            max_tokens=32,
+        )
+        await run_course_learning_minimal(
+            record.run_id,
+            registry,
+            strict_adapters=adapters,
+            persist_real_run=_memory_persister(persisted),
+        )
+        return await registry.snapshot(record.run_id), await _collect_events(registry, record.run_id), persisted
+
+    snapshot, events, persisted = asyncio.run(scenario())
+
+    assert snapshot["status"] == "blocked"
+    assert snapshot["error"]["code"] == "QUALITY_REJECTED"
+    assert snapshot["final_output"] is None
+    assert len(persisted) == 5
+    assert all(child["status"] == "succeeded" for child in snapshot["child_runs"])
+    assert len([event for event in events if event["event"] == "trace"]) == 5
+    assert not any(event["event"] == "done" and event["status"] == "succeeded" for event in events)
+    assert events[-1]["event"] == "error"
+    assert events[-1]["code"] == "QUALITY_REJECTED"
+
+
 @pytest.mark.parametrize(
     ("provider", "expected_code"),
     [
@@ -483,3 +559,207 @@ async def test_agent_run_service_uses_supplied_id_and_resolved_seed_links(sqlite
     assert row.skill_id is not None
     assert row.input_summary["workflow_run_id"] == str(workflow_run_id)
     assert row.evidence_chunk_ids == [str(_EVIDENCE_IDS[0])]
+
+
+@pytest.mark.anyio
+async def test_real_start_preflight_rejects_missing_prerequisites_before_provider(monkeypatch) -> None:
+    import app.services.agent_control_service as agent_control_service
+    from app.db.models.agent.agent_skill import AgentSkill
+    from app.db.seeds._constants import DEMO_USER_ID
+    from app.db.seeds.seed_agent_skills import run as seed_agent_skills
+    from app.schemas.agent_control import WorkflowRunStartRequest
+    from app.services.agent_control_service import AgentControlService, WorkflowControlError
+
+    engine, sessionmaker = await _seeded_sqlite_sessionmaker()
+    provider_calls = 0
+
+    def fake_provider():
+        nonlocal provider_calls
+        provider_calls += 1
+        return SimpleNamespace(provider_name="deepseek", model_name="fake-deepseek-v4")
+
+    async def fake_workflow(run_id, registry):
+        record = await registry.get(run_id)
+        if not await registry.mark_running(run_id):
+            return
+        await registry.mark_succeeded(run_id, {})
+        await registry.publish(
+            run_id,
+            {
+                "event": "done",
+                "workflow_run_id": str(run_id),
+                "status": "succeeded",
+                "final_output_ref": None,
+                "child_run_count": len(record.nodes),
+                "quality_score": None,
+                "mode": record.mode,
+                "provider": record.provider,
+                "model": record.model,
+            },
+        )
+
+    def request_for(user_id: str) -> WorkflowRunStartRequest:
+        return WorkflowRunStartRequest(
+            workflow=WORKFLOW_NAME,
+            user_id=user_id,
+            course_id="course-websec",
+            mode="real",
+            provider="deepseek",
+        )
+
+    monkeypatch.setattr(
+        agent_control_service,
+        "get_settings",
+        lambda: SimpleNamespace(
+            AGENT_RUN_REAL_ENABLED=True,
+            AGENT_RUN_REAL_MAX_CONCURRENCY=1,
+        ),
+    )
+    monkeypatch.setattr(agent_control_service, "get_strict_deepseek_provider", fake_provider)
+    monkeypatch.setattr(agent_control_service, "run_course_learning_minimal", fake_workflow)
+
+    try:
+        invalid_service = AgentControlService(RunRegistry(), sessionmaker=sessionmaker)
+        with pytest.raises(WorkflowControlError) as invalid_error:
+            await invalid_service.start(request_for("not-a-uuid"))
+        assert invalid_error.value.status_code == 422
+        assert invalid_error.value.code == "INVALID_USER_ID"
+        assert provider_calls == 0
+        assert not invalid_service.registry._runs
+
+        missing_user_service = AgentControlService(RunRegistry(), sessionmaker=sessionmaker)
+        with pytest.raises(WorkflowControlError) as missing_user_error:
+            await missing_user_service.start(request_for(str(uuid4())))
+        assert missing_user_error.value.status_code == 503
+        assert missing_user_error.value.code == "REAL_PREREQUISITES_UNAVAILABLE"
+        assert provider_calls == 0
+        assert not missing_user_service.registry._runs
+
+        async with sessionmaker() as session:
+            await session.execute(
+                delete(AgentSkill).where(AgentSkill.skill_name == "QualityCheck")
+            )
+            await session.commit()
+        missing_skill_service = AgentControlService(RunRegistry(), sessionmaker=sessionmaker)
+        with pytest.raises(WorkflowControlError) as missing_skill_error:
+            await missing_skill_service.start(request_for(str(DEMO_USER_ID)))
+        assert missing_skill_error.value.status_code == 503
+        assert missing_skill_error.value.code == "REAL_PREREQUISITES_UNAVAILABLE"
+        assert provider_calls == 0
+        assert not missing_skill_service.registry._runs
+
+        async with sessionmaker() as session:
+            await seed_agent_skills(session)
+            await session.commit()
+        valid_service = AgentControlService(RunRegistry(), sessionmaker=sessionmaker)
+        response = await valid_service.start(request_for(str(DEMO_USER_ID)))
+        record = await valid_service.registry.get(response.run_id)
+        assert response.mode == "real"
+        assert response.provider == "deepseek"
+        assert response.model == "fake-deepseek-v4"
+        assert provider_calls == 1
+        assert record.task is not None
+        await record.task
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.anyio
+async def test_strict_real_workflow_persists_five_agent_runs_through_sqlite_adapter(monkeypatch) -> None:
+    import app.db.session as db_session
+    from app.db.models.agent.agent_run import AgentRun
+    from app.db.seeds._constants import DEMO_USER_ID
+
+    engine, sessionmaker = await _seeded_sqlite_sessionmaker()
+    monkeypatch.setattr(db_session, "get_sessionmaker", lambda: sessionmaker)
+    try:
+        registry = RunRegistry()
+        payload = _real_payload()
+        payload["user_id"] = str(DEMO_USER_ID)
+        record = await registry.create(
+            workflow=WORKFLOW_NAME,
+            user_id=str(DEMO_USER_ID),
+            mode="real",
+            provider="deepseek",
+            model="placeholder",
+            input_payload=payload,
+            nodes=workflow_nodes(),
+        )
+        adapters = StrictLiveAdapters(
+            provider=FakeDeepSeekProvider(),
+            retrieve_fn=_strict_retriever(3),
+            cancellation_requested=record.cancellation_event.is_set,
+            max_tokens=32,
+        )
+        await run_course_learning_minimal(
+            record.run_id,
+            registry,
+            strict_adapters=adapters,
+        )
+        snapshot = await registry.snapshot(record.run_id)
+        events = await _collect_events(registry, record.run_id)
+
+        async with sessionmaker() as session:
+            result = await session.execute(select(AgentRun))
+            rows = [
+                row
+                for row in result.scalars().all()
+                if row.input_summary.get("workflow_run_id") == str(record.run_id)
+            ]
+
+        assert snapshot["status"] == "succeeded"
+        assert len(rows) == 5
+        assert all(row.user_id is not None for row in rows)
+        assert all(row.agent_id is not None for row in rows)
+        assert all(row.skill_id is not None for row in rows)
+        assert all(row.input_summary["workflow_run_id"] == str(record.run_id) for row in rows)
+        assert all(
+            row.evidence_chunk_ids == [str(item) for item in _EVIDENCE_IDS]
+            for row in rows
+        )
+        child_ids = {str(child["agent_run_id"]) for child in snapshot["child_runs"]}
+        trace_ids = {str(event["agent_run_id"]) for event in events if event["event"] == "trace"}
+        assert child_ids == {str(row.id) for row in rows}
+        assert child_ids == trace_ids
+        assert events[-1]["event"] == "done"
+        assert events[-1]["status"] == "succeeded"
+    finally:
+        await engine.dispose()
+
+
+def test_strict_real_persistence_failure_cannot_emit_success_done():
+    async def fail_persist(**_kwargs: object) -> None:
+        raise AgentRunPersistenceFailed("test persistence failure")
+
+    async def scenario():
+        registry = RunRegistry()
+        record = await registry.create(
+            workflow=WORKFLOW_NAME,
+            user_id=USER_ID,
+            mode="real",
+            provider="deepseek",
+            model="placeholder",
+            input_payload=_real_payload(),
+            nodes=workflow_nodes(),
+        )
+        adapters = StrictLiveAdapters(
+            provider=FakeDeepSeekProvider(),
+            retrieve_fn=_strict_retriever(3),
+            cancellation_requested=record.cancellation_event.is_set,
+            max_tokens=32,
+        )
+        await run_course_learning_minimal(
+            record.run_id,
+            registry,
+            strict_adapters=adapters,
+            persist_real_run=fail_persist,
+        )
+        return await registry.snapshot(record.run_id), await _collect_events(registry, record.run_id)
+
+    snapshot, events = asyncio.run(scenario())
+
+    assert snapshot["status"] == "failed"
+    assert snapshot["error"]["code"] == "AGENT_RUN_PERSIST_FAILED"
+    assert not any(event["event"] == "done" and event["status"] == "succeeded" for event in events)
+    assert events[-1]["event"] == "error"
+    assert events[-1]["code"] == "AGENT_RUN_PERSIST_FAILED"

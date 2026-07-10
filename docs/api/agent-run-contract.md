@@ -1,4 +1,4 @@
-# Agent Run API Contract v0.2
+# Agent Run API Contract v0.3
 
 ## Scope
 
@@ -54,6 +54,10 @@ The response contains `run_id`, `events_url`, `cancel_url`, `status`, `mode`,
 return `422 INVALID_PROVIDER`. Before creating a real run, the server checks:
 
 - `AGENT_RUN_REAL_ENABLED=true`; otherwise `503 REAL_MODE_DISABLED`.
+- `user_id` is a UUID and the database contains that user plus all five fixed
+  `(agent_name, skill_name)` seed pairs; invalid UUIDs return
+  `422 INVALID_USER_ID`, while database or seed failures return
+  `503 REAL_PREREQUISITES_UNAVAILABLE`.
 - an actual DeepSeek provider can be constructed; a development fixture fallback
   is rejected as `503 PROVIDER_UNAVAILABLE`.
 - active real runs are below `AGENT_RUN_REAL_MAX_CONCURRENCY`; otherwise
@@ -63,6 +67,11 @@ The safe repository default is `AGENT_RUN_REAL_ENABLED=false` and real
 concurrency `1`. `AGENT_RUN_REAL_MAX_TOKENS` bounds one provider call. Set
 these non-secret fields in the server process environment; do not place any
 secret in requests or source files.
+
+The database/seed preflight runs before constructing the DeepSeek provider and
+before creating an in-memory run. It verifies only identity and fixed seed
+prerequisites; dynamic RAG evidence remains a workflow-time check and can still
+produce `INSUFFICIENT_EVIDENCE` without a provider call.
 
 ### `GET /api/v1/workflow-runs/{run_id}`
 
@@ -120,8 +129,9 @@ queued -> running -> succeeded
 queued/running -> cancelling -> cancelled
 ```
 
-`blocked` is used for evidence-floor refusal. All terminal states remain
-queryable through the status endpoint until in-memory TTL cleanup.
+`blocked` is used for evidence-floor refusal and business quality rejection.
+All terminal states remain queryable through the status endpoint until
+in-memory TTL cleanup.
 
 ## SSE Payloads
 
@@ -176,6 +186,22 @@ For every real child node:
 
 If persistence cannot be verified, the root run fails with
 `AGENT_RUN_PERSIST_FAILED`; it cannot report `succeeded`.
+
+## Quality Verdict
+
+`outcome_evaluator.QualityCheck` is both a fifth child skill and the root
+quality gate. Its execution status and its business verdict are intentionally
+separate:
+
+- If the child executes, parses, passes Harness checks, and persists normally,
+  its child trace and `agent_runs` row remain `success`.
+- If that successful child output has `accept is not True`, the root run becomes
+  `blocked`, status returns `error.code="QUALITY_REJECTED"`, and SSE emits a
+  terminal `error`. It must not emit `done.status="succeeded"`.
+- If the child itself fails RAG, provider, JSON, or persistence handling, the
+  normal `INSUFFICIENT_EVIDENCE`, `PROVIDER_UNAVAILABLE`,
+  `LLM_OUTPUT_INVALID`, or `AGENT_RUN_PERSIST_FAILED` path applies instead of
+  `QUALITY_REJECTED`.
 
 ## Known Limits
 

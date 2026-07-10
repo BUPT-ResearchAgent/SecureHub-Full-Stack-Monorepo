@@ -167,6 +167,23 @@ def test_real_request_rejects_any_provider_except_deepseek():
     assert response.json()["detail"]["code"] == "INVALID_PROVIDER"
 
 
+def test_real_request_rejects_invalid_user_id_before_real_gate():
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/workflow-runs",
+            json={
+                "workflow": "course_learning_minimal",
+                "user_id": "not-a-uuid",
+                "course_id": "course-websec",
+                "mode": "real",
+                "provider": "deepseek",
+            },
+        )
+
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "INVALID_USER_ID"
+
+
 def test_real_endpoint_returns_202_with_enabled_gate_and_fake_provider(monkeypatch):
     from app.api.v1.endpoints import agent_control
     from app.runtime.run_registry import RunRegistry
@@ -195,6 +212,9 @@ def test_real_endpoint_returns_202_with_enabled_gate_and_fake_provider(monkeypat
             },
         )
 
+    async def fake_preflight(_user_id):
+        return None
+
     monkeypatch.setattr(
         agent_control_service,
         "get_settings",
@@ -209,7 +229,9 @@ def test_real_endpoint_returns_202_with_enabled_gate_and_fake_provider(monkeypat
         lambda: fake_provider,
     )
     monkeypatch.setattr(agent_control_service, "run_course_learning_minimal", fake_workflow)
-    monkeypatch.setattr(agent_control, "_service", AgentControlService(RunRegistry()))
+    service = AgentControlService(RunRegistry())
+    monkeypatch.setattr(service, "_validate_real_prerequisites", fake_preflight)
+    monkeypatch.setattr(agent_control, "_service", service)
 
     with TestClient(app) as client:
         response = client.post(

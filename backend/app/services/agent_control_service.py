@@ -11,6 +11,7 @@ from typing import Any
 from uuid import UUID
 
 from app.core.config import get_settings
+from app.db.session import get_sessionmaker
 from app.runtime.capability_manifest import list_agents, register_agents
 from app.runtime.harness.live_adapters import (
     StrictProviderUnavailable,
@@ -37,6 +38,11 @@ from app.schemas.agent_control import (
     WorkflowRunStartRequest,
     WorkflowRunStartResponse,
 )
+from app.services.agent.agent_run_service import (
+    AgentRunInvalidUserId,
+    AgentRunPrerequisitesUnavailable,
+    AgentRunService,
+)
 
 
 @dataclass
@@ -49,8 +55,14 @@ class WorkflowControlError(RuntimeError):
 class AgentControlService:
     """Thin orchestration layer over the process-local RunRegistry."""
 
-    def __init__(self, registry: RunRegistry | None = None) -> None:
+    def __init__(
+        self,
+        registry: RunRegistry | None = None,
+        *,
+        sessionmaker: Any | None = None,
+    ) -> None:
         self.registry = registry or GLOBAL_RUN_REGISTRY
+        self._sessionmaker = sessionmaker
         self._real_start_lock = asyncio.Lock()
 
     async def manifest(self) -> AgentManifestResponse:
@@ -92,6 +104,15 @@ class AgentControlService:
                 status_code=422,
             )
 
+        try:
+            user_id = AgentRunService.normalize_user_id(request.user_id)
+        except AgentRunInvalidUserId as exc:
+            raise WorkflowControlError(
+                code="INVALID_USER_ID",
+                message="user_id must be a UUID for real workflow execution",
+                status_code=422,
+            ) from exc
+
         settings = get_settings()
         if not settings.AGENT_RUN_REAL_ENABLED:
             raise WorkflowControlError(
@@ -99,6 +120,8 @@ class AgentControlService:
                 message="server-side AGENT_RUN_REAL_ENABLED is false",
                 status_code=503,
             )
+
+        await self._validate_real_prerequisites(user_id)
 
         try:
             provider = get_strict_deepseek_provider()
@@ -119,7 +142,7 @@ class AgentControlService:
                 )
             record = await self.registry.create(
                 workflow=WORKFLOW_NAME,
-                user_id=request.user_id,
+                user_id=str(user_id),
                 mode="real",
                 provider="deepseek",
                 model=provider.model_name,
@@ -127,6 +150,34 @@ class AgentControlService:
                 nodes=workflow_nodes(),
             )
         return await self._launch(record.run_id)
+
+    async def _validate_real_prerequisites(self, user_id: UUID) -> None:
+        try:
+            sessionmaker = self._sessionmaker or get_sessionmaker()
+            async with sessionmaker() as session:
+                service = AgentRunService(session)
+                await service.ensure_real_workflow_prerequisites(
+                    user_id=user_id,
+                    nodes=workflow_nodes(),
+                )
+        except AgentRunInvalidUserId as exc:
+            raise WorkflowControlError(
+                code="INVALID_USER_ID",
+                message="user_id must be a UUID for real workflow execution",
+                status_code=422,
+            ) from exc
+        except AgentRunPrerequisitesUnavailable as exc:
+            raise WorkflowControlError(
+                code="REAL_PREREQUISITES_UNAVAILABLE",
+                message="real workflow database prerequisites are unavailable",
+                status_code=503,
+            ) from exc
+        except Exception as exc:
+            raise WorkflowControlError(
+                code="REAL_PREREQUISITES_UNAVAILABLE",
+                message="real workflow database prerequisites are unavailable",
+                status_code=503,
+            ) from exc
 
     async def _launch(self, run_id: UUID) -> WorkflowRunStartResponse:
         record = await self.registry.get(run_id)
