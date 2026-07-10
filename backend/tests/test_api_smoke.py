@@ -53,22 +53,52 @@ def test_agents_manifest():
 
 
 def test_rag_search_returns_fixture(monkeypatch):
-    from app.core.config import get_settings
-    from app.llm.embedding import reset_embedding_service
+    import importlib
 
-    monkeypatch.setenv("EMBEDDING_PROVIDER", "fixture")
-    get_settings.cache_clear()
-    reset_embedding_service()
+    rag_service = importlib.import_module("app.rag.search")
+
+    async def fixture_retrieve(*_args, **_kwargs):
+        return []
+
+    # Keep this endpoint test on the explicit fallback branch even when a
+    # developer's PostgreSQL already contains ready Qwen rows.
+    monkeypatch.setattr(rag_service, "retrieve", fixture_retrieve)
     client = TestClient(app)
+    payload = {"domain": "course_websec", "query": "SQL injection", "top_k": 3}
     response = client.post(
         "/api/v1/rag/search",
-        json={"domain": "course_websec", "query": "SQL injection", "top_k": 3},
+        json=payload,
     )
     assert response.status_code == 200
     body = response.json()
     assert "hits" in body
     assert len(body["hits"]) >= 3
     assert body["fallback"] is True
+
+    repeated = client.post("/api/v1/rag/search", json=payload)
+    assert repeated.status_code == 200
+    assert repeated.json() == body
+
+
+def test_fixture_rag_search_never_reports_real_mode_with_seeded_rows(monkeypatch):
+    import importlib
+
+    rag_service = importlib.import_module("app.rag.search")
+
+    async def fixture_retrieve(*_args, **_kwargs):
+        # The real database may contain ready rows; this test deliberately
+        # selects the fixture retriever and asserts its wire label.
+        return []
+
+    monkeypatch.setattr(rag_service, "retrieve", fixture_retrieve)
+    response = TestClient(app).post(
+        "/api/v1/rag/search",
+        json={"domain": "course_websec", "query": "SQL injection", "top_k": 3},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["fallback"] is True
+    assert body.get("mode") != "real"
 
 
 def test_courses_list():

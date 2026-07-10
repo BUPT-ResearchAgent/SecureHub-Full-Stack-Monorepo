@@ -53,6 +53,76 @@ InputModel = TypeVar("InputModel", bound=BaseModel)
 OutputModel = TypeVar("OutputModel", bound=BaseModel)
 
 
+def _compact_json_schema(model: type[BaseModel]) -> dict[str, Any]:
+    """Build a deterministic, valid schema hint without string truncation.
+
+    Skill output models are intentionally small, but their Pydantic schema can
+    contain titles, descriptions and definitions that are unnecessary in a
+    provider prompt.  This projection keeps types, properties, required fields
+    and collection constraints while resolving local ``$ref`` values.  The
+    result remains a JSON object at every depth, so the prompt cannot contain a
+    schema cut in the middle of a JSON token.
+    """
+    raw_schema = model.model_json_schema()
+    definitions = raw_schema.get("$defs", {}) if isinstance(raw_schema, dict) else {}
+
+    def compact(node: Any, active_refs: tuple[str, ...] = ()) -> dict[str, Any]:
+        if not isinstance(node, dict):
+            return {}
+        ref = node.get("$ref")
+        if isinstance(ref, str) and ref.startswith("#/$defs/"):
+            ref_name = ref.rsplit("/", 1)[-1]
+            if ref_name in active_refs:
+                return {"type": "object"}
+            return compact(definitions.get(ref_name, {}), (*active_refs, ref_name))
+
+        result: dict[str, Any] = {}
+        for key in (
+            "type",
+            "format",
+            "enum",
+            "const",
+            "minimum",
+            "maximum",
+            "exclusiveMinimum",
+            "exclusiveMaximum",
+            "minLength",
+            "maxLength",
+            "minItems",
+            "maxItems",
+            "pattern",
+        ):
+            if key in node:
+                result[key] = node[key]
+
+        properties = node.get("properties")
+        if isinstance(properties, dict):
+            result["type"] = result.get("type", "object")
+            result["properties"] = {
+                name: compact(properties[name], active_refs)
+                for name in sorted(properties)
+            }
+        required = node.get("required")
+        if isinstance(required, list) and required:
+            result["required"] = sorted(str(name) for name in required)
+
+        if "additionalProperties" in node:
+            additional = node["additionalProperties"]
+            result["additionalProperties"] = (
+                compact(additional, active_refs) if isinstance(additional, dict) else bool(additional)
+            )
+        if "items" in node:
+            result["items"] = compact(node["items"], active_refs)
+
+        for key in ("anyOf", "oneOf", "allOf"):
+            variants = node.get(key)
+            if isinstance(variants, list):
+                result[key] = [compact(item, active_refs) for item in variants]
+        return result
+
+    return compact(raw_schema)
+
+
 def _summarize(obj: Any, max_chars: int = 800) -> dict[str, Any]:
     """Best-effort JSON-safe summary suitable for agent_runs storage."""
     if isinstance(obj, BaseModel):
@@ -582,7 +652,12 @@ class Harness:
                 evidence_text=evidence_text,
                 persona_text=ctx.persona_summary or "(persona not provided)",
                 task_instruction=task_instruction,
-                output_schema_hint=json.dumps(spec.output_model.model_json_schema(), ensure_ascii=False)[:2000],
+                output_schema_hint=json.dumps(
+                    _compact_json_schema(spec.output_model),
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                    sort_keys=True,
+                ),
             )
         except KeyError:
             # The skill template uses an unknown placeholder; fall back to a generic envelope

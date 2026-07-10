@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import asyncio
 from types import SimpleNamespace
 
 import pytest
@@ -15,9 +16,16 @@ from scripts.smoke_agent_run_real import (
     validate_confirmation,
     validate_success_events,
 )
+from scripts.probe_deepseek_json_protocol import (
+    classify_json as classify_protocol_json,
+    main as probe_main,
+)
 from app.runtime.harness.live_adapters import StrictLiveAdapters
+from app.runtime.harness.live_adapters import StrictLLMOutputInvalid
+from app.runtime.harness.base import _compact_json_schema
+from app.agents.task_orchestrator.skills.generate_learning_path import GenerateLearningPathOutput
 from app.llm.deepseek_provider import DeepSeekProvider
-from app.llm.provider import LLMMessage
+from app.llm.provider import LLMChunk, LLMMessage
 
 
 def _event(event_id: int, event_name: str, **payload: object) -> dict[str, object]:
@@ -155,3 +163,72 @@ def test_deepseek_payload_can_request_json_object_without_network():
         response_format={"type": "json_object"},
     )
     assert payload["response_format"] == {"type": "json_object"}
+
+
+def test_strict_json_diagnostic_exposes_only_safe_parse_metadata():
+    with pytest.raises(StrictLLMOutputInvalid) as error:
+        StrictLiveAdapters._parse_json("", finish_reason="length")
+    assert error.value.diagnostics == {
+        "phase": "parse",
+        "finish_reason": "length",
+        "content_length": 0,
+        "has_final_content": False,
+        "parse_category": "no_final_content",
+    }
+    assert "private" not in str(error.value)
+    assert "prompt" not in str(error.value)
+
+
+def test_compact_output_schema_is_complete_valid_json_and_not_truncated():
+    schema = _compact_json_schema(GenerateLearningPathOutput)
+    serialized = json.dumps(schema, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+    assert json.loads(serialized) == schema
+    assert schema["type"] == "object"
+    assert set(schema["properties"]) >= {
+        "content",
+        "evidence_chunk_ids",
+        "quality_score",
+        "nodes",
+        "edges",
+        "milestones",
+    }
+
+
+def test_protocol_probe_confirmation_and_safe_json_classification(capsys):
+    assert probe_main([]) == 1
+    output = json.loads(capsys.readouterr().out)
+    assert output == {"ok": False, "error_code": "LIVE_CONFIRMATION_REQUIRED"}
+    assert classify_protocol_json('{"answer":true}') == "json_object"
+    assert classify_protocol_json("reasoning only") == "invalid_json"
+    assert classify_protocol_json("") == "no_final_content"
+
+
+def test_strict_adapter_rejects_reasoning_only_stream_without_sse_token():
+    class ReasoningOnlyProvider:
+        provider_name = "deepseek"
+        model_name = "fake-deepseek-v4"
+
+        def estimate_tokens(self, text: str) -> int:
+            return max(1, len(text) // 4)
+
+        async def stream_generate(self, *_args, **_kwargs):
+            yield LLMChunk(content="", index=0, finish_reason="stop")
+
+    events: list[dict[str, object]] = []
+
+    async def emit(event: dict[str, object]) -> None:
+        events.append(event)
+
+    async def run():
+        adapters = StrictLiveAdapters(provider=ReasoningOnlyProvider())
+        await adapters.llm_complete(
+            "redacted prompt",
+            skill_name="GenerateCourseDoc",
+            stream=True,
+            emit=emit,
+        )
+
+    with pytest.raises(StrictLLMOutputInvalid) as error:
+        asyncio.run(run())
+    assert error.value.diagnostics["parse_category"] == "no_final_content"
+    assert events == []

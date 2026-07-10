@@ -53,10 +53,11 @@ _URL_OPENER = build_opener(ProxyHandler({}))
 class SmokeFailure(RuntimeError):
     """An actionable, safe-to-print smoke failure."""
 
-    def __init__(self, code: str, message: str) -> None:
+    def __init__(self, code: str, message: str, *, root_run_id: str | None = None) -> None:
         super().__init__(message)
         self.code = code
         self.message = message
+        self.root_run_id = root_run_id
 
 
 def _open_url(request: Request, *, timeout: float):
@@ -448,90 +449,96 @@ async def _query_agent_runs(run_id: str) -> dict[str, Any]:
 def run_success(base_url: str, timeout: float) -> dict[str, Any]:
     start = _start(base_url, timeout)
     run_id = str(start["run_id"])
-    events = _request_sse(
-        base_url,
-        f"{API_PREFIX}/workflow-runs/{run_id}/events",
-        timeout=timeout,
-    )
-    status = _status(base_url, run_id, timeout)
-    evidence_ids = validate_success_events(events, status)
-    db = asyncio.run(_query_agent_runs(run_id))
-    if set(db["run_ids"]) != {
-        str(child["agent_run_id"])
-        for child in status["child_runs"]
-    }:
-        raise SmokeFailure("DB_TRACE_UUID_MISMATCH", "PostgreSQL child UUIDs differ from status API")
-    if set(db["evidence_ids"]) != evidence_ids:
-        raise SmokeFailure("DB_EVIDENCE_MISMATCH", "PostgreSQL evidence IDs differ from SSE evidence IDs")
-    replay = _request_sse(
-        base_url,
-        f"{API_PREFIX}/workflow-runs/{run_id}/events",
-        timeout=timeout,
-        headers={"Last-Event-ID": "0"},
-    )
-    if [int(event["event_id"]) for event in replay] != [int(event["event_id"]) for event in events]:
-        raise SmokeFailure("SSE_REPLAY_MISMATCH", "Last-Event-ID replay did not reproduce the event history")
-    return {
-        "mode": EXPECTED_MODE,
-        "provider": EXPECTED_PROVIDER,
-        "model": start["model"],
-        "root_run_id": run_id,
-        "status": status["status"],
-        "event_counts": dict(Counter(event["event"] for event in events)),
-        "event_count": len(events),
-        "replay_event_count": len(replay),
-        "agent_run_count": db["count"],
-        "agent_run_ids": db["run_ids"],
-        "evidence_ids": sorted(evidence_ids),
-    }
+    try:
+        events = _request_sse(
+            base_url,
+            f"{API_PREFIX}/workflow-runs/{run_id}/events",
+            timeout=timeout,
+        )
+        status = _status(base_url, run_id, timeout)
+        evidence_ids = validate_success_events(events, status)
+        db = asyncio.run(_query_agent_runs(run_id))
+        if set(db["run_ids"]) != {
+            str(child["agent_run_id"])
+            for child in status["child_runs"]
+        }:
+            raise SmokeFailure("DB_TRACE_UUID_MISMATCH", "PostgreSQL child UUIDs differ from status API")
+        if set(db["evidence_ids"]) != evidence_ids:
+            raise SmokeFailure("DB_EVIDENCE_MISMATCH", "PostgreSQL evidence IDs differ from SSE evidence IDs")
+        replay = _request_sse(
+            base_url,
+            f"{API_PREFIX}/workflow-runs/{run_id}/events",
+            timeout=timeout,
+            headers={"Last-Event-ID": "0"},
+        )
+        if [int(event["event_id"]) for event in replay] != [int(event["event_id"]) for event in events]:
+            raise SmokeFailure("SSE_REPLAY_MISMATCH", "Last-Event-ID replay did not reproduce the event history")
+        return {
+            "mode": EXPECTED_MODE,
+            "provider": EXPECTED_PROVIDER,
+            "model": start["model"],
+            "root_run_id": run_id,
+            "status": status["status"],
+            "event_counts": dict(Counter(event["event"] for event in events)),
+            "event_count": len(events),
+            "replay_event_count": len(replay),
+            "agent_run_count": db["count"],
+            "agent_run_ids": db["run_ids"],
+            "evidence_ids": sorted(evidence_ids),
+        }
+    except SmokeFailure as exc:
+        raise SmokeFailure(exc.code, exc.message, root_run_id=run_id) from exc
 
 
 def run_cancel(base_url: str, timeout: float) -> dict[str, Any]:
     start = _start(base_url, timeout)
     run_id = str(start["run_id"])
-    cancel_cursor: int | None = None
-    cancel_response: dict[str, Any] | None = None
+    try:
+        cancel_cursor: int | None = None
+        cancel_response: dict[str, Any] | None = None
 
-    def cancel_after_token(event: dict[str, Any]) -> None:
-        nonlocal cancel_cursor, cancel_response
-        if event["event"] == "token" and cancel_cursor is None:
-            cancel_cursor = int(event["event_id"])
-            cancel_response = _request_json(
-                base_url,
-                "POST",
-                f"{API_PREFIX}/workflow-runs/{run_id}/cancel",
-                timeout=timeout,
-                expected_status=200,
-            )
+        def cancel_after_token(event: dict[str, Any]) -> None:
+            nonlocal cancel_cursor, cancel_response
+            if event["event"] == "token" and cancel_cursor is None:
+                cancel_cursor = int(event["event_id"])
+                cancel_response = _request_json(
+                    base_url,
+                    "POST",
+                    f"{API_PREFIX}/workflow-runs/{run_id}/cancel",
+                    timeout=timeout,
+                    expected_status=200,
+                )
 
-    events = _request_sse(
-        base_url,
-        f"{API_PREFIX}/workflow-runs/{run_id}/events",
-        timeout=timeout,
-        on_event=cancel_after_token,
-    )
-    if cancel_cursor is None or cancel_response is None:
-        terminal_errors = [event for event in events if event["event"] == "error"]
-        if terminal_errors:
-            code = str(terminal_errors[-1].get("code") or "WORKFLOW_FAILED")
-            raise SmokeFailure(
-                f"CANCEL_BEFORE_TOKEN_{code}",
-                "cancel workflow ended before a token, so cancel was not sent",
-            )
-        raise SmokeFailure("CANCEL_NOT_SENT", "cancel endpoint was not called after a token")
-    status = _status(base_url, run_id, timeout)
-    validate_cancel_events(events, status, cancel_cursor=cancel_cursor)
-    return {
-        "mode": EXPECTED_MODE,
-        "provider": EXPECTED_PROVIDER,
-        "model": start["model"],
-        "root_run_id": run_id,
-        "status": status["status"],
-        "cancel_cursor": cancel_cursor,
-        "cancel_response_status": cancel_response.get("status"),
-        "event_counts": dict(Counter(event["event"] for event in events)),
-        "event_count": len(events),
-    }
+        events = _request_sse(
+            base_url,
+            f"{API_PREFIX}/workflow-runs/{run_id}/events",
+            timeout=timeout,
+            on_event=cancel_after_token,
+        )
+        if cancel_cursor is None or cancel_response is None:
+            terminal_errors = [event for event in events if event["event"] == "error"]
+            if terminal_errors:
+                code = str(terminal_errors[-1].get("code") or "WORKFLOW_FAILED")
+                raise SmokeFailure(
+                    f"CANCEL_BEFORE_TOKEN_{code}",
+                    "cancel workflow ended before a token, so cancel was not sent",
+                )
+            raise SmokeFailure("CANCEL_NOT_SENT", "cancel endpoint was not called after a token")
+        status = _status(base_url, run_id, timeout)
+        validate_cancel_events(events, status, cancel_cursor=cancel_cursor)
+        return {
+            "mode": EXPECTED_MODE,
+            "provider": EXPECTED_PROVIDER,
+            "model": start["model"],
+            "root_run_id": run_id,
+            "status": status["status"],
+            "cancel_cursor": cancel_cursor,
+            "cancel_response_status": cancel_response.get("status"),
+            "event_counts": dict(Counter(event["event"] for event in events)),
+            "event_count": len(events),
+        }
+    except SmokeFailure as exc:
+        raise SmokeFailure(exc.code, exc.message, root_run_id=run_id) from exc
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -570,7 +577,14 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps({"ok": True, "result": result}, ensure_ascii=False, sort_keys=True))
         return 0
     except SmokeFailure as exc:
-        print(json.dumps({"ok": False, "error_code": exc.code, "message": exc.message}, ensure_ascii=False))
+        failure: dict[str, Any] = {
+            "ok": False,
+            "error_code": exc.code,
+            "message": exc.message,
+        }
+        if exc.root_run_id is not None:
+            failure["root_run_id"] = exc.root_run_id
+        print(json.dumps(failure, ensure_ascii=False))
         return 1
 
 

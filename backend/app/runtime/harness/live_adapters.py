@@ -44,6 +44,32 @@ class StrictLLMOutputInvalid(HarnessError):
 
     code = "LLM_OUTPUT_INVALID"
 
+    def __init__(
+        self,
+        message: str = "DeepSeek output failed strict JSON validation",
+        *,
+        phase: str = "parse",
+        finish_reason: str | None = None,
+        content_length: int = 0,
+        has_final_content: bool = False,
+        parse_category: str = "invalid_json",
+    ) -> None:
+        safe_finish_reason = finish_reason if finish_reason in {
+            "stop",
+            "length",
+            "tool_calls",
+            "content_filter",
+        } else "other" if finish_reason else "unknown"
+        self.diagnostics = {
+            "phase": phase,
+            "finish_reason": safe_finish_reason,
+            "content_length": max(0, int(content_length)),
+            "has_final_content": bool(has_final_content),
+            "parse_category": parse_category,
+        }
+        detail = "; ".join(f"{key}={value}" for key, value in self.diagnostics.items())
+        super().__init__(f"{message}; {detail}")
+
 
 RetrieveFn = Callable[..., Awaitable[list[Any]]]
 EventEmitter = Callable[[dict[str, Any]], Awaitable[None]]
@@ -183,6 +209,7 @@ class StrictLiveAdapters:
         try:
             if stream:
                 parts: list[str] = []
+                finish_reason: str | None = None
                 async for chunk in self._provider.stream_generate(
                     messages,
                     temperature=0.2,
@@ -190,8 +217,11 @@ class StrictLiveAdapters:
                     response_format=JSON_RESPONSE_FORMAT,
                 ):
                     self._raise_if_cancelled()
-                    parts.append(chunk.content)
-                    if emit is not None:
+                    if chunk.finish_reason is not None:
+                        finish_reason = chunk.finish_reason
+                    if chunk.content:
+                        parts.append(chunk.content)
+                    if emit is not None and chunk.content:
                         await emit({"event": "token", "content": chunk.content})
                     self._raise_if_cancelled()
                 raw_content = "".join(parts)
@@ -206,6 +236,7 @@ class StrictLiveAdapters:
                     response_format=JSON_RESPONSE_FORMAT,
                 )
                 raw_content = response.content
+                finish_reason = response.finish_reason
                 prompt_tokens = response.usage.prompt_tokens
                 completion_tokens = response.usage.completion_tokens
                 total_tokens = response.usage.total_tokens
@@ -217,7 +248,7 @@ class StrictLiveAdapters:
             raise StrictProviderUnavailable("DeepSeek generation is unavailable") from exc
 
         self._raise_if_cancelled()
-        payload = self._parse_json(raw_content)
+        payload = self._parse_json(raw_content, finish_reason=finish_reason)
         payload["provider"] = self.provider_name
         payload["model"] = self.model_name
         payload["prompt_tokens"] = int(prompt_tokens or 0)
@@ -249,13 +280,35 @@ class StrictLiveAdapters:
         )
 
     @staticmethod
-    def _parse_json(raw_content: str) -> dict[str, Any]:
+    def _parse_json(raw_content: str, *, finish_reason: str | None = None) -> dict[str, Any]:
+        has_final_content = isinstance(raw_content, str) and bool(raw_content.strip())
+        content_length = len(raw_content) if isinstance(raw_content, str) else 0
+        if not has_final_content:
+            raise StrictLLMOutputInvalid(
+                phase="parse",
+                finish_reason=finish_reason,
+                content_length=content_length,
+                has_final_content=False,
+                parse_category="no_final_content",
+            )
         try:
             payload = json.loads(raw_content)
         except (TypeError, json.JSONDecodeError) as exc:
-            raise StrictLLMOutputInvalid("DeepSeek output is not valid JSON") from exc
+            raise StrictLLMOutputInvalid(
+                phase="parse",
+                finish_reason=finish_reason,
+                content_length=content_length,
+                has_final_content=True,
+                parse_category="invalid_json",
+            ) from exc
         if not isinstance(payload, dict):
-            raise StrictLLMOutputInvalid("DeepSeek output must be a JSON object")
+            raise StrictLLMOutputInvalid(
+                phase="parse",
+                finish_reason=finish_reason,
+                content_length=content_length,
+                has_final_content=True,
+                parse_category="non_object_json",
+            )
         return payload
 
 
