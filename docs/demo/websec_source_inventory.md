@@ -2,31 +2,95 @@
 
 Status: real
 
-## P0 课程范围
+## P0 / P1 课程范围
 
 课程：Web 安全基础  
 Domain：`course_websec`  
 核心知识点：SQL 注入、XSS、CSRF、文件上传、SSRF、认证与会话安全、访问控制、命令执行、反序列化、安全编码与防护。
 
-## 新增采集来源
+## Source Inventory
 
-| 来源 | platform | 阶段 | 入库方式 | 合规说明 |
-|---|---|---:|---|---|
-| OWASP SQL Injection | `owasp` | P0 | `manual_import` / Markdown 摘要 | 公开社区资料，保留来源链接和 CC BY-SA 说明 |
-| OWASP XSS | `owasp` | P0 | `manual_import` / Markdown 摘要 | 公开社区资料，保留来源链接和 CC BY-SA 说明 |
-| PortSwigger CSRF | `portswigger` | P0 | `manual_import` / Markdown 摘要 | 公开学习资料，只做课程索引和摘要切片 |
-| PortSwigger File Upload | `portswigger` | P0 | `manual_import` / Markdown 摘要 | 公开学习资料，只做课程索引和摘要切片 |
-| SecureHub 课程组手工讲义 | `manual` | P0 | `markdown_import` | 团队整理演示材料，可展示全文 |
-| PDF / MinerU 解析输出 | `mineru` | P0 | `pdf_mineru_import` | 原 PDF 和 Markdown 分别登记为资产，保留原始来源 |
+| Source | platform | source_url | rights_note | collection_mode | asset_type | 已入库 | 有测试 |
+|---|---|---|---|---|---|---|---|
+| OWASP SQL Injection | `owasp` | https://owasp.org/www-community/attacks/SQL_Injection | OWASP 社区公开资料，教学演示引用并保留来源。 | `manual` / `scrapling` fixture | `markdown_full` / `web_article` | 是：`seed_course_websec.py`，offline loader fixture | 是：RAG smoke、Scrapling loader |
+| OWASP XSS | `owasp` | https://owasp.org/www-community/attacks/xss/ | OWASP 社区公开资料，按 CC BY-SA 4.0 署名引用并保留来源。 | `manual` / `scrapling` fixture | `markdown_full` / `web_article` | 是：seed 覆盖反射型/存储型 XSS，loader 有 offline fixture | 是：RAG smoke、Scrapling preset |
+| PortSwigger CSRF | `portswigger` | https://portswigger.net/web-security/csrf | PortSwigger 公开学习资料，保留链接，仅做课程索引和摘要切片。 | `manual` | `markdown_full` | 是：seed 覆盖 CSRF | 是：RAG smoke |
+| PortSwigger File Upload | `portswigger` | https://portswigger.net/web-security/file-upload | PortSwigger 公开学习资料，保留链接，仅做课程索引和摘要切片。 | `manual` | `markdown_full` | 是：seed 覆盖文件上传 | 是：RAG smoke |
+| SecureHub 手工讲义 | `manual` | https://demo.securehub.local/websec/*.md | 团队整理的课程演示材料，可在比赛演示中展示。 | `manual` | `markdown_full` | 是：seed 覆盖认证、访问控制、命令执行等主题 | 是：RAG smoke、markdown loader |
+| PDF / MinerU SSRF fixture | `mineru` | https://demo.securehub.local/pdf/websec-ssrf-mineru.pdf | PDF/MinerU 离线解析 fixture；仅用于课程知识库演示，保留原始来源。 | `manual` fixture; loader path is `pdf_mineru_import` | `pdf` | 是：seed metadata；loader 可写 `original_pdf` + `markdown_full` + `page_image` | 是：RAG smoke、course loader |
+| GitHub Docs fixture | `github` | https://raw.githubusercontent.com/securehub-demo/websec-labs/main/docs/secure-coding.md | 开源仓库公开文档；遵守仓库许可证，保留来源链接。 | `scrapling` offline fixture | `raw_html` → chunks | 是：offline importer test 写入统一表 | 是：GitHub Docs loader + `platform=github` retrieval |
+| B 站 MediaCrawler fixture + 2026-07-08 export | `bili` | B 站视频原链（逐条写入 `documents.url` / `metadata.source_url`） | Bilibili UGC 用户内容，仅学习用途保留摘要与引用；不下载原视频，不批量转载。 | `mediacrawler` offline export | `media_item_json`；有评论 export 时 `media_comment_json` | 是：fixture + 19 条真实 contents export 写入统一表 | 是：MediaCrawler normalizer、PII redaction、retrieval |
 
-## 字段要求
+## 2026-07-07 6-C-1 Scrapling 真采集
+
+| 状态 | platform | source_url | rights_note | collection_mode | chunks | 有无测试 |
+|---|---|---|---|---|---:|---|
+| [真采集/2026-07-07] | `owasp` | https://owasp.org/www-community/attacks/SQL_Injection | OWASP 公开社区文档；按 CC BY-SA 4.0 署名引用，保留来源链接。 | `scrapling` | 39 | 是：cache replay + metadata |
+| [真采集/2026-07-07] | `owasp` | https://owasp.org/www-community/attacks/xss/ | OWASP 公开社区文档；按 CC BY-SA 4.0 署名引用，保留来源链接。 | `scrapling` | 63 | 是：cache replay + metadata |
+| [不可达/2026-07-07] | `owasp` | https://owasp.org/www-community/OWASP_Top_Ten | OWASP 公开社区文档；按 CC BY-SA 4.0 署名引用，保留来源链接。 | `scrapling` | 0 | 源码标注 404，不入库 |
+| [真采集/2026-07-07] | `owasp` | https://owasp.org/www-community/attacks/csrf | OWASP 公开社区文档；按 CC BY-SA 4.0 署名引用，保留来源链接。 | `scrapling` | 52 | 是：cache replay + metadata |
+| [真采集/2026-07-07] | `owasp` | https://owasp.org/www-community/vulnerabilities/Unrestricted_File_Upload | OWASP 公开社区文档；按 CC BY-SA 4.0 署名引用，保留来源链接。 | `scrapling` | 93 | 是：cache replay + metadata |
+| [真采集/2026-07-07] | `owasp` | https://owasp.org/www-community/attacks/Server_Side_Request_Forgery | OWASP 公开社区文档；按 CC BY-SA 4.0 署名引用，保留来源链接。 | `scrapling` | 8 | 是：cache replay + metadata |
+| [真采集/2026-07-07] | `owasp` | https://owasp.org/www-community/attacks/Session_hijacking_attack | OWASP 公开社区文档；按 CC BY-SA 4.0 署名引用，保留来源链接。 | `scrapling` | 12 | 是：cache replay + metadata |
+| [真采集/2026-07-07] | `owasp` | https://owasp.org/www-community/Broken_Access_Control | OWASP 公开社区文档；按 CC BY-SA 4.0 署名引用，保留来源链接。 | `scrapling` | 33 | 是：cache replay + metadata |
+| [真采集/2026-07-07] | `owasp` | https://owasp.org/www-community/attacks/Command_Injection | OWASP 公开社区文档；按 CC BY-SA 4.0 署名引用，保留来源链接。 | `scrapling` | 35 | 是：cache replay + metadata |
+| [真采集/2026-07-07] | `owasp` | https://owasp.org/www-community/vulnerabilities/Deserialization_of_untrusted_data | OWASP 公开社区文档；按 CC BY-SA 4.0 署名引用，保留来源链接。 | `scrapling` | 41 | 是：cache replay + metadata |
+| [不可达/2026-07-07] | `owasp` | https://owasp.org/www-community/vulnerabilities/Insecure_Cryptographic_Storage | OWASP 公开社区文档；按 CC BY-SA 4.0 署名引用，保留来源链接。 | `scrapling` | 0 | 源码标注 404，不入库 |
+| [真采集/2026-07-07] | `portswigger` | https://portswigger.net/web-security/sql-injection | PortSwigger Web Security Academy 公开学习内容，仅引用摘要与切片供教学演示，链接回原页 | `scrapling` | 29 | 是：cache replay + metadata |
+| [真采集/2026-07-07] | `portswigger` | https://portswigger.net/web-security/cross-site-scripting | PortSwigger Web Security Academy 公开学习内容，仅引用摘要与切片供教学演示，链接回原页 | `scrapling` | 24 | 是：cache replay + metadata |
+| [真采集/2026-07-07] | `portswigger` | https://portswigger.net/web-security/csrf | PortSwigger Web Security Academy 公开学习内容，仅引用摘要与切片供教学演示，链接回原页 | `scrapling` | 17 | 是：cache replay + metadata |
+| [真采集/2026-07-07] | `portswigger` | https://portswigger.net/web-security/file-upload | PortSwigger Web Security Academy 公开学习内容，仅引用摘要与切片供教学演示，链接回原页 | `scrapling` | 45 | 是：cache replay + metadata |
+| [真采集/2026-07-07] | `portswigger` | https://portswigger.net/web-security/ssrf | PortSwigger Web Security Academy 公开学习内容，仅引用摘要与切片供教学演示，链接回原页 | `scrapling` | 24 | 是：cache replay + metadata |
+| [真采集/2026-07-07] | `portswigger` | https://portswigger.net/web-security/authentication | PortSwigger Web Security Academy 公开学习内容，仅引用摘要与切片供教学演示，链接回原页 | `scrapling` | 12 | 是：cache replay + metadata |
+| [真采集/2026-07-07] | `portswigger` | https://portswigger.net/web-security/access-control | PortSwigger Web Security Academy 公开学习内容，仅引用摘要与切片供教学演示，链接回原页 | `scrapling` | 29 | 是：cache replay + metadata |
+| [真采集/2026-07-07] | `github` | https://raw.githubusercontent.com/OWASP/CheatSheetSeries/master/cheatsheets/SQL_Injection_Prevention_Cheat_Sheet.md | OWASP CheatSheetSeries 官方仓库；按 CC BY-SA 4.0 署名引用；raw markdown 直取 | `scrapling` | 38 | 是：cache replay + metadata |
+| [真采集/2026-07-07] | `github` | https://raw.githubusercontent.com/OWASP/CheatSheetSeries/master/cheatsheets/Cross_Site_Scripting_Prevention_Cheat_Sheet.md | OWASP CheatSheetSeries 官方仓库；按 CC BY-SA 4.0 署名引用；raw markdown 直取 | `scrapling` | 50 | 是：cache replay + metadata |
+| [真采集/2026-07-07] | `github` | https://raw.githubusercontent.com/OWASP/CheatSheetSeries/master/cheatsheets/Cross-Site_Request_Forgery_Prevention_Cheat_Sheet.md | OWASP CheatSheetSeries 官方仓库；按 CC BY-SA 4.0 署名引用；raw markdown 直取 | `scrapling` | 135 | 是：cache replay + metadata |
+| [真采集/2026-07-07] | `github` | https://raw.githubusercontent.com/OWASP/CheatSheetSeries/master/cheatsheets/File_Upload_Cheat_Sheet.md | OWASP CheatSheetSeries 官方仓库；按 CC BY-SA 4.0 署名引用；raw markdown 直取 | `scrapling` | 24 | 是：cache replay + metadata |
+| [真采集/2026-07-07] | `github` | https://raw.githubusercontent.com/OWASP/CheatSheetSeries/master/cheatsheets/Server_Side_Request_Forgery_Prevention_Cheat_Sheet.md | OWASP CheatSheetSeries 官方仓库；按 CC BY-SA 4.0 署名引用；raw markdown 直取 | `scrapling` | 52 | 是：cache replay + metadata |
+| [真采集/2026-07-07] | `github` | https://raw.githubusercontent.com/OWASP/CheatSheetSeries/master/cheatsheets/Authentication_Cheat_Sheet.md | OWASP CheatSheetSeries 官方仓库；按 CC BY-SA 4.0 署名引用；raw markdown 直取 | `scrapling` | 75 | 是：cache replay + metadata |
+| [真采集/2026-07-07] | `github` | https://raw.githubusercontent.com/OWASP/CheatSheetSeries/master/cheatsheets/Access_Control_Cheat_Sheet.md | OWASP CheatSheetSeries 官方仓库；按 CC BY-SA 4.0 署名引用；raw markdown 直取 | `scrapling` | 1 | 是：cache replay + metadata |
+
+## 2026-07-07 6-C-2 中文教材章节级入库
+
+| 状态 | platform | 教材 | source_url | rights_note | collection_mode | chapters | chunks | 有无测试 |
+|---|---|---|---|---|---|---:|---:|---|
+| [已入库/2026-07-07] | `mineru` | 现代密码学教程（第2版） | `local://crypto-basics.pdf` | 教材版权归原作者与出版社；仅用于 SecureHub 内部教学演示 RAG 检索，不对外分发原文。 | `manual` / `pdf_mineru` | 12 | 1218 | 是：chapter classifier、MinerU ingestion、RAG fixture |
+| [已入库/2026-07-07] | `mineru` | 网络安全原理与实践 | `local://network-security.pdf` | 同上 | `manual` / `pdf_mineru` | 23 | 724 | 是：chapter classifier、MinerU ingestion、RAG fixture |
+| [已入库/2026-07-07] | `mineru` | 汇编语言（第3版） | `local://reverse-engineering.pdf` | 同上 | `manual` / `pdf_mineru` | 13 | 538 | 是：chapter classifier、MinerU ingestion、RAG fixture |
+
+说明：三本教材按“第 X 章”语义切出 `markdown_chapter` assets，并把 `chapter / heading_path / section_hint / asset_id / book_title` 写入每个 chunk metadata。PDF 和整本 `full.md` 均被 `.gitignore` 排除；本地 PDF 本体需由项目负责人保留或重新复制，不进入 git。
+
+## 2026-07-08 6-C-3 MediaCrawler B 站真实 export
+
+| 状态 | platform | RawDir | contents | comments | chunks | assets | 有无测试 |
+|---|---|---|---:|---:|---:|---:|---|
+| [已入库/2026-07-08] | `bili` | `data/raw/mediacrawler/bili/jsonl/` | 19 | 0 | 21 | 19 `media_item_json` | 是：字段变体、入库、PII 清洗、RAG filter |
+
+说明：本批次输入包含 `search_contents_2026-06-15.jsonl` 与 `search_creators_2026-06-15.jsonl`。creators 文件只用于识别输入结构，不作为课程 document 入库；未提供 comments export，所以没有 `media_comment_json`。contents 提供 `video_cover_url`，仅作为 `documents.metadata.cover_url` 保存，未下载封面或原视频。
+
+## Metadata Floor
 
 每条资料进入 `documents.metadata` 与 `chunks.metadata` 时必须包含：
 
-`platform`、`source_url`、`author`、`published_at`、`fetched_at`、`license`、`rights_note`、`asset_type`。
+`platform`、`source_url`、`author`、`rights_note`、`collection_mode`、`asset_type`。
 
-## P1 / P2 预留
+建议同时保留：
 
-Scrapling：OWASP、PortSwigger、GitHub Docs、公开安全博客。  
-MediaCrawler：B 站、知乎、小红书的小规模离线 export。  
-MindSpider：仅作 P2 舆情流程参考，不进入 P0 主链路。
+`published_at`、`fetched_at`、`license`、`chapter`、`page_no`、`reliability`。
+
+当前 seed 验收：
+
+- 17 `knowledge_nodes`
+- 68 `chunks`
+- 5 SQL 注入 `quiz_items`
+- official source：OWASP / PortSwigger
+- markdown/manual source：SecureHub 手工讲义
+- PDF/MinerU evidence：`platform=mineru`，`asset_type=pdf`，`page_no=12`
+
+## 合规边界
+
+- Scrapling / GitHub Docs / OWASP / PortSwigger 测试使用离线 fixture，不依赖外网跑 CI。
+- MediaCrawler 只消费离线 export fixture 或人工提供的小规模真实 export，不爬公网、不引入登录态，不保留 token/cookie/UID/avatar/IP 属地/主页链接等敏感字段。
+- MindSpider 仅保留 P2 reference demo 说明，不进入生产采集链路，不新增 agent，不新增并列表。
+- fund / policy / job / competition 扩展数据若需要展示，只能少量 seed/fixture，继续使用统一 `documents/chunks` 并按 `domain` 区分。

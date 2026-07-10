@@ -3,14 +3,7 @@ import { Bot, Paperclip, User } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { EvidenceChunkDTO } from '@/lib/sse.types';
-
-export type CompanionMessage = {
-  id: string;
-  role: 'assistant' | 'user';
-  content: string;
-  status: 'done' | 'generating' | 'error' | 'stopped';
-  evidence: EvidenceChunkDTO[];
-};
+import type { CompanionAttachment, CompanionMessage } from './types';
 
 type Props = {
   messages: CompanionMessage[];
@@ -51,7 +44,8 @@ function MessageRow({ message }: { message: CompanionMessage }) {
     return (
       <div className="flex items-start justify-end gap-3">
         <div className="max-w-[640px] rounded-2xl rounded-tr-md bg-brand-blue-600 px-3.5 py-2.5 text-sm leading-relaxed text-white shadow-[0_8px_22px_-14px_rgba(0,51,153,0.55)]">
-          <p className="whitespace-pre-wrap">{message.content}</p>
+          {message.attachments?.length ? <AttachmentGrid attachments={message.attachments} /> : null}
+          {message.content ? <p className="mt-2 whitespace-pre-wrap first:mt-0">{message.content}</p> : null}
         </div>
         <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-slate-200/80 text-slate-600">
           <User className="h-4 w-4" />
@@ -87,6 +81,25 @@ function MessageRow({ message }: { message: CompanionMessage }) {
   );
 }
 
+function AttachmentGrid({ attachments }: { attachments: CompanionAttachment[] }) {
+  return (
+    <div className="grid grid-cols-3 gap-2">
+      {attachments.map((attachment) => (
+        <figure key={attachment.id} className="overflow-hidden rounded-xl bg-white/10 ring-1 ring-white/20">
+          <img
+            src={attachment.url}
+            alt={attachment.name}
+            className="h-20 w-20 object-cover"
+          />
+          <figcaption className="max-w-20 truncate px-1.5 py-1 text-[10px] text-blue-50">
+            {attachment.name}
+          </figcaption>
+        </figure>
+      ))}
+    </div>
+  );
+}
+
 function EvidenceInline({ chunks }: { chunks: EvidenceChunkDTO[] }) {
   return (
     <div className="mt-3 max-w-[720px] rounded-xl bg-brand-blue-50/60 px-3 py-2">
@@ -100,7 +113,7 @@ function EvidenceInline({ chunks }: { chunks: EvidenceChunkDTO[] }) {
             <span className="mr-1 font-medium text-brand-blue-700">
               {chunk.chapter ?? chunk.platform ?? '证据片段'}：
             </span>
-            {chunk.excerpt}
+            {chunk.chunk_text}
           </li>
         ))}
       </ul>

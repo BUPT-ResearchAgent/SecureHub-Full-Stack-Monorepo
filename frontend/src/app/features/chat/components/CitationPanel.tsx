@@ -1,5 +1,6 @@
 import { ExternalLink, ShieldCheck } from 'lucide-react';
 import type { EvidenceChunkDTO } from '@/lib/sse.types';
+import { getEvidenceText } from '@/lib/evidence-text';
 import { CollectionModeBadge } from '@/app/features/sources/components/CollectionModeBadge';
 import { SourceBadge } from '@/app/features/sources/components/SourceBadge';
 
@@ -37,16 +38,19 @@ export function CitationPanel({ chunks }: { chunks: EvidenceChunkDTO[] }) {
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-1.5">
                   <SourceBadge platform={chunk.platform} />
-                  <CollectionModeBadge mode={chunk.metadata?.collection_mode} />
+                  <CollectionModeBadge mode={chunk.collection_mode ?? undefined} />
                   <span className="inline-flex items-center gap-1 rounded-md bg-emerald-50 px-2 py-0.5 text-xs text-emerald-700">
                     <ShieldCheck className="h-3 w-3" />
                     {formatReliability(chunk.reliability)}
                   </span>
                 </div>
-                <p className="mt-2 text-xs text-slate-500">
+                {chunk.title && (
+                  <p className="mt-2 text-xs font-semibold text-slate-900">{chunk.title}</p>
+                )}
+                <p className="mt-1 text-xs text-slate-500">
                   {chunk.author ?? '未标注作者'} · {formatDate(chunk.published_at)}
                 </p>
-                <p className="mt-2 text-xs leading-relaxed text-slate-600">{chunk.excerpt}</p>
+                <p className="mt-2 text-xs leading-relaxed text-slate-600">{getEvidenceText(chunk)}</p>
                 {chunk.rights_note && (
                   <p className="mt-2 rounded-md bg-slate-50 p-2 text-[11px] leading-5 text-slate-500">{chunk.rights_note}</p>
                 )}

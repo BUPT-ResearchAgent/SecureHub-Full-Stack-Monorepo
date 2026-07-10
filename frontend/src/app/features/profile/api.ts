@@ -27,10 +27,41 @@ export function getMyProfile(userId: string): Promise<ProfileDTO> {
   );
 }
 
+function adaptGeneratedResource(resource: GeneratedResourceDTO, userId: string): GeneratedResourceDTO {
+  return {
+    ...resource,
+    user_id: resource.user_id ?? userId,
+  };
+}
+
+function mockGeneratedResourcesForUser(userId: string): GeneratedResourceDTO[] {
+  return mockGeneratedResources.map((resource) => ({ ...resource, user_id: userId }));
+}
+
+function normalizeGeneratedResources(payload: unknown): GeneratedResourceDTO[] {
+  if (Array.isArray(payload)) return payload as GeneratedResourceDTO[];
+  if (payload && typeof payload === 'object' && Array.isArray((payload as { items?: unknown }).items)) {
+    return (payload as { items: GeneratedResourceDTO[] }).items;
+  }
+  throw new Error('生成资源响应格式异常');
+}
+
 export function listGeneratedResources(userId: string): Promise<GeneratedResourceDTO[]> {
   const query = new URLSearchParams({ user_id: userId });
   return withMockFallback(
-    () => apiGet<GeneratedResourceDTO[]>(`/api/v1/generated-resources?${query.toString()}`),
-    () => mockGeneratedResources.map((resource) => ({ ...resource, user_id: userId })),
+    async () => {
+      let payload: unknown;
+      try {
+        payload = await apiGet<unknown>(`/api/v1/generated-resources?${query.toString()}`);
+      } catch (error) {
+        if ((error as { status?: unknown })?.status === 404) {
+          return mockGeneratedResourcesForUser(userId);
+        }
+        throw error;
+      }
+      const resources = normalizeGeneratedResources(payload);
+      return resources.map((resource) => adaptGeneratedResource(resource, userId));
+    },
+    () => mockGeneratedResourcesForUser(userId),
   );
 }

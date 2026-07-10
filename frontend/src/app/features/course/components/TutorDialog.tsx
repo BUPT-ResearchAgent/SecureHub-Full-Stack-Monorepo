@@ -1,9 +1,11 @@
 // Status: partial-real
 import { useRef, useState } from 'react';
 import { useEvidence } from '@/app/components/EvidenceDrawer';
+import { getLLMErrorCopy } from '@/app/components/StateView';
 import { useAgentTraceDispatch } from '@/app/features/agents/store';
 import { ConversationPane } from '@/app/features/chat/components/ConversationPane';
 import type { ChatAgent, ChatMessage, ChatSession } from '@/app/features/chat/types';
+import { useRafTokenBuffer } from '@/lib/raf-token-buffer';
 import { streamTutorAsk } from '../api';
 import { useCourseState } from '../store';
 
@@ -56,8 +58,7 @@ export function TutorDialog() {
   const [session, setSession] = useState<ChatSession>(() => createSession());
   const [draft, setDraft] = useState('联合查询注入为什么要先判断列数？');
   const [generating, setGenerating] = useState(false);
-
-  const appendToken = (messageId: string, content: string) => {
+  const tokenBuffer = useRafTokenBuffer((messageId, content) => {
     setSession((current) => ({
       ...current,
       updatedAt: new Date().toISOString(),
@@ -65,6 +66,10 @@ export function TutorDialog() {
         message.id === messageId ? { ...message, content: `${message.content}${content}` } : message
       )),
     }));
+  });
+
+  const appendToken = (messageId: string, content: string) => {
+    tokenBuffer.push(messageId, content);
   };
 
   const patchMessage = (messageId: string, patch: Partial<ChatMessage>) => {
@@ -79,6 +84,7 @@ export function TutorDialog() {
     const question = (questionOverride ?? draft).trim();
     if (!question || generating) return;
     cancelRef.current?.();
+    tokenBuffer.cancel();
     const userMessage = createMessage(session.id, 'user', question, 'sent');
     const assistantMessage = createMessage(session.id, 'assistant', '', 'generating');
     setDraft('');
@@ -105,21 +111,25 @@ export function TutorDialog() {
           traceDispatch({ type: 'upsertRun', run });
         },
         onDone() {
+          tokenBuffer.flush();
           setGenerating(false);
           patchMessage(assistantMessage.id, { status: 'done' });
         },
         onError(error) {
           if (error.code === 'sse_reconnecting') {
+            tokenBuffer.flush();
             patchMessage(assistantMessage.id, {
               status: 'generating',
               content: '网络中断，正在重连…',
             });
             return;
           }
+          tokenBuffer.flush();
           setGenerating(false);
+          const copy = getLLMErrorCopy(error.code, error.message);
           patchMessage(assistantMessage.id, {
             status: 'error',
-            content: error.code === 'InsufficientEvidence' ? '证据不足，请切换知识点或补充资料后重试。' : error.message,
+            content: `${copy.title}：${error.message || copy.message}`,
           });
         },
       },
@@ -128,6 +138,7 @@ export function TutorDialog() {
 
   const resetSession = () => {
     cancelRef.current?.();
+    tokenBuffer.cancel();
     setGenerating(false);
     setSession(createSession());
   };
@@ -154,6 +165,7 @@ export function TutorDialog() {
         onSend={send}
         onStop={() => {
           cancelRef.current?.();
+          tokenBuffer.cancel();
           setGenerating(false);
         }}
         onRetry={retry}

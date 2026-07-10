@@ -58,7 +58,8 @@ async def main() -> None:
         "[mediacrawler_export_import] "
         f"documents={len(result.document_ids)} chunks={result.chunk_count} "
         f"assets={result.asset_count} contents={result.content_count} "
-        f"comments={result.comment_count} domain={result.domain}"
+        f"comments={result.comment_count} skipped={result.skipped_count} "
+        f"domain={result.domain}"
     )
 
 

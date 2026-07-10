@@ -1,15 +1,18 @@
 import json
 from functools import lru_cache
+from pathlib import Path
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=(".env", ".env.local"),
         env_file_encoding="utf-8",
         case_sensitive=True,
+        extra="ignore",
+        env_ignore_empty=True,
     )
 
     APP_NAME: str = "securehub-backend"
@@ -23,17 +26,28 @@ class Settings(BaseSettings):
             "http://127.0.0.1:5173",
         ]
     )
-    FRONTEND_ORIGIN_REGEX: str | None = (
-        r"^https?://(localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\])(:\d+)?$"
-    )
     DEBUG: bool = True
-    # SQLite by default so ``alembic upgrade head`` works without a Postgres
-    # container; production / docker-compose overrides via env to
-    # ``postgresql+asyncpg://...``. PG-only column types (Vector / JSONB /
-    # ARRAY / UUID) degrade automatically through compilers registered in
-    # ``app/db/migrations/env.py``.
-    DATABASE_URL: str = "sqlite+aiosqlite:///./securehub_dev.db"
+    DATABASE_URL: str = "postgresql+asyncpg://securehub:securehub@localhost:5432/securehub"
     REDIS_URL: str = "redis://localhost:6379/0"
+    STORAGE_PROVIDER: str = "local"
+    STORAGE_LOCAL_ROOT: Path = Path("./data/storage")
+    COS_SECRET_ID: str = ""
+    COS_SECRET_KEY: str = ""
+    COS_REGION: str = "ap-beijing"
+    COS_BUCKET: str = ""
+    COS_SCHEME: str = "https"
+    COS_PRESIGNED_EXPIRES_SECONDS: int = 600
+    COS_UPLOAD_MAX_BYTES: int = 100 * 1024 * 1024
+    UPLOAD_GATE_ENABLED: bool = True
+    UPLOAD_GATE_SECRET_HASH: str = ""
+    UPLOAD_GATE_MAX_BYTES: int = 104857600
+    UPLOAD_GATE_ALLOWED_MIME_PREFIXES: list[str] = Field(
+        default_factory=lambda: ["image/", "application/pdf", "text/markdown"]
+    )
+    UPLOAD_GATE_ALLOWED_PREFIXES: list[str] = Field(
+        default_factory=lambda: ["uploads/", "tmp/uploads/"]
+    )
+    UPLOAD_GATE_PRESIGNED_EXPIRES_SECONDS: int = 600
     LLM_PROVIDER: str = "xfyun"
     XFYUN_APP_ID: str = ""
     XFYUN_API_KEY: str = ""
@@ -41,8 +55,24 @@ class Settings(BaseSettings):
     XFYUN_MODEL: str = "spark-v4"
     DEEPSEEK_API_KEY: str = ""
     DEEPSEEK_MODEL: str = "deepseek-chat"
-    EMBEDDING_PROVIDER: str = "bge_m3"
+    AGENT_RUN_REAL_ENABLED: bool = False
+    AGENT_RUN_REAL_MAX_CONCURRENCY: int = Field(default=1, ge=1, le=16)
+    AGENT_RUN_REAL_MAX_TOKENS: int = Field(default=800, ge=1, le=4096)
+    AGENT_RUN_EVENT_HISTORY_LIMIT: int = Field(default=2048, ge=1, le=10000)
+    AGENT_RUN_EVENT_SUBSCRIBER_QUEUE_LIMIT: int = Field(default=256, ge=1, le=4096)
+    AGENT_RUN_COMPLETED_TTL_SECONDS: int = Field(default=3600, ge=1, le=86400)
+    EMBEDDING_PROVIDER: str = "qwen_openai_compatible"
+    EMBEDDING_MODEL: str = "text-embedding-v4"
     EMBEDDING_DIM: int = 1024
+    EMBEDDING_PROFILE: str = "qwen-openai-compatible:text-embedding-v4:1024:dense:v1"
+    EMBEDDING_BATCH_SIZE: int = 10
+    EMBEDDING_MAX_CONCURRENCY: int = 1
+    EMBEDDING_TIMEOUT_SECONDS: float = 30.0
+    EMBEDDING_MAX_RETRIES: int = 2
+    EMBEDDING_OUTPUT_TYPE: str = "dense"
+    ENABLE_EMBEDDING_LIVE_TESTS: bool = False
+    DASHSCOPE_API_KEY: str = ""
+    DASHSCOPE_OPENAI_COMPATIBLE_BASE_URL: str = ""
     MIN_EVIDENCE: int = 3
     RETRIEVAL_TOP_K: int = 8
     RERANK_TOP_K: int = 5
@@ -65,11 +95,14 @@ class Settings(BaseSettings):
             return [item.strip() for item in text.split(",") if item.strip()]
         return value
 
-    @field_validator("FRONTEND_ORIGIN_REGEX", mode="before")
+    @field_validator("UPLOAD_GATE_ALLOWED_MIME_PREFIXES", "UPLOAD_GATE_ALLOWED_PREFIXES", mode="before")
     @classmethod
-    def parse_frontend_origin_regex(cls, value: object) -> object:
-        if isinstance(value, str) and not value.strip():
-            return None
+    def parse_upload_gate_lists(cls, value: object) -> object:
+        if isinstance(value, str):
+            text = value.strip()
+            if text.startswith("["):
+                return json.loads(text)
+            return [item.strip() for item in text.split(",") if item.strip()]
         return value
 
     @field_validator("DEBUG", mode="before")
@@ -82,6 +115,28 @@ class Settings(BaseSettings):
             if normalized in {"debug", "development", "dev", "true", "1", "yes"}:
                 return True
         return value
+
+    @model_validator(mode="after")
+    def validate_storage_config(self) -> "Settings":
+        self.STORAGE_PROVIDER = self.STORAGE_PROVIDER.strip().lower()
+        self.COS_SCHEME = self.COS_SCHEME.strip().lower()
+        if self.STORAGE_PROVIDER == "cos":
+            missing = [
+                name
+                for name in (
+                    "COS_SECRET_ID",
+                    "COS_SECRET_KEY",
+                    "COS_REGION",
+                    "COS_BUCKET",
+                )
+                if not str(getattr(self, name)).strip()
+            ]
+            if missing:
+                raise ValueError(
+                    "STORAGE_PROVIDER=cos requires non-empty settings: "
+                    + ", ".join(missing)
+                )
+        return self
 
 
 @lru_cache

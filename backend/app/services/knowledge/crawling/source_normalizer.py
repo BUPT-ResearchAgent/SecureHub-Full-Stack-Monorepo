@@ -88,6 +88,9 @@ def normalize_web_source(
         extra=extra_metadata,
     ).to_dict()
     metadata["status_code"] = page.status_code
+    metadata.setdefault("collection_mode", "scrapling")
+    metadata.setdefault("title", normalized_title)
+    metadata.setdefault("source_type", source_type)
     return NormalizedSource(
         domain=domain,
         source_type=source_type,

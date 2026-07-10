@@ -1,5 +1,8 @@
 import type { SSEHandlers } from './sse';
 import { streamTask, streamTaskPost } from './sse';
+import { isMockMode } from './mock';
+import { mockAnalyzeImageTask, type MockImageAnalysisContext } from './mock/multimodal.mock';
+import type { EvidenceChunkDTO } from './sse.types';
 
 const DEFAULT_API_BASE_URL = 'http://127.0.0.1:8000';
 
@@ -26,6 +29,15 @@ export class ApiError extends Error {
     this.payload = payload;
   }
 }
+
+export type TaskResponse = {
+  task_id: string;
+  status: string;
+  workflow_id?: string;
+  result?: string;
+  quality_score?: number;
+  evidence?: EvidenceChunkDTO[];
+};
 
 export function setUnauthorizedHandler(handler: UnauthorizedHandler | null) {
   unauthorizedHandler = handler;
@@ -147,4 +159,34 @@ export function apiStreamPost<B = unknown>(path: string, body: B, handlers: SSEH
     handlers,
     token ? { Authorization: `Bearer ${token}` } : undefined,
   );
+}
+
+export async function analyzeImage(
+  files: File[],
+  context?: MockImageAnalysisContext,
+): Promise<TaskResponse> {
+  if (isMockMode()) {
+    return mockAnalyzeImageTask(files, context);
+  }
+
+  const formData = new FormData();
+  files.forEach((file) => formData.append('files', file));
+  if (context?.courseId) formData.append('course_id', context.courseId);
+  if (context?.kpId) formData.append('kp_id', context.kpId);
+
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/v1/multimodal/analyze`, {
+      method: 'POST',
+      headers: authHeaders(),
+      body: formData,
+    });
+    if (!response.ok) throw await readError(response);
+    return response.json() as Promise<TaskResponse>;
+  } catch (error) {
+    if (import.meta.env.DEV) {
+      console.warn('多模态分析接口不可用，已降级为演示数据。', error);
+      return mockAnalyzeImageTask(files, context);
+    }
+    throw error;
+  }
 }

@@ -21,12 +21,7 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    # ``CREATE EXTENSION`` is a PostgreSQL-only DDL. The SQLite fallback path
-    # (see ``app/db/migrations/env.py`` compilers) maps Vector → BLOB so the
-    # column types compile, but the extension statement itself must be skipped.
-    bind = op.get_bind()
-    if bind.dialect.name == "postgresql":
-        op.execute("CREATE EXTENSION IF NOT EXISTS vector")
+    op.execute("CREATE EXTENSION IF NOT EXISTS vector")
 
     op.create_table(
         "courses",
@@ -98,13 +93,8 @@ def upgrade() -> None:
         sa.Column("dimensions", postgresql.JSONB(astext_type=sa.Text()), nullable=False),
         sa.Column("embedding", pgvector.sqlalchemy.Vector(dim=1024), nullable=True),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.CheckConstraint("jsonb_typeof(dimensions) = 'object'", name="ck_user_profiles_dimensions_object"),
     )
-    # ``jsonb_typeof`` is PostgreSQL-only; emit the JSONB-type guard only on PG.
-    if bind.dialect.name == "postgresql":
-        op.execute(
-            "ALTER TABLE user_profiles ADD CONSTRAINT ck_user_profiles_dimensions_object "
-            "CHECK (jsonb_typeof(dimensions) = 'object')"
-        )
     op.create_table(
         "agent_skills",
         sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
@@ -183,6 +173,4 @@ def downgrade() -> None:
         "courses",
     ]:
         op.drop_table(table_name)
-    bind = op.get_bind()
-    if bind.dialect.name == "postgresql":
-        op.execute("DROP EXTENSION IF EXISTS vector")
+    op.execute("DROP EXTENSION IF EXISTS vector")

@@ -1,6 +1,154 @@
 // Status: mock
-import type { FundRecommendation, HotTrendEvent, HotTrendPoint } from '@/app/features/research/types';
+import type {
+  CompareItem,
+  FundItem,
+  FundRecommendation,
+  HotTrendEvent,
+  HotTrendPoint,
+  InnovationItem,
+  LabItem,
+  NewsItem,
+  PaperItem,
+  PatentItem,
+} from '@/app/features/research/types';
 import { mockEvidenceChunks } from './evidence.mock';
+
+const evidenceSource = {
+  title: 'SQL 注入课程证据包',
+  url: 'https://example.com/evidence/sql-injection',
+  source_type: 'course_fixture',
+  updated_at: '2026-06-16',
+};
+
+export const mockFundItems: FundItem[] = [
+  {
+    id: 'fund-demo-websec',
+    title: 'Web 应用安全智能检测与修复训练项目',
+    source: '校级创新训练',
+    level: '校级',
+    amount: '2 万元',
+    deadline: '2026-07-15',
+    direction: 'Web 安全',
+    match_score: 0.88,
+    tags: ['SQL 注入', '安全编码', '教学靶场'],
+    summary: '围绕 SQL 注入检测、参数化修复和学习过程证据沉淀开展原型验证。',
+    requirements: ['具备 Python 或 Java 基础', '完成基础 Web 安全课程'],
+    recommendation_reason: '与当前课程资源生成和实操复盘能力高度匹配。',
+    favorited: false,
+    subscribed: false,
+    compared: false,
+    evidence_sources: [evidenceSource],
+    updated_at: '2026-06-16',
+  },
+];
+
+export const mockNewsItems: NewsItem[] = [
+  {
+    id: 'news-demo-sqli',
+    title: 'SQL 注入修复教学案例被多门课程引用',
+    source: 'SecureHub 演示源',
+    source_type: 'news',
+    published_at: '2026-06-12',
+    summary: '演示条目用于展示热点趋势和课程证据链联动，不代表实时新闻。',
+    url: 'https://example.com/news/sql-injection-course',
+    tags: ['教学案例', 'SQL 注入'],
+    read: false,
+    favorited: false,
+    evidence_sources: [evidenceSource],
+    updated_at: '2026-06-16',
+  },
+];
+
+export const mockInnovationItems: InnovationItem[] = [
+  {
+    id: 'innovation-demo-agent',
+    title: '证据驱动的多智能体课程资源生成',
+    direction: 'AI 安全教育',
+    growth: 0.76,
+    window: '2026 Q2',
+    representative_papers: ['Retrieval-Augmented Generation for Education'],
+    representative_teams: ['SecureHub Lab'],
+    engineering_difficulty: '中',
+    academic_value: '将 RAG 证据约束引入课程资源生产闭环。',
+    summary: '适合作为软件杯 A3 主线的创新点展示。',
+    recommendation_reason: '与当前学习助手、资源生成、质量评估链路一致。',
+    evidence_sources: [evidenceSource],
+    updated_at: '2026-06-16',
+  },
+];
+
+export const mockPaperItems: PaperItem[] = [
+  {
+    id: 'paper-demo-rag-edu',
+    title: 'Evidence-Grounded Tutoring with Retrieval-Augmented Generation',
+    venue: 'DemoConf',
+    year: 2026,
+    authors: ['SecureHub Team'],
+    citation_count: 18,
+    abstract: '讨论如何在教学问答中使用证据检索和质量门控减少幻觉。',
+    reading_guide: '重点关注证据选择、答案生成和质量评估三段链路。',
+    doi_url: null,
+    pdf_url: null,
+    tags: ['RAG', '智能教学'],
+    favorited: false,
+    in_reading_list: false,
+    compared: false,
+    evidence_sources: [evidenceSource],
+    updated_at: '2026-06-16',
+  },
+];
+
+export const mockPatentItems: PatentItem[] = [
+  {
+    id: 'patent-demo-course-agent',
+    title: '一种基于证据约束的课程资源多智能体生成方法',
+    patent_no: 'CN-DEMO-2026-001',
+    status: '演示',
+    applicant: 'SecureHub Team',
+    direction: '教育智能体',
+    legal_timeline: [{ date: '2026-06-16', status: '演示创建', description: '用于前端降级展示。' }],
+    abstract: '通过检索证据、生成资源、质量评估和画像回流形成闭环。',
+    similarity_hint: '注意与通用 RAG 问答系统区分，突出课程资源和能力画像回流。',
+    favorited: false,
+    compared: false,
+    evidence_sources: [evidenceSource],
+    updated_at: '2026-06-16',
+  },
+];
+
+export const mockLabItems: LabItem[] = [
+  {
+    id: 'lab-demo-websec',
+    name: 'Web 安全教学靶场联合实验室',
+    institution: 'SecureHub Lab',
+    region: '北京',
+    topics: ['SQL 注入', 'XSS', '安全编码'],
+    mentor: '课程智能体导师组',
+    requirements: ['完成课程入口画像', '提交一次资源生成记录'],
+    deadline: '2026-07-30',
+    contact: 'securehub@example.com',
+    cooperation_cases: ['SQL 注入参数化修复实验'],
+    datasets_or_code_links: ['https://example.com/securehub-lab'],
+    favorited: false,
+    subscribed: false,
+    compared: false,
+    evidence_sources: [evidenceSource],
+    updated_at: '2026-06-16',
+  },
+];
+
+export const mockCompareItems: CompareItem[] = [
+  {
+    item_type: 'fund',
+    item_id: 'fund-demo-websec',
+    title: 'Web 应用安全智能检测与修复训练项目',
+    source: '校级创新训练',
+    deadline_or_year: '2026-07-15',
+    metric_label: '匹配度',
+    metric_value: '88%',
+    recommendation_reason: '与当前课程能力画像和资源生成主线匹配。',
+  },
+];
 
 const dates = Array.from({ length: 30 }, (_, index) => {
   const date = new Date(Date.UTC(2026, 4, 12 + index));

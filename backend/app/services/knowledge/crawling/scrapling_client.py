@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from importlib import import_module
 import re
 from typing import Any
+from urllib.parse import urlparse
 
 import httpx
 from lxml import html
@@ -63,11 +65,17 @@ class ScrapedPage:
 
     @property
     def title(self) -> str | None:
+        if _is_plain_text_response(self.headers):
+            first_heading = _first_markdown_heading(self.html_text)
+            if first_heading:
+                return first_heading
         doc = html.fromstring(self.html_text)
         titles = [text.strip() for text in doc.xpath("//title/text()") if text.strip()]
         return titles[0] if titles else None
 
     def extract_text(self, *, css_selector: str | None = None, xpath: str | None = None) -> str:
+        if _is_plain_text_response(self.headers) or _looks_like_markdown(self.html_text):
+            return _clean_text(self.html_text)
         doc = html.fromstring(self.html_text)
         _strip_noise_nodes(doc)
         nodes: list[Any]
@@ -107,6 +115,8 @@ class ScraplingClient:
     ) -> None:
         self.policy = policy or CrawlPolicy()
         self.user_agent = user_agent
+        self._last_fetch_by_host: dict[str, float] = {}
+        self._robots_cache: dict[str, str | None] = {}
 
     async def fetch(
         self,
@@ -122,9 +132,67 @@ class ScraplingClient:
             user_agent=self.user_agent,
         )
         self.policy.validate_request(request)
+        await self._ensure_robots_allowed(url, fetch_options)
+        await self._throttle(url)
         if fetch_options.mode == "static":
             return await self._fetch_static(url, fetch_options)
         return await self._fetch_dynamic(url, fetch_options)
+
+    async def _ensure_robots_allowed(
+        self,
+        url: str,
+        options: ScraplingFetchOptions,
+    ) -> None:
+        if not self.policy.obey_robots_txt:
+            return
+        parsed = urlparse(url)
+        host_key = f"{parsed.scheme}://{parsed.netloc}"
+        if host_key in self._robots_cache:
+            robots_txt = self._robots_cache[host_key]
+            if robots_txt is not None:
+                self.policy.ensure_robots_allowed(
+                    url,
+                    robots_txt=robots_txt,
+                    user_agent=self.user_agent,
+                )
+            return
+
+        robots_url = f"{host_key}/robots.txt"
+        headers = {"User-Agent": self.user_agent, **options.headers}
+        await self._throttle(robots_url)
+        async with httpx.AsyncClient(
+            timeout=min(options.timeout_seconds, 10.0),
+            headers=headers,
+            follow_redirects=True,
+        ) as client:
+            try:
+                response = await client.get(robots_url)
+            except httpx.HTTPError:
+                self._robots_cache[host_key] = None
+                return
+        if response.status_code in {404, 410}:
+            self._robots_cache[host_key] = None
+            return
+        response.raise_for_status()
+        self._robots_cache[host_key] = response.text
+        self.policy.ensure_robots_allowed(
+            url,
+            robots_txt=response.text,
+            user_agent=self.user_agent,
+        )
+
+    async def _throttle(self, url: str) -> None:
+        delay = max(float(self.policy.download_delay_seconds), 0.0)
+        if delay <= 0:
+            return
+        host = urlparse(url).hostname or ""
+        loop = asyncio.get_running_loop()
+        previous = self._last_fetch_by_host.get(host)
+        if previous is not None:
+            elapsed = loop.time() - previous
+            if elapsed < delay:
+                await asyncio.sleep(delay - elapsed)
+        self._last_fetch_by_host[host] = loop.time()
 
     async def _fetch_static(self, url: str, options: ScraplingFetchOptions) -> ScrapedPage:
         fetcher = _load_scrapling_fetcher("Fetcher")
@@ -224,6 +292,28 @@ def _clean_text(text: str) -> str:
             continue
         cleaned.append(line)
     return "\n".join(cleaned)
+
+
+def _is_plain_text_response(headers: dict[str, str]) -> bool:
+    content_type = ""
+    for key, value in headers.items():
+        if key.lower() == "content-type":
+            content_type = value.lower()
+            break
+    return "text/plain" in content_type or "text/markdown" in content_type
+
+
+def _looks_like_markdown(text: str) -> bool:
+    sample = text.lstrip()[:500]
+    return sample.startswith("#") or "\n## " in sample or "\n---\n" in sample
+
+
+def _first_markdown_heading(text: str) -> str | None:
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            return stripped.lstrip("#").strip() or None
+    return None
 
 
 def _select_css(doc: Any, selector: str) -> list[Any]:

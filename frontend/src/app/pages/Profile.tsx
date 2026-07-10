@@ -1,6 +1,6 @@
 import { Download, RotateCcw, Save, UploadCloud, User } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import { PageShell } from '../components/PageShell';
 import { ErrorState, LoadingState } from '../components/StateView';
@@ -12,6 +12,7 @@ import { PersonaPanel } from '../features/profile/components/PersonaPanel';
 import { ProfileEditDrawer } from '../features/profile/components/ProfileEditDrawer';
 import { ProfileWorkbenchBar } from '../features/profile/components/ProfileWorkbenchBar';
 import { GeneratedResourceHistory } from '../features/profile/components/GeneratedResourceHistory';
+import { GamificationCard } from '../features/profile/components/GamificationCard';
 import { SubmitChecklistPanel } from '../features/profile/components/SubmitChecklistPanel';
 import { useAuth } from '../features/auth/store';
 import { getMyProfile } from '../features/profile/api';
@@ -27,6 +28,9 @@ export function Profile() {
   const [profile, setProfile] = useState<ProfileDTO | null>(null);
   const [profileLoading, setProfileLoading] = useState(true);
   const [profileError, setProfileError] = useState('');
+  // 评估闭环：AssessmentPanel 提交后跳过来时带 ?highlight=xxx，让对应雷达维度脉冲。
+  const [searchParams] = useSearchParams();
+  const highlightDimension = searchParams.get('highlight') ?? undefined;
 
   const loadProfile = () => {
     setProfileLoading(true);
@@ -47,9 +51,12 @@ export function Profile() {
   };
 
   const uploadAsset = () => {
-    dispatch({ type: 'addAsset', asset: createMockAsset('document', workspace.user.displayName) });
+    dispatch({ type: 'addAsset', asset: createMockAsset('document') });
     toast.success('已模拟上传资产');
   };
+
+  const displayName = user?.display_name || workspace.user.displayName || '用户';
+  const avatarText = displayName.trim().slice(0, 1) || '学';
 
   const exportProfileData = () => {
     const fileName = `profile-workspace-${new Date().toISOString().slice(0, 10)}.json`;
@@ -113,12 +120,14 @@ export function Profile() {
                   <ErrorState message={profileError} onRetry={loadProfile} />
                 ) : (
                   <>
+                    <GamificationCard displayName={displayName} avatarText={avatarText} />
                     <ProfileWorkbenchBar workspace={workspace} onSave={save} onReset={reset} />
                     <PersonaPanel
                       workspace={workspace}
                       dispatch={dispatch}
                       onEdit={() => setEditOpen(true)}
                       capabilities={profile?.capabilities ?? []}
+                      highlightDimension={highlightDimension}
                     />
                   </>
                 )}

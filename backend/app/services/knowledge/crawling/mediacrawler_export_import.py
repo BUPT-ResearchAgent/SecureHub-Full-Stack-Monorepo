@@ -6,8 +6,10 @@ import csv
 from dataclasses import dataclass
 from hashlib import sha256
 import json
+import logging
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -22,6 +24,8 @@ from app.services.knowledge.crawling.media_source_normalizer import (
 from app.services.knowledge.ingestion_service import IngestionRequest, IngestionService
 from app.services.storage.storage_service import StorageService
 
+logger = logging.getLogger(__name__)
+
 
 @dataclass(slots=True)
 class MediaCrawlerImportResult:
@@ -30,6 +34,7 @@ class MediaCrawlerImportResult:
     asset_count: int
     content_count: int
     comment_count: int
+    skipped_count: int = 0
     domain: str = "course_websec"
 
 
@@ -41,11 +46,15 @@ async def import_mediacrawler_exports(
     domain: str = "course_websec",
     storage_prefix: str = "course_websec/mediacrawler",
     rights_note: str | None = None,
+    storage_local_root: Path | None = None,
 ) -> MediaCrawlerImportResult:
     contents: list[tuple[dict[str, Any], Path]] = []
     comments: list[tuple[dict[str, Any], Path]] = []
+    skipped_count = 0
     for path in _expand_paths(paths):
-        for item in _read_export_items(path):
+        items, skipped = _read_export_items(path)
+        skipped_count += skipped
+        for item in items:
             item_type = infer_item_type(item, file_hint=path.name)
             if item_type == "comments":
                 comments.append((item, path))
@@ -56,9 +65,9 @@ async def import_mediacrawler_exports(
     for comment, _path in comments:
         key = media_parent_key(comment, platform=platform)
         if key is not None:
-            grouped_comments.setdefault(key, []).append(comment)
+            grouped_comments.setdefault(key, []).append(_sanitize_comment(comment))
 
-    storage = StorageService(session)
+    storage = StorageService(session, local_root=storage_local_root)
     ingestion = IngestionService(session)
     document_ids: list[UUID] = []
     chunk_count = 0
@@ -89,6 +98,7 @@ async def import_mediacrawler_exports(
         asset_count=asset_count,
         content_count=len(contents),
         comment_count=len(comments),
+        skipped_count=skipped_count,
         domain=domain,
     )
 
@@ -101,7 +111,8 @@ async def _ingest_media_source(
     ingestion: IngestionService,
     storage_prefix: str,
 ) -> MediaCrawlerImportResult:
-    item_bytes = json.dumps(source.raw_item, ensure_ascii=False, indent=2).encode("utf-8")
+    stored_item = _redact_sensitive_media_fields(source.raw_item)
+    item_bytes = json.dumps(stored_item, ensure_ascii=False, indent=2).encode("utf-8")
     item_key = f"{storage_prefix}/{source.platform}/{_safe_media_key(source)}.json"
     await storage.put_bytes(
         object_key=item_key,
@@ -133,7 +144,8 @@ async def _ingest_media_source(
     ]
 
     if source.comments:
-        comments_bytes = json.dumps(source.comments, ensure_ascii=False, indent=2).encode("utf-8")
+        sanitized_comments = [_sanitize_comment(comment) for comment in source.comments]
+        comments_bytes = json.dumps(sanitized_comments, ensure_ascii=False, indent=2).encode("utf-8")
         comments_key = f"{storage_prefix}/{source.platform}/{_safe_media_key(source)}.comments.json"
         await storage.put_bytes(
             object_key=comments_key,
@@ -158,7 +170,7 @@ async def _ingest_media_source(
                     "source_path": str(source_path),
                     "platform": source.platform,
                     "source_url": source.url,
-                    "comment_count": len(source.comments),
+                    "comment_count": len(sanitized_comments),
                 },
             }
         )
@@ -200,29 +212,42 @@ def _expand_paths(paths: list[Path]) -> list[Path]:
     return expanded
 
 
-def _read_export_items(path: Path) -> list[dict[str, Any]]:
+def _read_export_items(path: Path) -> tuple[list[dict[str, Any]], int]:
     suffix = path.suffix.lower()
     if suffix == ".jsonl":
-        return [
-            json.loads(line)
-            for line in path.read_text(encoding="utf-8").splitlines()
-            if line.strip()
-        ]
+        items: list[dict[str, Any]] = []
+        skipped = 0
+        for line_no, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+            if not line.strip():
+                continue
+            try:
+                payload = json.loads(line)
+            except json.JSONDecodeError as exc:
+                skipped += 1
+                logger.warning("skipped line %s in %s: parse error: %s", line_no, path, exc)
+                print(f"warning: skipped line {line_no}: parse error: {exc}")
+                continue
+            if isinstance(payload, dict):
+                items.append(payload)
+            else:
+                skipped += 1
+                logger.warning("skipped line %s in %s: expected object", line_no, path)
+        return items, skipped
     if suffix == ".json":
         payload = json.loads(path.read_text(encoding="utf-8"))
         if isinstance(payload, list):
-            return [dict(item) for item in payload if isinstance(item, dict)]
+            return [dict(item) for item in payload if isinstance(item, dict)], 0
         if isinstance(payload, dict):
             for key in ("items", "contents", "data", "records"):
                 value = payload.get(key)
                 if isinstance(value, list):
-                    return [dict(item) for item in value if isinstance(item, dict)]
-            return [payload]
-        return []
+                    return [dict(item) for item in value if isinstance(item, dict)], 0
+            return [payload], 0
+        return [], 0
     if suffix == ".csv":
         with path.open("r", encoding="utf-8-sig", newline="") as fh:
-            return [dict(row) for row in csv.DictReader(fh)]
-    return []
+            return [dict(row) for row in csv.DictReader(fh)], 0
+    return [], 0
 
 
 def _platform_from_path(path: Path) -> str | None:
@@ -237,3 +262,120 @@ def _safe_media_key(source: NormalizedMediaSource) -> str:
     media_id = source.metadata.get("media_id") or sha256(source.url.encode("utf-8")).hexdigest()[:12]
     safe_id = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in str(media_id))
     return safe_id or sha256(source.url.encode("utf-8")).hexdigest()[:12]
+
+
+def _redact_sensitive_media_fields(item: dict[str, Any]) -> dict[str, Any]:
+    redacted = _redact_value(item)
+    if not isinstance(redacted, dict):
+        return {}
+    return redacted
+
+
+def _sanitize_comment(comment: dict[str, Any]) -> dict[str, Any]:
+    content = _first_present(comment, "content", "comment_content", "text", "message")
+    nickname = _first_present(comment, "nickname", "user_nickname", "user_name", "author")
+    created_time = _first_present(comment, "created_time", "create_time", "time", "pubdate")
+    like_count = _first_present(comment, "like_count", "liked_count")
+
+    sanitized: dict[str, Any] = {"content": str(content).strip() if content is not None else ""}
+    if nickname is not None and str(nickname).strip():
+        sanitized["nickname"] = str(nickname).strip()
+    if created_time is not None and created_time != "":
+        sanitized["created_time"] = created_time
+    if like_count is not None and like_count != "":
+        sanitized["like_count"] = like_count
+    return sanitized
+
+
+def _redact_value(value: Any) -> Any:
+    if isinstance(value, dict):
+        redacted: dict[str, Any] = {}
+        for key, child in value.items():
+            if _is_sensitive_key(str(key)):
+                continue
+            redacted[str(key)] = _redact_value(child)
+        return redacted
+    if isinstance(value, list):
+        return [_redact_value(item) for item in value]
+    if isinstance(value, str) and _looks_like_url_with_query(value):
+        return _strip_url_query(value)
+    return value
+
+
+def _is_sensitive_key(key: str) -> bool:
+    normalized = key.lower().strip()
+    compact = normalized.replace("-", "_")
+    flat = compact.replace("_", "")
+    exact_sensitive = {
+        "avatar",
+        "avatar_url",
+        "bili_jct",
+        "cookie",
+        "cookies",
+        "csrf",
+        "csrf_token",
+        "credential",
+        "credentials",
+        "face",
+        "head_url",
+        "homepage",
+        "home_page",
+        "home_url",
+        "ip",
+        "ip_location",
+        "last_ip",
+        "mid",
+        "refresh_token",
+        "sec_uid",
+        "sessdata",
+        "session",
+        "session_id",
+        "sid",
+        "sign",
+        "signature",
+        "token",
+        "uid",
+        "user_home",
+        "user_homepage",
+        "user_id",
+        "user_link",
+        "user_url_token",
+        "xsec_token",
+    }
+    sensitive_fragments = (
+        "avatar",
+        "cookie",
+        "credential",
+        "csrf",
+        "home_url",
+        "homepage",
+        "ip_location",
+        "session",
+        "signature",
+        "sign",
+        "token",
+        "user_id",
+        "userid",
+        "xsec",
+    )
+    return compact in exact_sensitive or flat in exact_sensitive or any(
+        fragment in compact or fragment in flat for fragment in sensitive_fragments
+    )
+
+
+def _first_present(item: dict[str, Any], *keys: str) -> Any:
+    for key in keys:
+        value = item.get(key)
+        if value is not None and value != "":
+            return value
+    return None
+
+
+def _looks_like_url_with_query(value: str) -> bool:
+    parts = urlsplit(value)
+    return bool(parts.scheme and parts.netloc and parts.query)
+
+
+def _strip_url_query(url: str) -> str:
+    parts = urlsplit(url)
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, "", ""))

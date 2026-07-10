@@ -9,6 +9,7 @@ import {
   Sparkles,
 } from 'lucide-react';
 import { ErrorBoundary } from '@/app/components/ErrorBoundary';
+import { openBackendStatusLLMTab } from '@/app/components/BackendStatusPanel';
 import { PageShell, type TabDef } from '@/app/components/PageShell';
 import { StreamingProgress } from '@/app/components/StreamingProgress';
 import {
@@ -18,6 +19,7 @@ import {
 } from '@/app/components/ui/popover';
 import { AgentTracePanel } from '@/app/features/agents/components/AgentTracePanel';
 import { AgentTraceProvider } from '@/app/features/agents/store';
+import { CourseCatalogLanding } from '@/app/features/course/catalog/CourseCatalogLanding';
 import { CourseSwitcher } from '@/app/features/course/catalog/CourseSwitcher';
 import {
   courseCoverAccent,
@@ -83,20 +85,25 @@ const tabs: TabDef[] = [
 const tabOrder = ['entry', 'path', 'workbench', 'tutor', 'assess'] as const;
 type CourseTabKey = typeof tabOrder[number];
 type CourseView = 'chat' | 'structured';
+type LegacyCourseView = CourseView | 'resources';
 const courseViewStorageKey = 'securehub-course-view';
 
 function isCourseTab(value: string | null): value is CourseTabKey {
   return tabOrder.includes(value as CourseTabKey);
 }
 
-function isCourseView(value: string | null): value is CourseView {
-  return value === 'chat' || value === 'structured';
+function isCourseView(value: string | null): value is LegacyCourseView {
+  return value === 'chat' || value === 'structured' || value === 'resources';
+}
+
+function normalizeCourseView(value: LegacyCourseView): CourseView {
+  return value === 'resources' ? 'structured' : value;
 }
 
 function readStoredCourseView(): CourseView {
   if (typeof window === 'undefined') return 'chat';
   const stored = window.localStorage.getItem(courseViewStorageKey);
-  return isCourseView(stored) ? stored : 'chat';
+  return isCourseView(stored) ? normalizeCourseView(stored) : 'chat';
 }
 
 function CourseViewSwitch({
@@ -152,11 +159,33 @@ export function CourseStudy() {
     <AgentTraceProvider>
       <CourseProvider>
         <ErrorBoundary resetKey="course-study">
-          <CourseStudyInner />
+          <CourseStudyShell />
         </ErrorBoundary>
       </CourseProvider>
     </AgentTraceProvider>
   );
+}
+
+function CourseStudyShell() {
+  const navigate = useNavigate();
+  const [params] = useSearchParams();
+  const rawCourseId = params.get('courseId');
+
+  // 没有 courseId 时显示 catalog 引导页（含「继续上次学习」hero / first-time banner / 4 张课程卡）。
+  if (!rawCourseId) {
+    return (
+      <CourseCatalogLanding
+        onSelect={(courseId) => {
+          const next = new URLSearchParams(params);
+          next.set('courseId', courseId);
+          // 主动跳转到课程页对话模式，避免回退一次产生历史栈。
+          navigate(`/course?${next.toString()}`);
+        }}
+      />
+    );
+  }
+
+  return <CourseStudyInner />;
 }
 
 function CourseStudyInner() {
@@ -169,7 +198,7 @@ function CourseStudyInner() {
   const [demoRunning, setDemoRunning] = useState(false);
   const demoTimersRef = useRef<number[]>([]);
   const rawView = params.get('view');
-  const activeView: CourseView = isCourseView(rawView) ? rawView : initialView;
+  const activeView: CourseView = isCourseView(rawView) ? normalizeCourseView(rawView) : initialView;
   const rawTab = params.get('tab');
   const activeTab: CourseTabKey = isCourseTab(rawTab) ? rawTab : 'entry';
 
@@ -182,6 +211,13 @@ function CourseStudyInner() {
 
   useEffect(() => {
     window.localStorage.setItem(courseViewStorageKey, activeView);
+    if (rawView === 'resources') {
+      const next = new URLSearchParams(params);
+      next.set('view', 'structured');
+      if (!isCourseTab(next.get('tab'))) next.set('tab', 'workbench');
+      setParams(next, { replace: true });
+      return;
+    }
     if (isCourseView(rawView)) return;
     const next = new URLSearchParams(params);
     next.set('view', activeView);
@@ -263,6 +299,15 @@ function CourseStudyInner() {
             </span>
           </div>
           <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={openBackendStatusLLMTab}
+              title="查看 LLM 健康状态，确认 DeepSeek 是否使用真实模型链路"
+              className="inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[11px] font-medium text-emerald-700 transition-colors hover:bg-emerald-100"
+            >
+              <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+              DeepSeek · real
+            </button>
             <CourseSwitcher course={course} onSelect={(id) => selectCourse(id)} />
             <Popover>
               <PopoverTrigger asChild>

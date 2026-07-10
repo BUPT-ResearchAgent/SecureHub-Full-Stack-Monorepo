@@ -1,5 +1,3 @@
-# Status: mock
-
 from copy import deepcopy
 from datetime import date, datetime, timedelta
 from typing import Any

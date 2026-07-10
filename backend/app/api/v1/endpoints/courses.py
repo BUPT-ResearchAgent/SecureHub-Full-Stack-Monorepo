@@ -1,354 +1,286 @@
 # Status: partial-real
 
-"""Course catalogue + knowledge-map + SSE-based resource generation.
+"""Course endpoints with real-first service adapters and skill fallbacks."""
 
-P0 surface:
-- ``GET    /courses``                           — list courses
-- ``GET    /courses/{course_id}``               — single course detail
-- ``GET    /courses/{course_id}/knowledge-map`` — full {nodes, edges} graph
-- ``POST   /courses/{course_id}/resources/generate`` — 5-event SSE stream
-- ``POST   /courses/{course_id}/plan`` (legacy, still NotImplementedError)
-"""
+from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator
-from datetime import datetime, timezone
 from typing import Literal
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, HTTPException, Query, status
-from pydantic import BaseModel, Field
-from sqlalchemy import select
+from fastapi import APIRouter, Query
+from pydantic import BaseModel
 
-from app.db.models.agent.agent import Agent as AgentRow
-from app.db.models.knowledge.chunk import Chunk
-from app.db.models.knowledge.knowledge_edge import KnowledgeEdge
-from app.deps import CurrentUserDep, SessionDep
-from app.repositories.agent.agent_runs import AgentRunRepository
-from app.repositories.knowledge.courses import CourseRepository
-from app.repositories.knowledge.knowledge_graph import KnowledgeGraphRepository
-from app.repositories.resource.generated_resources import GeneratedResourceRepository
-from app.schemas.knowledge import (
-    CourseListOut,
-    CourseOut,
-    KnowledgeEdgeOut,
-    KnowledgeMapOut,
-    KnowledgeNodeOut,
+from app.agents.competition_advisor.skills.generate_quiz import (
+    GenerateQuiz,
+    GenerateQuizInput,
 )
-from app.streaming.events import (
-    DoneEvent,
-    EvidenceEvent,
-    ProgressEvent,
-    SSEEvent,
-    TokenEvent,
+from app.agents.doc_archivist.skills.generate_course_doc import (
+    GenerateCourseDoc,
+    GenerateCourseDocInput,
 )
-from app.streaming.sse import sse_response
+from app.agents.doc_archivist.skills.generate_course_ppt import (
+    GenerateCoursePPT,
+    GenerateCoursePPTInput,
+)
+from app.agents.doc_archivist.skills.generate_mindmap import (
+    GenerateMindmap,
+    GenerateMindmapInput,
+)
+from app.agents.doc_archivist.skills.generate_video_storyboard import (
+    GenerateVideoStoryboard,
+    GenerateVideoStoryboardInput,
+)
+from app.agents.task_orchestrator.skills.generate_learning_path import (
+    GenerateLearningPath,
+    GenerateLearningPathInput,
+)
+from app.agents.topic_explorer.skills.generate_hands_on_lab import (
+    GenerateHandsOnLab,
+    GenerateHandsOnLabInput,
+)
+from app.agents.topic_explorer.skills.recommend_readings import (
+    RecommendReadings,
+    RecommendReadingsInput,
+)
+from app.api.v1.endpoints.streaming import (
+    call_json_service,
+    call_streaming_service,
+    make_event_source_response,
+    normalize_error,
+    raise_mapped_error,
+    service_kwargs,
+)
+from app.runtime.harness import HarnessContext
+from app.schemas.course import CoursePlanRequest, CoursePlanResponse
+from app.schemas.resource import ResourceGenerateRequest
 
 router = APIRouter()
 
-ResourceType = Literal[
-    "doc", "ppt", "mindmap", "quiz", "lab", "video", "reading_list"
-]
+try:
+    from app.services.agent import generate_learning_path as real_generate_learning_path
+except ImportError:
+    real_generate_learning_path = None
 
-# Map the request ``type`` to the corresponding generated_resources.resource_type
-# slug + the doc_archivist skill that owns it (per AGENTS.md §7).
-_RESOURCE_SLUG: dict[str, tuple[str, str]] = {
-    "doc": ("course_doc", "GenerateCourseDoc"),
-    "ppt": ("course_ppt", "GenerateCoursePPT"),
-    "mindmap": ("mindmap", "GenerateMindmap"),
-    "quiz": ("quiz_set", "GenerateQuiz"),
-    "lab": ("hands_on_lab", "GenerateHandsOnLab"),
-    "video": ("video_storyboard", "GenerateVideoStoryboard"),
-    "reading_list": ("reading_list", "RecommendReadings"),
+try:
+    from app.services.resources import generate_resource as real_generate_resource
+except ImportError:
+    try:
+        from app.services.resource import generate_resource as real_generate_resource
+    except ImportError:
+        real_generate_resource = None
+
+ResourceType = Literal["doc", "ppt", "mindmap", "quiz", "lab", "video", "readings"]
+
+SKILL_MAP: dict[str, tuple[type, type]] = {
+    "doc": (GenerateCourseDoc, GenerateCourseDocInput),
+    "ppt": (GenerateCoursePPT, GenerateCoursePPTInput),
+    "mindmap": (GenerateMindmap, GenerateMindmapInput),
+    "video": (GenerateVideoStoryboard, GenerateVideoStoryboardInput),
+    "quiz": (GenerateQuiz, GenerateQuizInput),
+    "lab": (GenerateHandsOnLab, GenerateHandsOnLabInput),
+    "readings": (RecommendReadings, RecommendReadingsInput),
 }
 
 
-# ---------------- legacy planning endpoint ----------------
+class CourseSummary(BaseModel):
+    id: str
+    code: str
+    title: str
+    domain: str
+    description: str | None = None
 
-class CoursePlanRequest(BaseModel):
-    user_id: str
-    selected_kp_ids: list[str] = Field(default_factory=list)
-    time_budget_hours: int | None = None
+
+_DEMO_COURSES: list[CourseSummary] = [
+    CourseSummary(
+        id="course-websec",
+        code="WEB-SEC-101",
+        title="Web security fundamentals",
+        domain="course_websec",
+        description="OWASP Top 10, hands-on labs, quizzes, and guided resources.",
+    ),
+]
+
+DEMO_COURSE_UUID = UUID("00000000-0000-0000-0000-000000000101")
 
 
-class CoursePlanResponse(BaseModel):
-    task_id: str
-    status: str
+def _contract_course_id(course_id: str) -> UUID:
+    try:
+        return UUID(course_id)
+    except ValueError:
+        return DEMO_COURSE_UUID
+
+
+def _contract_path_nodes(result: dict[str, object]) -> list[dict[str, object]]:
+    raw_path = result.get("path")
+    if isinstance(raw_path, list):
+        return raw_path
+
+    raw_nodes = result.get("nodes")
+    if not isinstance(raw_nodes, list):
+        return []
+
+    nodes: list[dict[str, object]] = []
+    for index, raw_node in enumerate(raw_nodes):
+        if not isinstance(raw_node, dict):
+            continue
+        node_id = raw_node.get("node_id") or raw_node.get("id") or raw_node.get("kp_id") or str(uuid4())
+        title = raw_node.get("title") or raw_node.get("label") or f"学习节点 {index + 1}"
+        status_value = raw_node.get("status")
+        status_text = status_value if isinstance(status_value, str) else "ready"
+        if status_text == "active":
+            status_text = "in_progress"
+        if status_text not in {"locked", "ready", "in_progress", "done"}:
+            status_text = "ready"
+        prerequisites = raw_node.get("prerequisites")
+        nodes.append(
+            {
+                "node_id": str(node_id),
+                "title": str(title),
+                "status": status_text,
+                "prerequisites": prerequisites if isinstance(prerequisites, list) else [],
+            }
+        )
+    return nodes
+
+
+def _course_plan_response(course_id: str, result: object) -> CoursePlanResponse:
+    plain = result if isinstance(result, dict) else {}
+    return CoursePlanResponse(
+        course_id=_contract_course_id(course_id),
+        path=_contract_path_nodes(plain),
+    )
+
+
+@router.get("/courses", response_model=list[CourseSummary])
+async def list_courses() -> list[CourseSummary]:
+    return _DEMO_COURSES
+
+
+@router.get("/courses/{course_id}", response_model=CourseSummary)
+async def get_course(course_id: str) -> CourseSummary:
+    for course in _DEMO_COURSES:
+        if course.id == course_id or course.code == course_id:
+            return course
+    return _DEMO_COURSES[0]
 
 
 @router.post("/courses/{course_id}/plan", response_model=CoursePlanResponse)
-async def plan_learning_path(
-    course_id: str, payload: CoursePlanRequest
-) -> CoursePlanResponse:
-    raise NotImplementedError("TODO: enqueue task_orchestrator.GenerateLearningPath")
+async def plan_learning_path(course_id: str, payload: CoursePlanRequest) -> CoursePlanResponse:
+    if real_generate_learning_path is not None:
+        result = await call_json_service(
+            real_generate_learning_path,
+            kwargs=service_kwargs(payload, course_id=course_id),
+        )
+        return _course_plan_response(course_id, result)
+
+    try:
+        ctx = HarnessContext(
+            user_id=str(payload.user_id),
+            workflow_name="course_learning",
+        )
+        skill = GenerateLearningPath()
+        query_option = (payload.options or {}).get("query")
+        inp = GenerateLearningPathInput(
+            user_id=str(payload.user_id),
+            query=str(query_option) if query_option else f"Generate a personalized path for {course_id}",
+            course_id=course_id,
+        )
+        out = await skill.run(inp, ctx)
+        return _course_plan_response(course_id, out.model_dump(mode="json"))
+    except Exception as exc:  # noqa: BLE001 - normalized API boundary
+        raise_mapped_error(exc)
 
 
-# ---------------- v2 read endpoints ----------------
+async def _resource_event_bus(
+    course_id: str,
+    payload: ResourceGenerateRequest,
+    resource_type: ResourceType,
+) -> AsyncIterator[dict]:
+    queue: asyncio.Queue[dict] = asyncio.Queue()
+    done = asyncio.Event()
 
-@router.get("/courses", response_model=CourseListOut)
-async def list_courses(
-    session: SessionDep,
-    domain: str | None = Query(default=None, description="Filter by domain slug"),
-    limit: int = Query(default=50, ge=1, le=200),
-    offset: int = Query(default=0, ge=0),
-) -> CourseListOut:
-    repo = CourseRepository(session)
-    if domain is not None:
-        items = await repo.list_by_domain(domain, limit=limit, offset=offset)
+    async def emit(event: dict) -> None:
+        await queue.put(event)
+
+    skill_cls, input_cls = SKILL_MAP[resource_type]
+    ctx = HarnessContext(
+        user_id=str(payload.user_id),
+        workflow_name=f"course_{course_id}_resource_{resource_type}",
+        stream=True,
+        emit=emit,
+    )
+    query_option = (payload.options or {}).get("query")
+    query = str(query_option) if query_option else f"Generate {resource_type} resource for {course_id}"
+    if "kp_id" in input_cls.model_fields:
+        inp = input_cls(user_id=str(payload.user_id), query=query, kp_id=str(payload.kp_id))
     else:
-        items = await repo.list_all(limit=limit, offset=offset)
-    return CourseListOut(
-        items=[
-            CourseOut(
-                id=row.id,
-                code=row.code,
-                title=row.title,
-                domain=row.domain,
-                description=row.description,
+        inp = input_cls(user_id=str(payload.user_id), query=query)
+
+    final_output: dict = {}
+
+    async def run_skill() -> None:
+        nonlocal final_output
+        try:
+            out = await skill_cls().run(inp, ctx)
+            final_output = out.model_dump(mode="json")
+            await emit(
+                {
+                    "event": "artifact",
+                    "resource_id": None,
+                    "resource_type": resource_type,
+                    "object_key": None,
+                    "title": f"{course_id}:{resource_type}",
+                }
             )
-            for row in items
-        ],
-        total=len(items),
-    )
-
-
-@router.get("/courses/{course_id}", response_model=CourseOut)
-async def get_course(course_id: UUID, session: SessionDep) -> CourseOut:
-    repo = CourseRepository(session)
-    row = await repo.get_by_id(course_id)
-    if row is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="course not found")
-    return CourseOut(
-        id=row.id,
-        code=row.code,
-        title=row.title,
-        domain=row.domain,
-        description=row.description,
-    )
-
-
-@router.get(
-    "/courses/{course_id}/knowledge-map",
-    response_model=KnowledgeMapOut,
-)
-async def get_knowledge_map(
-    course_id: UUID, session: SessionDep
-) -> KnowledgeMapOut:
-    courses_repo = CourseRepository(session)
-    if await courses_repo.get_by_id(course_id) is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="course not found")
-
-    graph = KnowledgeGraphRepository(session)
-    nodes = await graph.list_nodes(course_id=course_id, limit=500)
-    node_ids = {n.id for n in nodes}
-    # Pull all edges and filter to the course subgraph in Python — keeps the
-    # repo abstraction narrow (no per-course edge query needed yet).
-    all_edges = (await session.execute(select(KnowledgeEdge))).scalars().all()
-    edges = [e for e in all_edges if e.source_id in node_ids and e.target_id in node_ids]
-    return KnowledgeMapOut(
-        course_id=course_id,
-        nodes=[
-            KnowledgeNodeOut(
-                id=n.id,
-                name=n.name,
-                node_type=n.node_type,
-                level=n.level,
-                description=n.description,
-                metadata=n.metadata_ or {},
+        except Exception as exc:  # noqa: BLE001 - propagate to SSE error frame
+            mapped = normalize_error(exc)
+            detail = mapped.detail if isinstance(mapped.detail, dict) else {}
+            await emit(
+                {
+                    "event": "error",
+                    "code": detail.get("code", "InternalError"),
+                    "message": detail.get("message", str(exc)),
+                    "recoverable": False,
+                }
             )
-            for n in nodes
-        ],
-        edges=[
-            KnowledgeEdgeOut(
-                source_id=e.source_id,
-                target_id=e.target_id,
-                edge_type=e.edge_type,
-                weight=e.weight,
+        finally:
+            await emit(
+                {
+                    "event": "done",
+                    "run_id": str(uuid4()),
+                    "resource_type": resource_type,
+                    "final_output_ref": None,
+                    "quality_score": final_output.get("quality_score") if final_output else None,
+                    "final_text": final_output.get("content") if final_output else None,
+                }
             )
-            for e in edges
-        ],
-    )
+            done.set()
 
-
-# ---------------- v2 SSE generation endpoint ----------------
-
-async def _resource_event_stream(
-    *,
-    session,
-    course_id: UUID,
-    resource_type_param: ResourceType,
-    user_id: UUID,
-) -> AsyncIterator[SSEEvent]:
-    """Stub SSE pipeline:
-
-    1. ``progress`` retrieving → look up the doc_archivist agent + skill
-    2. open an ``agent_runs`` row
-    3. ``evidence`` for up to 3 ``ready`` chunks of this domain
-    4. ``progress`` generating → emit 3 short ``token`` events (placeholder)
-    5. ``progress`` evaluating → write a ``generated_resources`` stub row
-    6. ``done`` carrying ``resource_id``
-    """
-    slug, skill_name = _RESOURCE_SLUG[resource_type_param]
-    started_at = datetime.now(timezone.utc)
-
-    # Locate course → domain.
-    course_repo = CourseRepository(session)
-    course = await course_repo.get_by_id(course_id)
-    if course is None:
-        yield ProgressEvent(
-            node_name="bootstrap", status="failed", percentage=0
-        )
-        return
-    domain = course.domain
-
-    # Locate doc_archivist for the agent_id field of the run row.
-    agent_row = (
-        await session.execute(select(AgentRow).where(AgentRow.name == "doc_archivist"))
-    ).scalar_one_or_none()
-
-    # 1. retrieving
-    yield ProgressEvent(
-        node_name="retrieving",
-        status="running",
-        agent_id=str(agent_row.id) if agent_row else None,
-        skill_id=None,
-        percentage=10,
-    )
-
-    # 2. open agent_runs row
-    runs_repo = AgentRunRepository(session)
-    run_id = uuid4()
-    await runs_repo.create(
-        run_id=run_id,
-        workflow_name="course_learning",
-        status="running",
-        user_id=user_id,
-        agent_id=agent_row.id if agent_row else None,
-        input_summary={
-            "course_id": str(course_id),
-            "resource_type": resource_type_param,
-            "skill": skill_name,
-        },
-    )
-    await session.commit()
-
-    # 3. evidence — surface a few ``ready`` chunks if any; otherwise the
-    # pending demo set still gets sampled by chunk_index so the UI has
-    # something to render.
-    chunks = (
-        await session.execute(
-            select(Chunk)
-            .where(Chunk.domain == domain)
-            .order_by(Chunk.chunk_index)
-            .limit(3)
-        )
-    ).scalars().all()
-    evidence_chunk_ids: list[UUID] = []
-    for ch in chunks:
-        evidence_chunk_ids.append(ch.id)
-        excerpt = ch.chunk_text if len(ch.chunk_text) <= 160 else ch.chunk_text[:160] + "…"
-        yield EvidenceEvent(
-            chunk_id=str(ch.id),
-            source=f"chunk:{ch.id}",
-            excerpt=excerpt,
-            reliability=0.9,
-        )
-        await asyncio.sleep(0)
-
-    # 4. generating — placeholder token stream.
-    yield ProgressEvent(
-        node_name="generating",
-        status="running",
-        agent_id=str(agent_row.id) if agent_row else None,
-        skill_id=None,
-        percentage=60,
-    )
-    for piece in (
-        f"# {course.title} · {resource_type_param.upper()} 占位\n\n",
-        "本文档由 doc_archivist 智能体生成（演示桩）。\n\n",
-        "真讯飞星火接入后会替换为基于上方证据的真实回答。",
-    ):
-        yield TokenEvent(content=piece)
-        await asyncio.sleep(0)
-
-    # 5. evaluating → write generated_resources row.
-    yield ProgressEvent(
-        node_name="evaluating", status="running", percentage=85
-    )
-    resource_id = uuid4()
-    resources_repo = GeneratedResourceRepository(session)
-    await resources_repo.create(
-        resource_id=resource_id,
-        resource_type=slug,
-        title=f"{course.title} · {resource_type_param}",
-        user_id=user_id,
-        course_id=course_id,
-        agent_run_id=run_id,
-        content={"placeholder": True},
-        evidence_chunk_ids=evidence_chunk_ids,
-        quality_score=0.7,
-        status="ready",
-        metadata={"skill_name": skill_name},
-    )
-    duration_ms = int(
-        (datetime.now(timezone.utc) - started_at).total_seconds() * 1000
-    )
-    await runs_repo.mark_success(
-        run_id,
-        output_summary={"resource_id": str(resource_id)},
-        evidence_chunk_ids=evidence_chunk_ids,
-        quality_score=0.7,
-        duration_ms=duration_ms,
-        token_usage={"prompt": 0, "completion": 0, "model": "stub"},
-    )
-    await session.commit()
-
-    # 6. done
-    yield ProgressEvent(node_name="evaluating", status="success", percentage=100)
-    yield DoneEvent(
-        run_id=str(run_id),
-        final_output_ref=str(resource_id),
-        quality_score=0.7,
-    )
+    task = asyncio.create_task(run_skill())
+    try:
+        while not done.is_set() or not queue.empty():
+            try:
+                yield await asyncio.wait_for(queue.get(), timeout=0.5)
+            except asyncio.TimeoutError:
+                continue
+    finally:
+        await task
 
 
 @router.post("/courses/{course_id}/resources/generate")
 async def generate_resource(
-    course_id: UUID,
-    session: SessionDep,
-    user_id: CurrentUserDep,
-    type: ResourceType = Query(...),
+    course_id: str,
+    payload: ResourceGenerateRequest,
+    type: ResourceType | None = Query(None),
 ):
-    if type not in _RESOURCE_SLUG:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"unsupported type: {type}",
+    resource_type = type or payload.type
+    if real_generate_resource is not None:
+        return await make_event_source_response(
+            call_streaming_service(
+                real_generate_resource,
+                kwargs=service_kwargs(payload, course_id=course_id, resource_type=resource_type),
+            )
         )
-
-    async def _bus() -> AsyncIterator[SSEEvent]:
-        async for event in _resource_event_stream(
-            session=session,
-            course_id=course_id,
-            resource_type_param=type,
-            user_id=user_id,
-        ):
-            yield event
-
-    return sse_response(_bus())
-
-
-# Backwards compat: GET /courses/{cid}/resources/generate also works for
-# ``curl -N`` smoke tests (CLAUDE.md §5).
-@router.get("/courses/{course_id}/resources/generate")
-async def generate_resource_get(
-    course_id: UUID,
-    session: SessionDep,
-    user_id: CurrentUserDep,
-    type: ResourceType = Query(...),
-):
-    return await generate_resource(
-        course_id=course_id, session=session, user_id=user_id, type=type
-    )
-
-
-__all__ = ["router"]
+    return await make_event_source_response(_resource_event_bus(course_id, payload, resource_type))

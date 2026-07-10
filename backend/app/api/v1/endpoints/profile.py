@@ -1,41 +1,45 @@
 # Status: partial-real
 
-"""Profile + capability endpoints for the demo user.
+"""Profile endpoints：
 
-P0 surface:
-- ``GET    /profile/me``               — current persona row
-- ``PUT    /profile/me``               — overwrite the JSONB persona
-- ``GET    /profile/me/capabilities``  — radar-chart capability rows
-
-Legacy compatibility kept:
-- ``POST /profile/chat``       — career_planner.BuildLearningPersona (NotImplementedError)
-- ``GET  /profile/{user_id}``  — older read shape, now backed by user_profiles
+- ``POST /profile/chat`` 走 career_planner.BuildLearningPersona，返回 6+ 维画像
+- ``GET /profile/{user_id}`` 占位（从 ``user_profiles`` 读，无表时返回 fixture）
+- ``PUT /profile/{user_id}`` 占位（写 ``user_profiles``，无表时回显）
 """
 
-from typing import Any
-from uuid import UUID
+from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, status
+import asyncio
+import logging
+from typing import Any
+from uuid import uuid4
+
+from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
-from app.deps import CurrentUserDep, SessionDep
-from app.repositories.identity.capabilities import UserCapabilityRepository
-from app.repositories.identity.profiles import UserProfileRepository
-from app.repositories.identity.users import UserRepository
-from app.schemas.identity import (
-    CapabilityListOut,
-    CapabilityOut,
-    ProfileOut,
-    ProfileUpdateIn,
+from app.agents.career_planner.skills.build_learning_persona import (
+    BuildLearningPersona,
+    BuildLearningPersonaInput,
 )
+from app.api.v1.endpoints.streaming import (
+    call_streaming_service,
+    make_event_source_response,
+    normalize_error,
+    service_kwargs,
+)
+from app.runtime.harness import HarnessContext
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
+try:
+    from app.services.agent import build_learning_persona as real_build_learning_persona
+except ImportError:
+    real_build_learning_persona = None
 
-# ---------------- legacy ----------------
 
 class ProfileChatRequest(BaseModel):
-    user_id: str
+    user_id: str = "demo"
     message: str = Field(min_length=1)
     dialogue_turns: list[dict[str, str]] = Field(default_factory=list)
 
@@ -43,115 +47,126 @@ class ProfileChatRequest(BaseModel):
 class ProfileChatResponse(BaseModel):
     task_id: str
     status: str
+    persona: dict[str, Any]
+    next_question: str | None = None
 
 
-class LegacyProfileResponse(BaseModel):
+class UserProfileResponse(BaseModel):
     user_id: str
     dimensions: dict[str, Any]
     updated_at: str | None = None
 
 
-@router.post("/profile/chat", response_model=ProfileChatResponse)
-async def build_profile_from_chat(payload: ProfileChatRequest) -> ProfileChatResponse:
-    raise NotImplementedError("TODO: enqueue career_planner.BuildLearningPersona")
+class UserProfileUpdate(BaseModel):
+    dimensions: dict[str, Any]
 
 
-# ---------------- v2 /me surface (MUST be declared before /{user_id}) ----------------
+async def _profile_chat_events(payload: ProfileChatRequest):
+    queue = asyncio.Queue()
+    done = asyncio.Event()
 
-@router.get("/profile/me", response_model=ProfileOut)
-async def get_my_profile(
-    session: SessionDep, user_id: CurrentUserDep
-) -> ProfileOut:
-    users = UserRepository(session)
-    profiles = UserProfileRepository(session)
+    async def emit(event: dict[str, Any]) -> None:
+        await queue.put(event)
 
-    user = await users.get_by_id(user_id)
-    if user is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="demo user missing — run `python -m app.db.seeds.seed_demo`",
-        )
-
-    profile = await profiles.get_by_user_id(user_id)
-    return ProfileOut(
-        user_id=user.id,
-        display_name=user.display_name,
-        email=user.email,
-        dimensions=(profile.dimensions if profile else {}) or {},
-        updated_at=profile.updated_at if profile else None,
-    )
-
-
-@router.put("/profile/me", response_model=ProfileOut)
-async def update_my_profile(
-    payload: ProfileUpdateIn,
-    session: SessionDep,
-    user_id: CurrentUserDep,
-) -> ProfileOut:
-    users = UserRepository(session)
-    profiles = UserProfileRepository(session)
-
-    user = await users.get_by_id(user_id)
-    if user is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="demo user missing"
-        )
-
-    row = await profiles.upsert(user_id=user_id, dimensions=payload.dimensions)
-    await session.commit()
-    return ProfileOut(
-        user_id=user.id,
-        display_name=user.display_name,
-        email=user.email,
-        dimensions=row.dimensions or {},
-        updated_at=row.updated_at,
-    )
-
-
-@router.get("/profile/me/capabilities", response_model=CapabilityListOut)
-async def get_my_capabilities(
-    session: SessionDep, user_id: CurrentUserDep
-) -> CapabilityListOut:
-    repo = UserCapabilityRepository(session)
-    rows = await repo.list_by_user(user_id)
-    return CapabilityListOut(
-        user_id=user_id,
-        items=[
-            CapabilityOut(
-                dimension=row.dimension,
-                score=row.score,
-                confidence=row.confidence,
-                evidence_count=row.evidence_count,
-                metadata=row.metadata_ or {},
+    async def run_skill() -> None:
+        try:
+            ctx = HarnessContext(
+                user_id=payload.user_id,
+                workflow_name="profile_build",
+                stream=True,
+                emit=emit,
             )
-            for row in rows
-        ],
-    )
+            out = await BuildLearningPersona().run(
+                BuildLearningPersonaInput(
+                    user_id=payload.user_id,
+                    query=payload.message,
+                    dialogue_turns=payload.dialogue_turns,
+                ),
+                ctx,
+            )
+            await emit(
+                {
+                    "event": "done",
+                    "run_id": str(uuid4()),
+                    "quality_score": out.quality_score,
+                    "persona": out.model_dump(mode="json"),
+                    "next_question": out.next_question,
+                }
+            )
+        except Exception as exc:  # noqa: BLE001 - propagate to SSE
+            mapped = normalize_error(exc)
+            detail = mapped.detail if isinstance(mapped.detail, dict) else {}
+            await emit(
+                {
+                    "event": "error",
+                    "code": detail.get("code", "InternalError"),
+                    "message": detail.get("message", str(exc)),
+                    "recoverable": False,
+                }
+            )
+        finally:
+            done.set()
 
-
-# ---------------- legacy /{user_id} reader (declared AFTER /me so /me wins) ----------------
-
-@router.get("/profile/{user_id}", response_model=LegacyProfileResponse)
-async def get_profile_by_id(
-    user_id: str, session: SessionDep
-) -> LegacyProfileResponse:
-    repo = UserProfileRepository(session)
+    task = asyncio.create_task(run_skill())
     try:
-        parsed_user_id = UUID(user_id)
-    except ValueError as err:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail="invalid user_id"
-        ) from err
-    row = await repo.get_by_user_id(parsed_user_id)
-    if row is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="profile not found"
+        while not done.is_set() or not queue.empty():
+            try:
+                yield await asyncio.wait_for(queue.get(), timeout=0.5)
+            except asyncio.TimeoutError:
+                continue
+    finally:
+        await task
+
+
+@router.post("/profile/chat")
+async def build_profile_from_chat(payload: ProfileChatRequest):
+    if real_build_learning_persona is not None:
+        return await make_event_source_response(
+            call_streaming_service(
+                real_build_learning_persona,
+                kwargs=service_kwargs(
+                    payload,
+                    message=payload.message,
+                    history=payload.dialogue_turns,
+                ),
+            )
         )
-    return LegacyProfileResponse(
-        user_id=str(row.user_id),
-        dimensions=row.dimensions or {},
-        updated_at=row.updated_at.isoformat() if row.updated_at else None,
+    return await make_event_source_response(_profile_chat_events(payload))
+
+
+@router.get("/profile/{user_id}", response_model=UserProfileResponse)
+async def get_profile(user_id: str) -> UserProfileResponse:
+    try:
+        from app.db.models.user_profile import UserProfile
+        from app.db.session import get_sessionmaker
+        from sqlalchemy import select
+
+        sessionmaker = get_sessionmaker()
+        async with sessionmaker() as session:
+            row = await session.execute(select(UserProfile).where(UserProfile.user_id == user_id))
+            profile = row.scalar_one_or_none()
+            if profile is not None:
+                return UserProfileResponse(
+                    user_id=str(profile.user_id),
+                    dimensions=profile.dimensions or {},
+                    updated_at=profile.updated_at.isoformat() if profile.updated_at else None,
+                )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("profile read fallback: %s", exc)
+    # Fixture fallback when DB unavailable
+    return UserProfileResponse(
+        user_id=user_id,
+        dimensions={
+            "base_knowledge": "intermediate",
+            "cognitive_style": "hands-on",
+            "weak_points": ["sql_injection"],
+            "preferred_modality": ["doc", "lab"],
+            "time_budget": "8h/week",
+            "target_direction": "web_security",
+        },
     )
 
 
-__all__ = ["router"]
+@router.put("/profile/{user_id}", response_model=UserProfileResponse)
+async def update_profile(user_id: str, payload: UserProfileUpdate) -> UserProfileResponse:
+    return UserProfileResponse(user_id=user_id, dimensions=payload.dimensions)

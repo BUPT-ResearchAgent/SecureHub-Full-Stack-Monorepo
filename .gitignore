@@ -48,3 +48,61 @@ Thumbs.db
 .vscode/
 .vercel
 .env*
+.pnpm-store/
+frontend/.pnpm-store/
+
+# Others
+Plan/
+SecureHub-Full-Stack-Monorepo/data
+Workout/member_c_p0_handoff.md
+
+# ==== 教材版权保护（6-C-2 新增；6-C-2-cleanup 扩展；6-C-3-followup 放宽 full.md）====
+# --- 工程副本目录（monorepo 内部工作目录） ---
+data/storage/course_websec/mineru/**/*.pdf
+data/storage/course_websec/mineru_ingested/**/*.pdf
+# NOTE: 6-C-3-followup 之后，允许 `mineru/<slug>/full.md` 进入 git（供目录树 + RAG
+# 演示的最小上下文可见）。因为这是教材完整正文，仅在 upstream 为 private / 受限访问
+# 仓库时提交才合规。若 upstream 变为完全公开，请再次启用下方注释规则。
+# data/storage/course_websec/mineru/**/full.md
+data/storage/course_websec/mineru_ingested/**/full.md
+data/storage/course_websec/mineru/**/chapters/
+data/storage/course_websec/mineru_ingested/**/chapters/
+
+# --- 素材源目录（data/raw/、data/processed/，从 6-C-2-cleanup 归位后） ---
+# 教材源 PDF（版权归原作者/出版社）
+data/raw/pdf/*.pdf
+data/raw/**/*.pdf
+# MinerU 转换过程产物（含教材正文 Markdown）
+data/processed/mineru/**/full.md
+data/processed/mineru/**/*.local.md
+data/processed/mineru/**/*.md
+data/processed/mineru/**/manifest.json
+# MediaCrawler 爬虫源数据（PII / 平台版权）
+data/raw/mediacrawler/**/*.jsonl
+data/raw/mediacrawler/**/*.json
+data/raw/mediacrawler/**/*.csv
+data/raw/mediacrawler/**/*.sqlite
+data/raw/mediacrawler/**/*.db
+# MediaCrawler 归一化入库产物（redacted，但仍含平台 UGC 内容）
+data/storage/course_websec/mediacrawler/**/*.json
+data/storage/course_websec/mediacrawler/**/*.jsonl
+data/storage/course_websec/mediacrawler/**/*.csv
+
+# --- 教材图片资产（6-C-2-cleanup：与 PDF/full.md 一起排除，版权一致性） ---
+# 教材页图 / cover 都是原书页面截图，版权归原作者；本地保留供 RAG 演示，不进 git
+data/storage/course_websec/mineru/**/assets/*.jpg
+data/storage/course_websec/mineru/**/assets/*.png
+data/storage/course_websec/mineru/**/assets/*.jpeg
+data/storage/course_websec/mineru/**/assets/manifest.json
+data/processed/mineru/**/assets/*.jpg
+data/processed/mineru/**/assets/*.png
+data/processed/mineru/**/assets/*.jpeg
+data/processed/mineru/**/assets/manifest.json
+
+# --- 报告类（可能含敏感内部审计信息，默认排除，需要时白名单单独 add） ---
+data/reports/*.md
+data/reports/*.pdf
+data/reports/*.docx
+
+# MindSpider 入库运行时产物（每次跑 CLI 可重建）
+data/storage/news/**

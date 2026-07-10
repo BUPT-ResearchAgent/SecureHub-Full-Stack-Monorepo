@@ -1,6 +1,16 @@
 import { apiGet, apiPost } from '@/lib/api';
 import { withMockFallback } from '@/lib/mock';
-import { mockFundRecommendations, mockHotTrendEvents } from '@/lib/mock/research.mock';
+import {
+  mockCompareItems,
+  mockFundItems,
+  mockFundRecommendations,
+  mockHotTrendEvents,
+  mockInnovationItems,
+  mockLabItems,
+  mockNewsItems,
+  mockPaperItems,
+  mockPatentItems,
+} from '@/lib/mock/research.mock';
 import type {
   CompareItem,
   DetailResponse,
@@ -28,35 +38,70 @@ function params(filters: ResearchFilters): string {
 }
 
 export function fetchFunds(filters: ResearchFilters) {
-  return apiGet<FundItem[]>(`/api/v1/research/funds${params(filters)}`);
+  return withMockFallback(
+    () => apiGet<FundItem[]>(`/api/v1/research/funds${params(filters)}`),
+    () => mockFundItems,
+  );
 }
 
 export function fetchNews(filters: ResearchFilters) {
-  return apiGet<NewsItem[]>(`/api/v1/research/news${params(filters)}`);
+  return withMockFallback(
+    () => apiGet<NewsItem[]>(`/api/v1/research/news${params(filters)}`),
+    () => mockNewsItems,
+  );
 }
 
 export function fetchInnovations(filters: ResearchFilters) {
-  return apiGet<InnovationItem[]>(`/api/v1/research/innovations${params(filters)}`);
+  return withMockFallback(
+    () => apiGet<InnovationItem[]>(`/api/v1/research/innovations${params(filters)}`),
+    () => mockInnovationItems,
+  );
 }
 
 export function fetchPapers(filters: ResearchFilters) {
-  return apiGet<PaperItem[]>(`/api/v1/research/papers${params(filters)}`);
+  return withMockFallback(
+    () => apiGet<PaperItem[]>(`/api/v1/research/papers${params(filters)}`),
+    () => mockPaperItems,
+  );
 }
 
 export function fetchPatents(filters: ResearchFilters) {
-  return apiGet<PatentItem[]>(`/api/v1/research/patents${params(filters)}`);
+  return withMockFallback(
+    () => apiGet<PatentItem[]>(`/api/v1/research/patents${params(filters)}`),
+    () => mockPatentItems,
+  );
 }
 
 export function fetchLabs(filters: ResearchFilters) {
-  return apiGet<LabItem[]>(`/api/v1/research/labs${params(filters)}`);
+  return withMockFallback(
+    () => apiGet<LabItem[]>(`/api/v1/research/labs${params(filters)}`),
+    () => mockLabItems,
+  );
 }
 
 export function fetchCompareItems() {
-  return apiGet<CompareItem[]>('/api/v1/research/compare');
+  return withMockFallback(
+    () => apiGet<CompareItem[]>('/api/v1/research/compare'),
+    () => mockCompareItems,
+  );
 }
 
 export function fetchResearchDetail(itemType: ResearchItemType, itemId: string) {
-  return apiGet<DetailResponse>(`/api/v1/research/items/${itemType}/${itemId}`);
+  return withMockFallback(
+    () => apiGet<DetailResponse>(`/api/v1/research/items/${itemType}/${itemId}`),
+    () => {
+      const source: Partial<Record<ResearchItemType, ResearchItem[]>> = {
+        fund: mockFundItems,
+        news: mockNewsItems,
+        innovation: mockInnovationItems,
+        paper: mockPaperItems,
+        patent: mockPatentItems,
+        lab: mockLabItems,
+      };
+      const item = source[itemType]?.find((entry) => entry.id === itemId) ?? source[itemType]?.[0];
+      return { item_type: itemType, item: item as ResearchItem };
+    },
+  );
 }
 
 export function recommendFunds(userId: string, topic: string) {
@@ -77,37 +122,52 @@ export function fetchHotTrendEvents() {
 }
 
 export function toggleFavorite(itemType: ResearchItemType, itemId: string) {
-  return apiPost<ToggleResponse, { item_type: ResearchItemType; item_id: string }>(
-    '/api/v1/research/favorites/toggle',
-    { item_type: itemType, item_id: itemId },
+  return withMockFallback(
+    () => apiPost<ToggleResponse, { item_type: ResearchItemType; item_id: string }>(
+      '/api/v1/research/favorites/toggle',
+      { item_type: itemType, item_id: itemId },
+    ),
+    () => ({ item_id: itemId, favorited: true }),
   );
 }
 
 export function toggleSubscription(itemType: ResearchItemType, itemId: string) {
-  return apiPost<ToggleResponse, { item_type: ResearchItemType; item_id: string }>(
-    '/api/v1/research/subscriptions/toggle',
-    { item_type: itemType, item_id: itemId },
+  return withMockFallback(
+    () => apiPost<ToggleResponse, { item_type: ResearchItemType; item_id: string }>(
+      '/api/v1/research/subscriptions/toggle',
+      { item_type: itemType, item_id: itemId },
+    ),
+    () => ({ item_id: itemId, subscribed: true }),
   );
 }
 
 export function toggleCompare(itemType: ResearchItemType, itemId: string) {
-  return apiPost<ToggleResponse, { item_type: ResearchItemType; item_id: string }>(
-    '/api/v1/research/compare/toggle',
-    { item_type: itemType, item_id: itemId },
+  return withMockFallback(
+    () => apiPost<ToggleResponse, { item_type: ResearchItemType; item_id: string }>(
+      '/api/v1/research/compare/toggle',
+      { item_type: itemType, item_id: itemId },
+    ),
+    () => ({ item_id: itemId, compared: true }),
   );
 }
 
 export function toggleRead(itemType: ResearchItemType, itemId: string) {
-  return apiPost<ToggleResponse, { item_type: ResearchItemType; item_id: string }>(
-    '/api/v1/research/read/toggle',
-    { item_type: itemType, item_id: itemId },
+  return withMockFallback(
+    () => apiPost<ToggleResponse, { item_type: ResearchItemType; item_id: string }>(
+      '/api/v1/research/read/toggle',
+      { item_type: itemType, item_id: itemId },
+    ),
+    () => ({ item_id: itemId, read: true }),
   );
 }
 
 export function toggleReadingList(itemType: ResearchItemType, itemId: string) {
-  return apiPost<ToggleResponse, { item_type: ResearchItemType; item_id: string }>(
-    '/api/v1/research/reading-list/toggle',
-    { item_type: itemType, item_id: itemId },
+  return withMockFallback(
+    () => apiPost<ToggleResponse, { item_type: ResearchItemType; item_id: string }>(
+      '/api/v1/research/reading-list/toggle',
+      { item_type: itemType, item_id: itemId },
+    ),
+    () => ({ item_id: itemId, in_reading_list: true }),
   );
 }
 

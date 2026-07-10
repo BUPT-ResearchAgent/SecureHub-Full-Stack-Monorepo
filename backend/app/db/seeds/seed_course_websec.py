@@ -5,11 +5,12 @@
 Seeds:
 
 - 1 course row
-- 15 ``knowledge_nodes`` (one per knowledge-point slug)
-- 30 ``knowledge_edges`` (prerequisite DAG)
+- 17 ``knowledge_nodes`` (one per knowledge-point slug)
+- 39 ``knowledge_edges`` (prerequisite DAG)
 - 1 placeholder ``documents`` row per knowledge point + 4 ``chunks`` per
-  document = 60 chunks total. Embeddings stay ``NULL`` with
+  document = 68 chunks total. Embeddings stay ``NULL`` with
   ``embedding_status='pending'`` for the embedding pipeline to fill in.
+- 5 SQL injection ``quiz_items`` bound to the SQL injection knowledge node.
 """
 
 import asyncio
@@ -18,6 +19,7 @@ from hashlib import sha256
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.db.models.learning.quiz_item import QuizItem
 from app.db.models.knowledge.chunk import Chunk
 from app.db.seeds._constants import (
     COURSE_WEBSEC_CODE,
@@ -41,6 +43,13 @@ from app.repositories.storage.storage_objects import StorageObjectRepository
 
 CHUNKS_PER_DOC = 4
 DOMAIN = "course_websec"
+COURSE_RETRIEVAL_ALIASES = [
+    "course-websec",
+    "WEB-SEC-101",
+    COURSE_WEBSEC_CODE,
+    "Web 安全基础",
+    "学习路径",
+]
 
 SOURCE_PROFILES: dict[str, dict[str, object]] = {
     "sql-injection": {
@@ -85,6 +94,30 @@ SOURCE_PROFILES: dict[str, dict[str, object]] = {
         "license": "Public learning material",
         "rights_note": "PortSwigger 公开学习资料，保留链接，仅做课程索引和摘要切片。",
     },
+    "ssrf": {
+        "platform": "mineru",
+        "url": "https://demo.securehub.local/pdf/websec-ssrf-mineru.pdf",
+        "author": "SecureHub / MinerU",
+        "license": "demo-only",
+        "rights_note": "PDF/MinerU 离线解析 fixture；仅用于课程知识库演示，保留原始来源。",
+        "collection_mode": "manual",
+        "asset_type": "pdf",
+        "page_no": 12,
+    },
+    "deserialization": {
+        "platform": "owasp",
+        "url": "https://owasp.org/www-project-cheat-sheets/cheatsheets/Deserialization_Cheat_Sheet.html",
+        "author": "OWASP",
+        "license": "CC BY-SA 4.0",
+        "rights_note": "OWASP Cheat Sheet 公开资料，教学演示引用并保留来源。",
+    },
+    "secure-coding": {
+        "platform": "owasp",
+        "url": "https://owasp.org/www-project-secure-coding-practices-quick-reference-guide/",
+        "author": "OWASP",
+        "license": "CC BY-SA 4.0",
+        "rights_note": "OWASP Secure Coding Practices 公开资料，教学演示引用并保留来源。",
+    },
 }
 
 TOPIC_HINTS: dict[str, list[str]] = {
@@ -118,13 +151,112 @@ TOPIC_HINTS: dict[str, list[str]] = {
         "只依赖验证码或检查是否登录并不能证明请求来自用户主动操作。",
         "教学场景可以用转账、改邮箱、绑定账号等状态变更接口说明风险。",
     ],
+    "cookie-session": [
+        "Cookie、Session 与 Token 是认证状态的核心载体，设计错误会放大会话固定、泄露和重放风险。",
+        "安全会话应配置 HttpOnly、Secure、SameSite、合理过期时间，并在敏感操作后轮换凭据。",
+        "Token 方案需要校验签名、过期时间、受众和撤销策略，避免把认证凭据长期暴露在前端状态中。",
+        "课程演示把认证状态与 CSRF、访问控制和越权漏洞连起来，说明浏览器自动携带凭据的影响。",
+    ],
     "file-upload": [
         "文件上传漏洞的风险来自扩展名校验不足、MIME 信任、路径穿越、解析器差异和上传后可执行。",
         "安全设计应把文件存到 Web 根目录外，重命名对象 key，并按白名单校验类型与大小。",
         "图片处理、压缩包解压和 Office/PDF 预览都需要单独的沙箱或异步扫描流程。",
         "演示时强调 object_key 与 storage_objects 管理，避免把大文件直接塞进业务表。",
     ],
+    "ssrf": [
+        "SSRF 是服务端代表攻击者访问内网、云元数据或受限服务的请求伪造风险。",
+        "常见入口包括 URL 预览、图片抓取、Webhook、PDF 转换和远程资源导入等后端请求功能。",
+        "防御应使用 allowlist、DNS/IP 解析校验、禁止内网地址段、限制协议，并隔离出站网络权限。",
+        "本条来自 PDF/MinerU 离线 fixture，证据 metadata 保留 page_no，方便演示 EvidenceDrawer 页码回链。",
+    ],
+    "deserialization": [
+        "反序列化漏洞发生在应用把不可信数据还原成对象并触发构造、魔术方法或 gadget chain 时。",
+        "常见入口包括 Cookie、Session、缓存、消息队列、文件上传后的对象流以及跨服务 RPC 参数。",
+        "防御重点是禁止反序列化不可信输入，改用 JSON 等简单数据结构，并对类型、签名和来源做严格校验。",
+        "修复验收要覆盖依赖库 gadget、密钥轮换、对象白名单、异常日志和最小权限运行环境。",
+    ],
+    "rce": [
+        "命令执行 / RCE 通常来自把用户输入拼接到系统命令、模板表达式、脚本解释器或危险反射调用中。",
+        "攻击影响从读取环境变量、执行系统命令到横向移动不等，必须结合最小权限和运行时隔离评估。",
+        "修复优先避免调用 shell，改用结构化 API；确需执行外部程序时使用参数数组、白名单和超时限制。",
+        "回归测试要覆盖命令分隔符、环境变量、路径穿越、编码绕过和错误输出泄漏。",
+    ],
+    "auth-bypass": [
+        "访问控制漏洞包括未授权访问、水平越权、垂直越权和对象级权限校验缺失。",
+        "认证只证明用户是谁，授权还必须逐资源判断该用户是否能执行当前操作。",
+        "安全设计应把权限校验放在服务端统一策略层，避免只靠前端隐藏按钮或路由。",
+        "测试要覆盖不同用户、不同角色、直接访问对象 ID、批量接口和历史链接。",
+    ],
+    "secure-coding": [
+        "安全编码不是单个检查点，而是从需求、设计、编码、测试、发布到复盘的修复闭环。",
+        "Web 安全课程中的参数化查询、输出编码、CSRF Token、文件存储隔离和权限校验都应落到编码规范。",
+        "代码评审要关注输入边界、认证授权、错误处理、日志脱敏、依赖版本和默认配置是否安全。",
+        "演示中的证据卡片应把漏洞成因、修复 commit、回归测试和剩余风险连起来，避免只给泛化建议。",
+    ],
 }
+
+SQL_INJECTION_QUIZ_ITEMS: list[dict[str, object]] = [
+    {
+        "id": stable_id("quiz:websec:sql-injection:definition"),
+        "type": "single_choice",
+        "question": "SQL 注入的核心成因是什么？",
+        "options": [
+            "把未受信任输入拼接进 SQL 语句，导致查询结构可被改变",
+            "数据库使用了索引，导致查询速度过快",
+            "页面使用了 HTTPS，导致 Cookie 自动携带",
+            "浏览器执行了用户提交的 JavaScript",
+        ],
+        "answer": "把未受信任输入拼接进 SQL 语句，导致查询结构可被改变",
+        "difficulty": 2,
+    },
+    {
+        "id": stable_id("quiz:websec:sql-injection:parameterized-query"),
+        "type": "single_choice",
+        "question": "下列哪项是防御 SQL 注入最稳定的主要方式？",
+        "options": [
+            "参数化查询 / 预编译语句",
+            "只在前端限制输入长度",
+            "隐藏数据库报错信息即可",
+            "把所有请求都改成 POST",
+        ],
+        "answer": "参数化查询 / 预编译语句",
+        "difficulty": 2,
+    },
+    {
+        "id": stable_id("quiz:websec:sql-injection:impact"),
+        "type": "multi_choice",
+        "question": "SQL 注入可能造成哪些影响？",
+        "options": [
+            "绕过认证",
+            "读取敏感数据",
+            "修改数据库记录",
+            "自动阻止所有 XSS",
+        ],
+        "answer": "绕过认证;读取敏感数据;修改数据库记录",
+        "difficulty": 3,
+    },
+    {
+        "id": stable_id("quiz:websec:sql-injection:xss-difference"),
+        "type": "single_choice",
+        "question": "SQL 注入与 XSS 的主要区别是什么？",
+        "options": [
+            "SQL 注入主要影响后端数据库查询，XSS 主要影响浏览器端脚本执行上下文",
+            "SQL 注入只发生在图片上传，XSS 只发生在数据库备份",
+            "SQL 注入不需要用户输入，XSS 不需要页面渲染",
+            "两者没有区别，只是名称不同",
+        ],
+        "answer": "SQL 注入主要影响后端数据库查询，XSS 主要影响浏览器端脚本执行上下文",
+        "difficulty": 3,
+    },
+    {
+        "id": stable_id("quiz:websec:sql-injection:least-privilege"),
+        "type": "short_answer",
+        "question": "为什么最小权限数据库账号能降低 SQL 注入的影响范围？",
+        "options": None,
+        "answer": "即使查询被注入，应用账号也只能执行必要的读写操作，不能随意改表、删库或访问无关敏感数据。",
+        "difficulty": 4,
+    },
+]
 
 
 def _source_profile(slug: str) -> dict[str, object]:
@@ -134,8 +266,11 @@ def _source_profile(slug: str) -> dict[str, object]:
         "author": "SecureHub 课程组",
         "license": "demo-only",
         "rights_note": "团队整理的课程演示材料，可在比赛演示中展示。",
+        "collection_mode": "manual",
+        "asset_type": "markdown_full",
+        "page_no": None,
     }
-    return SOURCE_PROFILES.get(slug, default)
+    return default | SOURCE_PROFILES.get(slug, {})
 
 
 def _chunk_texts(slug: str, name: str) -> list[str]:
@@ -164,10 +299,12 @@ async def _seed(session: AsyncSession) -> dict[str, int]:
     edge_count = 0
     doc_count = 0
     chunk_count = 0
+    quiz_count = 0
 
     # ---- course ----
-    if await courses.get_by_code(COURSE_WEBSEC_CODE) is None:
-        await courses.create(
+    course = await courses.get_by_code(COURSE_WEBSEC_CODE)
+    if course is None:
+        course = await courses.create(
             course_id=COURSE_WEBSEC_ID,
             code=COURSE_WEBSEC_CODE,
             title=COURSE_WEBSEC_TITLE,
@@ -175,30 +312,52 @@ async def _seed(session: AsyncSession) -> dict[str, int]:
             description=COURSE_WEBSEC_DESCRIPTION,
         )
         course_count = 1
+    else:
+        course.title = COURSE_WEBSEC_TITLE
+        course.domain = DOMAIN
+        course.description = COURSE_WEBSEC_DESCRIPTION
+        await session.flush()
+    course_pk = course.id
 
     # ---- nodes ----
+    existing_nodes_by_name = {
+        row.name: row for row in await graph.list_nodes(domain=DOMAIN, course_id=course_pk)
+    }
+    seed_node_ids = {}
     for slug, name, level in WEBSEC_NODES:
         nid = node_id(slug)
-        if await graph.get_node(nid) is None:
-            await graph.create_node(
+        existing_node = await graph.get_node(nid)
+        if existing_node is None:
+            existing_node = existing_nodes_by_name.get(name)
+        if existing_node is None:
+            existing_node = await graph.create_node(
                 node_id=nid,
                 domain=DOMAIN,
                 name=name,
-                course_id=COURSE_WEBSEC_ID,
+                course_id=course_pk,
                 description=f"《Web 安全基础》知识点：{name}",
                 node_type="concept",
                 level=level,
                 metadata={"slug": slug},
             )
             node_count += 1
+        else:
+            existing_node.domain = DOMAIN
+            existing_node.course_id = course_pk
+            existing_node.description = existing_node.description or f"《Web 安全基础》知识点：{name}"
+            existing_node.node_type = existing_node.node_type or "concept"
+            existing_node.level = existing_node.level or level
+            existing_node.metadata_ = dict(existing_node.metadata_ or {}) | {"slug": slug}
+            await session.flush()
+        seed_node_ids[slug] = existing_node.id
 
     # ---- edges ----
     existing_edges = {
         (e.source_id, e.target_id, e.edge_type) for e in await graph.list_edges()
     }
     for src_slug, tgt_slug in WEBSEC_EDGES:
-        src_id = node_id(src_slug)
-        tgt_id = node_id(tgt_slug)
+        src_id = seed_node_ids[src_slug]
+        tgt_id = seed_node_ids[tgt_slug]
         if (src_id, tgt_id, "prerequisite") in existing_edges:
             continue
         await graph.create_edge(
@@ -214,6 +373,7 @@ async def _seed(session: AsyncSession) -> dict[str, int]:
     for slug, name, level in WEBSEC_NODES:
         did = document_id(slug)
         profile = _source_profile(slug)
+        document_url = f"https://demo.securehub.local/websec/{slug}.md"
         markdown_body = "\n\n".join([f"# {name}", *_chunk_texts(slug, name)])
         markdown_bytes = markdown_body.encode("utf-8")
         markdown_hash = sha256(markdown_bytes).hexdigest()
@@ -243,7 +403,9 @@ async def _seed(session: AsyncSession) -> dict[str, int]:
             "fetched_at": fetched_at.isoformat(),
             "license": profile["license"],
             "rights_note": profile["rights_note"],
-            "asset_type": "markdown_full",
+            "collection_mode": profile["collection_mode"],
+            "asset_type": profile["asset_type"],
+            "page_no": profile["page_no"],
             "kp_slug": slug,
             "level": level,
             "type": "概念",
@@ -255,7 +417,7 @@ async def _seed(session: AsyncSession) -> dict[str, int]:
                 domain=DOMAIN,
                 source_type="manual_import",
                 title=f"{name} · 教学讲义",
-                url=str(profile["url"]),
+                url=document_url,
                 content_hash=markdown_hash,
                 raw_text=markdown_body,
                 metadata=source_metadata,
@@ -267,7 +429,7 @@ async def _seed(session: AsyncSession) -> dict[str, int]:
         else:
             existing_document.source_type = "manual_import"
             existing_document.title = f"{name} · 教学讲义"
-            existing_document.url = str(profile["url"])
+            existing_document.url = document_url
             existing_document.content_hash = markdown_hash
             existing_document.raw_text = markdown_body
             existing_document.metadata_ = source_metadata
@@ -299,8 +461,12 @@ async def _seed(session: AsyncSession) -> dict[str, int]:
                 row.token_count = len(chunk_text.split())
                 row.embedding_status = row.embedding_status or "pending"
                 row.metadata_ = {
+                    "course_id": str(course_pk),
+                    "course_slug": "course-websec",
+                    "course_code": COURSE_WEBSEC_CODE,
+                    "course_aliases": COURSE_RETRIEVAL_ALIASES,
                     "kp_slug": slug,
-                    "kp_ids": [str(node_id(slug))],
+                    "kp_ids": [str(seed_node_ids[slug])],
                     "section": i + 1,
                     "platform": profile["platform"],
                     "source_url": profile["url"],
@@ -309,7 +475,9 @@ async def _seed(session: AsyncSession) -> dict[str, int]:
                     "fetched_at": fetched_at.isoformat(),
                     "license": profile["license"],
                     "rights_note": profile["rights_note"],
-                    "asset_type": "markdown_full",
+                    "collection_mode": profile["collection_mode"],
+                    "asset_type": profile["asset_type"],
+                    "page_no": profile["page_no"],
                     "chapter": name,
                     "reliability": 0.9,
                 }
@@ -328,8 +496,12 @@ async def _seed(session: AsyncSession) -> dict[str, int]:
                     embedding=None,
                     embedding_status="pending",
                     metadata_={
+                        "course_id": str(course_pk),
+                        "course_slug": "course-websec",
+                        "course_code": COURSE_WEBSEC_CODE,
+                        "course_aliases": COURSE_RETRIEVAL_ALIASES,
                         "kp_slug": slug,
-                        "kp_ids": [str(node_id(slug))],
+                        "kp_ids": [str(seed_node_ids[slug])],
                         "section": i + 1,
                         "platform": profile["platform"],
                         "source_url": profile["url"],
@@ -338,7 +510,9 @@ async def _seed(session: AsyncSession) -> dict[str, int]:
                         "fetched_at": fetched_at.isoformat(),
                         "license": profile["license"],
                         "rights_note": profile["rights_note"],
-                        "asset_type": "markdown_full",
+                        "collection_mode": profile["collection_mode"],
+                        "asset_type": profile["asset_type"],
+                        "page_no": profile["page_no"],
                         "chapter": name,
                         "reliability": 0.9,
                     },
@@ -347,12 +521,41 @@ async def _seed(session: AsyncSession) -> dict[str, int]:
         await chunks.bulk_create(chunk_rows)
         chunk_count += len(chunk_rows)
 
+    # ---- SQL injection quiz items ----
+    sql_node_pk = seed_node_ids["sql-injection"]
+    for item in SQL_INJECTION_QUIZ_ITEMS:
+        quiz_id = item["id"]
+        existing_quiz = await session.get(QuizItem, quiz_id)
+        if existing_quiz is None:
+            session.add(
+                QuizItem(
+                    id=quiz_id,
+                    kp_id=sql_node_pk,
+                    type=str(item["type"]),
+                    question=str(item["question"]),
+                    options=item["options"],
+                    answer=str(item["answer"]),
+                    difficulty=int(item["difficulty"]),
+                    generated_by_skill=None,
+                )
+            )
+            quiz_count += 1
+        else:
+            existing_quiz.kp_id = sql_node_pk
+            existing_quiz.type = str(item["type"])
+            existing_quiz.question = str(item["question"])
+            existing_quiz.options = item["options"]
+            existing_quiz.answer = str(item["answer"])
+            existing_quiz.difficulty = int(item["difficulty"])
+            await session.flush()
+
     return {
         "courses": course_count,
         "nodes": node_count,
         "edges": edge_count,
         "documents": doc_count,
         "chunks": chunk_count,
+        "quiz_items": quiz_count,
     }
 
 

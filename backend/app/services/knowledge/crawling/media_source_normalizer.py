@@ -4,8 +4,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
+import html
 import json
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 
 
 SUPPORTED_MEDIACRAWLER_PLATFORMS = frozenset({"bili", "bilibili", "xhs", "zhihu"})
@@ -58,7 +60,7 @@ def infer_platform(item: dict[str, Any]) -> str:
     keys = set(item)
     if {"note_id", "note_url"} & keys or {"collected_count", "xsec_token"} & keys:
         return "xhs"
-    if {"video_id", "video_url", "video_cover_url"} & keys:
+    if {"video_id", "bvid", "bv_id", "video_url", "video_cover_url", "cover_url"} & keys:
         return "bili"
     if {"content_id", "content_url", "question_id"} & keys:
         return "zhihu"
@@ -75,7 +77,7 @@ def infer_item_type(item: dict[str, Any], *, file_hint: str = "") -> str:
         return "contents"
     if "comment_id" in item or "parent_comment_id" in item:
         return "comments"
-    if "content_id" in item or "note_id" in item or "video_id" in item:
+    if "content_id" in item or "note_id" in item or "video_id" in item or "bvid" in item or "bv_id" in item:
         return "contents"
     return "contents"
 
@@ -88,7 +90,7 @@ def media_parent_key(item: dict[str, Any], *, platform: str | None = None) -> st
     if normalized_platform == "xhs":
         return _string_or_none(item.get("note_id"))
     if normalized_platform == "bili":
-        return _string_or_none(item.get("video_id"))
+        return _bili_media_id(item)
     if normalized_platform == "zhihu":
         return _string_or_none(item.get("content_id"))
     return (
@@ -105,11 +107,18 @@ def _normalize_xhs(
     fetched_at: datetime | None,
     rights_note: str | None,
 ) -> NormalizedMediaSource:
-    title = _string_or_none(item.get("title")) or "小红书学习笔记"
-    desc = _string_or_none(item.get("desc")) or ""
-    url = _string_or_none(item.get("note_url")) or f"https://www.xiaohongshu.com/explore/{item.get('note_id')}"
-    author = _string_or_none(item.get("nickname")) or "小红书公开作者"
-    published_at = _timestamp_to_iso(item.get("time"))
+    title = _first_string(item, "title", "display_title") or "小红书学习笔记"
+    desc = _first_string(item, "desc", "content", "text") or ""
+    media_id = _first_string(item, "note_id", "id")
+    url = _strip_url_query(
+        _first_string(item, "note_url", "url") or f"https://www.xiaohongshu.com/explore/{media_id}"
+    )
+    author = (
+        _first_string(item, "nickname", "user_nickname", "author")
+        or _nested_string(item, "user", "nickname")
+        or "小红书公开作者"
+    )
+    published_at = _timestamp_to_iso(_first_present(item, "time", "created_time", "publish_time"))
     metadata = _base_metadata(
         platform="xhs",
         url=url,
@@ -118,7 +127,7 @@ def _normalize_xhs(
         fetched_at=fetched_at,
         rights_note=rights_note,
         extra={
-            "media_id": _string_or_none(item.get("note_id")),
+            "media_id": media_id,
             "media_type": _string_or_none(item.get("type")) or "note",
             "source_keyword": item.get("source_keyword"),
             "tags": _jsonish(item.get("tag_list")),
@@ -128,12 +137,14 @@ def _normalize_xhs(
                 "comment_count": item.get("comment_count"),
                 "share_count": item.get("share_count"),
             },
-            "cover_or_images": _jsonish(item.get("image_list")),
+            "cover_or_images": _public_media_value(
+                _jsonish(_first_present(item, "image_list", "images", "cover", "cover_url"))
+            ),
         },
     )
     return NormalizedMediaSource(
         domain=domain,
-        source_type="mediacrawler_export",
+        source_type="media_post",
         platform="xhs",
         title=title,
         url=url,
@@ -152,10 +163,15 @@ def _normalize_bili(
     rights_note: str | None,
 ) -> NormalizedMediaSource:
     title = _string_or_none(item.get("title")) or "B站教学视频"
-    desc = _string_or_none(item.get("desc")) or ""
-    url = _string_or_none(item.get("video_url")) or f"https://www.bilibili.com/video/{item.get('video_id')}"
-    author = _string_or_none(item.get("nickname")) or "B站公开作者"
-    published_at = _timestamp_to_iso(item.get("create_time"))
+    desc = _first_string(item, "desc", "description") or ""
+    media_id = _bili_media_id(item)
+    url = _strip_url_query(
+        _first_string(item, "video_url", "url")
+        or f"https://www.bilibili.com/video/{media_id or item.get('video_id') or item.get('bvid') or item.get('bv_id')}"
+    )
+    author = _first_string(item, "nickname", "user_name", "author") or "B站公开作者"
+    published_at = _timestamp_to_iso(_first_present(item, "create_time", "publish_time", "pubdate"))
+    transcript = _first_string(item, "transcript", "subtitle", "asr_text", "caption_text")
     metadata = _base_metadata(
         platform="bili",
         url=url,
@@ -164,28 +180,38 @@ def _normalize_bili(
         fetched_at=fetched_at,
         rights_note=rights_note,
         extra={
-            "media_id": _string_or_none(item.get("video_id")),
-            "media_type": _string_or_none(item.get("video_type")) or "video",
+            "media_id": media_id,
+            "media_type": "video",
+            "source_media_type": _string_or_none(item.get("video_type")),
             "source_keyword": item.get("source_keyword"),
-            "cover_url": item.get("video_cover_url"),
-            "metrics": {
-                "liked_count": item.get("liked_count"),
-                "play_count": item.get("video_play_count"),
-                "favorite_count": item.get("video_favorite_count"),
-                "share_count": item.get("video_share_count"),
-                "coin_count": item.get("video_coin_count"),
-                "danmaku_count": item.get("video_danmaku"),
-                "comment_count": item.get("video_comment"),
-            },
+            "cover_url": _first_string(item, "video_cover_url", "cover_url"),
+            "metrics": _compact_dict(
+                {
+                    "comment_count": _first_present(item, "comment_count", "comments_count", "video_comment"),
+                    "play_count": _first_present(item, "play_count", "view_count", "video_play_count"),
+                    "liked_count": _first_present(item, "liked_count", "like_count", "likes"),
+                    "favorite_count": _first_present(
+                        item,
+                        "favorite_count",
+                        "collect_count",
+                        "collection_count",
+                        "video_favorite_count",
+                    ),
+                    "coin_count": _first_present(item, "coin_count", "video_coin_count"),
+                    "danmaku_count": _first_present(item, "danmaku_count", "danmu_count", "video_danmaku"),
+                    "share_count": _first_present(item, "share_count", "video_share_count"),
+                }
+            ),
+            "transcript_available": bool(transcript),
         },
     )
     return NormalizedMediaSource(
         domain=domain,
-        source_type="mediacrawler_export",
+        source_type="media_post",
         platform="bili",
         title=title,
         url=url,
-        raw_text=_build_text(title, author, desc, comments, metadata),
+        raw_text=_build_text(title, author, desc, comments, metadata, transcript=transcript),
         raw_item=item,
         metadata=metadata,
         comments=comments,
@@ -200,7 +226,7 @@ def _normalize_zhihu(
     rights_note: str | None,
 ) -> NormalizedMediaSource:
     title = _string_or_none(item.get("title")) or "知乎学习资料"
-    text = _string_or_none(item.get("content_text")) or _string_or_none(item.get("desc")) or ""
+    text = html.unescape(_string_or_none(item.get("content_text")) or _string_or_none(item.get("desc")) or "")
     url = _string_or_none(item.get("content_url")) or f"https://www.zhihu.com/question/{item.get('question_id')}"
     author = _string_or_none(item.get("user_nickname")) or "知乎公开作者"
     published_at = _timestamp_to_iso(item.get("created_time"))
@@ -214,8 +240,10 @@ def _normalize_zhihu(
         extra={
             "media_id": _string_or_none(item.get("content_id")),
             "media_type": _string_or_none(item.get("content_type")) or "content",
+            "content_id": _string_or_none(item.get("content_id")),
             "question_id": item.get("question_id"),
             "source_keyword": item.get("source_keyword"),
+            "updated_at": _timestamp_to_iso(item.get("updated_time")),
             "metrics": {
                 "voteup_count": item.get("voteup_count"),
                 "comment_count": item.get("comment_count"),
@@ -224,7 +252,7 @@ def _normalize_zhihu(
     )
     return NormalizedMediaSource(
         domain=domain,
-        source_type="mediacrawler_export",
+        source_type="media_post",
         platform="zhihu",
         title=title,
         url=url,
@@ -258,7 +286,7 @@ def _base_metadata(
         "asset_type": "media_item_json",
         "reliability": 0.65,
         "trust_score": 0.65,
-        "collection_mode": "mediacrawler_export",
+        "collection_mode": "mediacrawler",
     }
     metadata.update({key: value for key, value in extra.items() if value is not None})
     return metadata
@@ -270,6 +298,8 @@ def _build_text(
     body: str,
     comments: list[dict[str, Any]],
     metadata: dict[str, Any],
+    *,
+    transcript: str | None = None,
 ) -> str:
     parts = [
         f"# {title}",
@@ -285,6 +315,8 @@ def _build_text(
     if metadata.get("metrics"):
         parts.append(f"- 互动指标：{json.dumps(metadata['metrics'], ensure_ascii=False)}")
     parts.extend(["", "## 正文", "", body.strip() or "（原始导出未提供正文，仅保留来源与元数据。）"])
+    if transcript:
+        parts.extend(["", "## 转写文本", "", transcript.strip()])
     if comments:
         parts.extend(["", "## 采样评论", ""])
         for comment in comments[:10]:
@@ -295,6 +327,38 @@ def _build_text(
             if content:
                 parts.append(f"- {nickname}: {content}")
     return "\n".join(parts)
+
+
+def _bili_media_id(item: dict[str, Any]) -> str | None:
+    return _first_string(item, "video_id", "bvid", "bv_id")
+
+
+def _first_present(item: dict[str, Any], *keys: str) -> object | None:
+    for key in keys:
+        value = item.get(key)
+        if value is not None and value != "":
+            return value
+    return None
+
+
+def _first_string(item: dict[str, Any], *keys: str) -> str | None:
+    value = _first_present(item, *keys)
+    if isinstance(value, (list, dict)):
+        return json.dumps(value, ensure_ascii=False)
+    return _string_or_none(value)
+
+
+def _compact_dict(values: dict[str, object | None]) -> dict[str, object]:
+    return {key: value for key, value in values.items() if value is not None and value != ""}
+
+
+def _nested_string(item: dict[str, Any], *path: str) -> str | None:
+    value: Any = item
+    for key in path:
+        if not isinstance(value, dict):
+            return None
+        value = value.get(key)
+    return _string_or_none(value)
 
 
 def _timestamp_to_iso(value: object) -> str | None:
@@ -322,8 +386,70 @@ def _jsonish(value: object) -> object:
     return value
 
 
+def _public_media_value(value: object) -> object:
+    if isinstance(value, dict):
+        return {
+            str(key): _public_media_value(child)
+            for key, child in value.items()
+            if not _is_metadata_sensitive_key(str(key))
+        }
+    if isinstance(value, list):
+        return [_public_media_value(item) for item in value]
+    if isinstance(value, str) and _looks_like_url_with_query(value):
+        return _strip_url_query(value)
+    return value
+
+
+def _is_metadata_sensitive_key(key: str) -> bool:
+    compact = key.lower().strip().replace("-", "_")
+    flat = compact.replace("_", "")
+    exact_sensitive = {
+        "avatar",
+        "avatar_url",
+        "cookie",
+        "cookies",
+        "credential",
+        "csrf",
+        "csrf_token",
+        "face",
+        "head_url",
+        "homepage",
+        "home_url",
+        "ip_location",
+        "sec_uid",
+        "session",
+        "signature",
+        "sign",
+        "token",
+        "uid",
+        "user_avatar",
+        "user_id",
+        "user_link",
+        "user_signature",
+        "user_sign",
+        "user_url_token",
+        "xsec_token",
+    }
+    return (
+        compact in exact_sensitive
+        or flat in exact_sensitive
+        or compact.endswith("_signature")
+        or compact.endswith("_sign")
+    )
+
+
 def _string_or_none(value: object) -> str | None:
     if value is None:
         return None
     text = str(value).strip()
     return text or None
+
+
+def _looks_like_url_with_query(value: str) -> bool:
+    parts = urlsplit(value)
+    return bool(parts.scheme and parts.netloc and parts.query)
+
+
+def _strip_url_query(url: str) -> str:
+    parts = urlsplit(url)
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, "", ""))

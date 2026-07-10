@@ -1,4 +1,4 @@
-# Status: [planned]
+# Status: real
 
 from abc import ABC, abstractmethod
 from typing import Any, ClassVar
@@ -67,7 +67,9 @@ class SkillContext(BaseModel):
         duration_ms: int | None = None,
         token_usage: dict[str, Any] | None = None,
     ) -> None:
-        raise NotImplementedError("TODO: write agent run through runtime.logger")
+        # 由于 harness 已经在内部记录了一次 agent_runs，这里二次调用变为 noop，
+        # 避免旧 skill 文件的兼容写法造成双写。需要直写时请直接调用 runtime.logger.log_agent_run。
+        return None
 
 
 class BaseSkill(ABC):

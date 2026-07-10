@@ -247,6 +247,29 @@ export const workflowDefinitions: WorkflowDefinition[] = [
       { id: 'career-task', source: 'career_planner', target: 'task_orchestrator', dataLabel: 'next_path' },
     ],
   },
+  {
+    id: 'image_analysis',
+    name: '截图上传分析',
+    description: '截图进入 OCR、代码/概念分析与质量校验，输出可继续追问的学习反馈',
+    defaultEntry: 'doc_archivist',
+    nodes: makeNodes({
+      doc_archivist: { skillId: 'OcrAndStructure', group: 'OCR 结构化' },
+      topic_explorer: { skillId: 'AnalyzeCodeOrConcept', group: '概念分析' },
+      outcome_evaluator: { skillId: 'QualityCheck', group: '质量闸门' },
+      career_planner: { skillId: 'RouteMultimodalIntent', group: '意图识别' },
+      task_orchestrator: { status: 'skipped', group: '本轮跳过' },
+      competition_advisor: { status: 'skipped', group: '本轮跳过' },
+      hot_analyst: { status: 'skipped', group: '本轮跳过' },
+      policy_interpreter: { status: 'skipped', group: '本轮跳过' },
+      job_analyst: { status: 'skipped', group: '本轮跳过' },
+    }),
+    edges: [
+      { id: 'career-doc', source: 'career_planner', target: 'doc_archivist', dataLabel: 'image_intent' },
+      { id: 'doc-topic', source: 'doc_archivist', target: 'topic_explorer', dataLabel: 'ocr_text' },
+      { id: 'topic-outcome', source: 'topic_explorer', target: 'outcome_evaluator', dataLabel: 'analysis' },
+      { id: 'doc-outcome', source: 'doc_archivist', target: 'outcome_evaluator', dataLabel: 'structure' },
+    ],
+  },
 ];
 
 export const workflowById = Object.fromEntries(

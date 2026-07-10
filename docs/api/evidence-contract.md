@@ -1,0 +1,254 @@
+# Evidence Contract v1.2 — frozen 2026-07-08
+
+> Status: **frozen** — 任何字段增删 / 重命名 / 必填等级变更，必须同时更新：
+> - `backend/app/schemas/evidence.py`（Pydantic 真理源）
+> - `frontend/src/lib/sse.types.ts` 的 `EvidenceChunkDTO`
+> - 本文件 §3 字段表 + §6 changelog
+> - `backend/tests/schemas/test_contract_alignment.py` 与 `backend/tests/rag/test_evidence_contract.py`
+>
+> 与 `docs/api/course-contract.md §2 evidence` 的关系：那里描述 SSE event 信封（`event: "evidence"` + `data: EvidenceChunkDTO[]`），本文件描述 `EvidenceChunkDTO` 的字段语义。
+
+## 0. 设计原则
+
+- **wire 字段就是 DTO 字段**：传过去的字段名 / 类型 / 必填状态 = 这里写的。前后端 1:1 对齐。
+- **DTO 仅作 UI 投影**：后端内部使用 `EvidenceCard` / `ChunkHit` 等结构；DTO 只负责跨网络。
+- **无 `metadata: dict[str, Any]` 兜底**：所有需要展示的字段都是 top-level；不能展示的字段不应出现在 DTO。
+- **不动数据层**：所有字段都从已有的 `documents` / `chunks` / `document_assets` 行 + JSONB metadata 派生，不增列。
+- **多源采集合规**：`platform / source_url / collection_mode / rights_note / license` 一并记录，避免 A3 合规复审时漏字段。
+
+## 1. 字段分层
+
+| 层级 | 字段 | 必填条件 |
+|---|---|---|
+| 身份 | `chunk_id`, `document_id` | 永远必填 |
+| 正文 | `chunk_text`, `score` | 永远必填 |
+| 来源 | `platform`, `rights_note` | 永远必填 |
+| 来源链接 | `source_url` | **当 `platform != "manual"` 时必填**；`platform == "manual"` 时允许为 `null` |
+| 展示 | `title`, `author`, `published_at`, `fetched_at`, `collection_mode`, `asset_type`, `page_no`, `chapter`, `timestamp`, `license`, `reliability` | 可选 |
+
+总字段数 18。
+
+## 2. 字段表
+
+| 字段 | 类型 | 必填 | 来源（数据层 → DTO） | 用途 | 示例 |
+|---|---|---|---|---|---|
+| `chunk_id` | UUID string | ✅ | `chunks.id` | 稳定身份；落 `agent_runs.evidence_chunk_ids[]` | `"00000000-0000-0000-0000-000000000501"` |
+| `document_id` | UUID string | ✅ | `chunks.document_id` | 跳转文档详情；UI 折叠时按 doc 分组 | `"00000000-0000-0000-0000-000000000601"` |
+| `chunk_text` | string | ✅ | `chunks.chunk_text`（必要时高亮裁剪到 ≤500 字符） | EvidenceDrawer / CitationPanel 正文 | `"SQL 注入通常发生在未受信任输入被拼接进查询语句时…"` |
+| `score` | float ∈ [0,1] | ✅ | `retriever` 的 BM25 + 向量混合最终得分 | 用于在 UI 排序、显示相关度 | `0.87` |
+| `platform` | string | ✅ | `chunks.metadata.platform` 或 `documents.metadata.platform` | 平台 badge；触发合规策略 | 见 §4.1 枚举 |
+| `source_url` | string \| null | 条件必填 | `chunks.metadata.source_url` ↩ `documents.url` | 外链；UI "打开来源" 按钮 | `"https://owasp.org/www-community/attacks/SQL_Injection"` |
+| `rights_note` | string | ✅ | `chunks.metadata.rights_note` ↩ `documents.metadata.rights_note` | UI 抽屉底部显示；版权合规 | `"CC BY-SA 4.0"` |
+| `title` | string \| null | optional | `documents.title` | EvidenceCard 标题；CitationPanel 列表项 | `"OWASP SQL Injection 攻击说明"` |
+| `author` | string \| null | optional | `documents.metadata.author` | 署名展示 | `"OWASP"` |
+| `published_at` | ISO 8601 datetime \| null | optional | `documents.metadata.published_at` | 发布日期；UI 显示 `YYYY-MM-DD` | `"2025-11-18T00:00:00Z"` |
+| `fetched_at` | ISO 8601 datetime \| null | optional | `documents.fetched_at` | 抓取日期；判断时效性 | `"2026-06-09T00:00:00Z"` |
+| `collection_mode` | enum string \| null | optional | `documents.metadata.collection_mode` | 采集管道徽章；A3 合规审计字段 | 见 §4.2 枚举 |
+| `asset_type` | string \| null | optional | `documents.source_type` ↩ `documents.metadata.asset_type` | 决定 §5 中字段差异 | 见 §4.3 枚举 |
+| `page_no` | int \| null | optional | `chunks.metadata.page_no` | PDF 页码 | `42` |
+| `chapter` | string \| null | optional | `chunks.metadata.chapter` | 章节定位 | `"SQL 注入基础"` |
+| `timestamp` | float (秒) \| null | optional | `chunks.metadata.timestamp` | 视频时间戳 | `183` |
+| `license` | string \| null | optional | `documents.metadata.license` | 显式 license（与 `rights_note` 互补） | `"CC BY-SA 4.0"` |
+| `reliability` | float ∈ [0,1] \| null | optional | `documents.trust_score` 映射 | 来源可信度徽章 | `0.92` |
+
+> ⚠️ `score` 与 `reliability` 不同：`score` 是与当前 query 的相关度，`reliability` 是来源本身的可信度。两者都是 0-1，但语义独立。UI 在抽屉里同时显示。
+
+## 3. 数据层映射
+
+```
++--------------------+        +-----------------+
+| documents          |        | chunks          |
++--------------------+        +-----------------+
+| id (UUID)          |◀──────| document_id     |
+| title              |        | id (UUID)       |
+| url                |        | domain          |
+| source_type        |        | chunk_text      |
+| fetched_at         |        | metadata (JSONB)|
+| trust_score        |        +-----------------+
+| metadata (JSONB):  |
+|   platform         |
+|   author           |
+|   published_at     |
+|   rights_note      |
+|   license          |
+|   asset_type       |
+|   collection_mode  |
++--------------------+
+```
+
+`document_assets` 表用于存原始文件 / 转写 / 缩略图等的对象存储引用，**不进 DTO**（DTO 通过 `source_url` 暴露用户可点击的外链；`document_assets.object_key` 仅后端内部使用）。
+
+合并规则（构造 DTO 时）：
+
+1. 优先使用 `chunks.metadata` 中的字段，命中则用之。
+2. `chunks.metadata` 缺失则向 `documents.metadata` 兜底；再缺则向 `documents.<column>` 兜底（如 `documents.url` 兜底 `source_url`）。
+3. `score` 来自 retriever 的混合得分，与表行无关。
+4. `chunk_text` 在 RAG 拼 prompt 时使用全文；在 DTO 中可裁剪到 500 字符（按高亮上下文）。
+
+## 4. 枚举值
+
+### 4.1 `platform`（开放字符串，建议枚举）
+
+| 值 | 含义 | 合规要求 |
+|---|---|---|
+| `owasp` | OWASP 文档 | `rights_note` 写 `CC BY-SA 4.0` 或同等许可 |
+| `portswigger` | PortSwigger Web Security Academy | 保留原站链接 |
+| `bili` / `bilibili` | B 站 | 仅引用视频转写片段；不重托管原视频 |
+| `zhihu` | 知乎 | 引用片段 + 原链 |
+| `xhs` | 小红书 | 引用片段 + 原链 |
+| `wechat_mp` / `wechat` / `weixin` | 微信公众号 | 引用片段 + 原链 |
+| `cve` | CVE / CWE | 公共漏洞库 |
+| `ctftime` | CTFtime | 公开赛事数据 |
+| `github` | GitHub 开源项目 | 按 license（写入 `license`） |
+| `csdn` | CSDN 博客 | 引用片段 + 原链 |
+| `mitre` | MITRE ATT&CK / CWE | 公共知识库 |
+| `securehub` | 平台自建知识库 | `rights_note` 写 `internal` |
+| `manual` | 教师 / 助教手工录入 | `source_url` 允许为 `null`；`rights_note` 必填 |
+| `mineru` | 本地 PDF/MinerU 教材解析 | 不提交 PDF/full.md；展示时保留教材、章节与版权说明 |
+
+> 后端 / 前端代码用开放 `str` 接收，校验时不限制集合；新平台无需改 schema，但**必须**在本表登记。
+
+### 4.2 `collection_mode`（闭枚举）
+
+| 值 | 含义 |
+|---|---|
+| `manual` | 手工录入 / 教师上传 |
+| `api` | 平台开放 API |
+| `scrapling` | Scrapling 风格爬取 |
+| `mediacrawler` | MediaCrawler 风格采集 |
+| `mindspider_reference` | MindSpider 参考实现采集 |
+
+后端使用 Python `Enum`，前端使用 TypeScript `Literal union`。新增模式必须改 schema + 本表 + 测试。
+
+### 4.3 `asset_type`（开放字符串，建议枚举）
+
+| 值 | 字段语义 |
+|---|---|
+| `web_article` | 网页文章；常含 `chapter` / `author` / `published_at` |
+| `video_transcript` | 视频转写片段；必含 `timestamp` |
+| `page_image` | 截图 / 图片；常含 `page_no` 与 OCR 文本作为 `chunk_text` |
+| `markdown` | Markdown 文档 |
+| `pdf` | PDF 解析片段；必含 `page_no` |
+| `markdown_chapter` | 教材章节级 Markdown 资产；chunk metadata 必含 `chapter` 与 `heading_path` |
+
+历史 seed 数据中曾出现 `markdown_full` / `manual_import` 两值，过渡期允许。6-C-2 起，教材章节检索证据使用 `markdown_chapter`。
+
+### 4.4 教材版权敏感字段
+
+| 字段 / 值 | 含义 | 合规要求 |
+|---|---|---|
+| `license=proprietary-educational-use` | 正规出版教材的内部教学演示引用 | PDF 与整本 Markdown 不进 git；Evidence 只展示摘要/短片段并保留来源标注 |
+| `rights_note` | 教材版权边界说明 | 必须写明版权归原作者/出版社，仅用于 SecureHub 内部教学演示 RAG 检索，不对外分发原文 |
+| `original_pdf` / `markdown_full` assets | 本地教材原始资产 | 允许登记本地对象 key 和 hash；禁止提交 PDF 本体与 `full.md` |
+| `markdown_chapter` assets | 章节级检索资产 | chunk metadata 必须保留 `book_title / chapter / heading_path / asset_id`，用于 EvidenceDrawer 追溯 |
+
+## 5. asset_type 字段差异表
+
+| asset_type | 期望非空字段 | 期望为 null 字段 |
+|---|---|---|
+| `web_article` | `chapter`, `author`, `published_at` | `page_no`, `timestamp` |
+| `video_transcript` | `timestamp` | `page_no`, `chapter` |
+| `page_image` | `page_no`（或缺省）；`chunk_text` 是 OCR 文本 | `chapter`, `timestamp` |
+| `markdown` | `chapter`（一级标题） | `page_no`, `timestamp` |
+| `pdf` | `page_no`, `chapter` | `timestamp` |
+
+> 不强制：契约层只校验类型和必填集，期望字段缺失不报错，但 UI 渲染会按 §5 假定有/无。
+
+## 5A. Embedding Profile 元数据
+
+Embedding Profile 是 chunks 向量空间的兼容性标识，存放在 `chunks.metadata`，不进入 Evidence DTO 的 top-level 字段。Retriever 必须只检索当前 profile 的 ready chunks，避免不同模型的 1024 维向量混算。
+
+当前锁定枚举：
+
+```text
+qwen-openai-compatible:text-embedding-v4:1024:dense:v1
+```
+
+成功写入 Qwen embedding 后，每个 chunk 必须合并以下 metadata 字段，并保留其他业务 metadata：
+
+| 字段 | 类型 | 必填 | 含义 |
+|---|---|---|---|
+| `embedding_profile` | string | ✅ | 当前向量空间契约；本轮固定为 `qwen-openai-compatible:text-embedding-v4:1024:dense:v1` |
+| `embedding_provider` | string | ✅ | Provider 名；当前为 `qwen_openai_compatible` |
+| `embedding_model` | string | ✅ | 模型名；当前为 `text-embedding-v4` |
+| `embedding_dim` | int | ✅ | 向量维度；当前为 `1024` |
+| `embedding_output_type` | string | ✅ | 输出类型；当前为 `dense` |
+| `embedding_generated_at` | ISO 8601 datetime | ✅ | 向量生成时间 |
+
+禁止把旧 hash / BGE-M3 / fixture 向量标记成当前 Qwen profile。旧 ready 且无 profile 的数据在迁移时视为 `<legacy-unprofiled>`，必须经显式 reset 后再重嵌入。
+
+运行配置约束：
+
+| 环境变量 | 固定值 / 要求 | 说明 |
+|---|---|---|
+| `EMBEDDING_PROVIDER` | `qwen_openai_compatible` | 生产/演示默认 provider；fixture 仅限测试 |
+| `EMBEDDING_MODEL` | `text-embedding-v4` | Qwen embedding v4 |
+| `EMBEDDING_DIM` | `1024` | Provider 初始化与 retriever 查询均强校验 |
+| `EMBEDDING_PROFILE` | `qwen-openai-compatible:text-embedding-v4:1024:dense:v1` | 必须与 provider/model/dim/output 完全匹配 |
+| `EMBEDDING_BATCH_SIZE` | `1..10`，当前 `10` | 超过 10 必须拒绝，避免服务端批量限制风险 |
+| `EMBEDDING_MAX_CONCURRENCY` | `>=1`，当前 `1` | 默认串行限流；后续扩容需重新压测 |
+| `EMBEDDING_TIMEOUT_SECONDS` | 当前 `30` | 单请求超时 |
+| `EMBEDDING_MAX_RETRIES` | 当前 `2` | 仅 5xx/timeout 等可恢复错误重试 |
+| `DASHSCOPE_API_KEY` | 必须从环境变量或 `.env.local` 注入 | 不得写入 tracked 文件、日志、metadata 或测试快照 |
+| `DASHSCOPE_OPENAI_COMPATIBLE_BASE_URL` | 必须从环境变量或 `.env.local` 注入 | 使用 DashScope OpenAI-compatible endpoint；不进入 DTO |
+
+2026-07-08 follow-up：本地 `backend/.env.local` 已用业务空间 CSV 配置 DashScope key 与 OpenAI-compatible base URL；该文件命中 `.gitignore`，不进入 git。配置加载 smoke 通过，live smoke `uv run pytest tests/llm_live/test_qwen_embedding_live.py -q -m embedding_live -rs` 在同时开启 `ENABLE_EMBEDDING_LIVE_TESTS=true` 与 `ENABLE_LLM_LIVE_TESTS=true` 后通过，返回 1024 维 dense embedding。
+
+## 6. Changelog
+
+- **2026-06-16 v1 — frozen**：从 dev 上既有 14 字段扩展到 18 字段；将 `excerpt` 重命名为 `chunk_text`；新增 `score / title / collection_mode / license`；将 `collection_mode` 从 `metadata.collection_mode` 提到顶层；移除自由形态 `metadata: dict`；为 `source_url` 增加 "platform != manual 时必填" 校验。
+- **2026-07-07 v1.1 — frozen**：新增 `platform=mineru` 教材来源说明、`asset_type=markdown_chapter`、`license=proprietary-educational-use`，并明确 PDF/full.md 不进入 git 的版权边界。
+- **2026-07-08 v1.2 — frozen**：新增 `chunks.metadata.embedding_profile` 与 Qwen embedding 元数据契约；Retriever 只检索当前 Qwen profile 的 ready chunks，防止跨模型向量混算。
+- **2026-07-08 v1.2 follow-up**：补充 Qwen 运行环境变量约束与本地 DashScope live smoke 结果；不改变 Evidence DTO 字段集。
+
+## 7. SSE event 信封
+
+事件名：`evidence`。`data` 字段：`EvidenceChunkDTO[]`。
+
+```
+event: evidence
+data: [{...EvidenceChunkDTO}, ...]
+```
+
+完整描述见 `docs/api/course-contract.md §2 evidence`。
+
+## 8. 6-C-1 draft-by-C 采集侧字段草案
+
+**draft-by-C，供 B/C 双 review 后升级为权威版。** 本节只记录 C 侧已经稳定写入 `documents / document_assets / chunks` 的采集字段与枚举边界，不替代上方 frozen v1 DTO 契约。
+
+最小必填集：
+
+| 字段 | 含义 |
+|---|---|
+| `chunk_id` | `chunks.id`，Evidence 条目的稳定身份 |
+| `document_id` | `chunks.document_id`，用于回溯原始文档 |
+| `chunk_text` | `chunks.chunk_text`，证据正文 |
+| `score` | 检索层返回的相关度分数 |
+
+来源标识必填集：
+
+| 字段 | 含义 |
+|---|---|
+| `platform` | 来源平台，见下方枚举 |
+| `source_url` | 原始公开来源链接；`manual` 可为空，其余平台必须有值 |
+| `rights_note` | 授权与引用边界说明，Evidence 展示时必须可追溯 |
+
+可选展示集：`title / author / published_at / fetched_at / collection_mode / asset_type / page_no / chapter / timestamp / license`。
+
+`platform` 枚举锁定为：`owasp / portswigger / github / bili / zhihu / xhs / mineru / manual / cve / ctftime / wechat_mp / csdn / mindspider_reference`。
+
+`collection_mode` 枚举锁定为：`manual / api / scrapling / mediacrawler / mindspider_reference`。
+
+`asset_type` 枚举锁定为：`original_pdf / markdown_full / markdown_chapter / page_image / cover_image / ocr_text / raw_html / media_item_json / media_comment_json / video_transcript`。
+
+6-C-1 已稳定写入：
+
+| platform | collection_mode | document asset types | 来源边界 |
+|---|---|---|---|
+| `owasp` | `scrapling` | `raw_html`, `markdown_full` | OWASP Community 公开页，CC BY-SA 4.0 署名引用 |
+| `portswigger` | `scrapling` | `raw_html`, `markdown_full` | PortSwigger Web Security Academy 公开 Learn 页，教育演示引用并链接回原页 |
+| `github` | `scrapling` | `raw_html`, `markdown_full` | OWASP CheatSheetSeries raw markdown，CC BY-SA 4.0 署名引用 |
+
+---
+
+> 维护：本文件修改需 B + C 双 review，并跑通 `pnpm typecheck` + `uv run pytest backend/tests/schemas backend/tests/rag` 后方可合入 dev。

@@ -1,34 +1,40 @@
-# Status: partial-real
+# Status: real
 
-"""``GET /api/v1/agents`` — list the 9 canonical agents."""
+"""智能体相关 endpoint：
 
-from fastapi import APIRouter
+- ``GET /agents`` 返回 9 智能体 + 各自 skill 名称（manifest）
+- ``GET /agent-runs`` 返回最近的运行 trace（供前端可视化面板）
+"""
 
-from app.deps import SessionDep
-from app.repositories.agent.agents import AgentRepository
-from app.schemas.agent import AgentListOut, AgentOut
+from __future__ import annotations
+
+from typing import Any
+
+from fastapi import APIRouter, Query
+
+from app.runtime.capability_manifest import list_agents, register_agents
+from app.runtime.logger import list_agent_runs
 
 router = APIRouter()
 
 
-@router.get("/agents", response_model=AgentListOut)
-async def list_agents(session: SessionDep) -> AgentListOut:
-    repo = AgentRepository(session)
-    rows = await repo.list_all()
-    return AgentListOut(
-        items=[
-            AgentOut(
-                id=row.id,
-                name=row.name,
-                role_description=row.role_description,
-                risk_level=row.risk_level,
-                tools=list(row.tools or []),
-                enabled=row.enabled,
-            )
-            for row in rows
-        ],
-        total=len(rows),
+@router.get("/agents")
+async def get_agents() -> list[dict[str, Any]]:
+    # ensure all 9 agents are registered when endpoint is hit standalone
+    register_agents()
+    return [cls.manifest() for cls in list_agents()]
+
+
+@router.get("/agent-runs")
+async def get_agent_runs(
+    workflow: str | None = Query(default=None, description="course_learning / tutor_routing / ..."),
+    user_id: str | None = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+) -> list[dict[str, Any]]:
+    return await list_agent_runs(
+        workflow_name=workflow,
+        user_id=user_id,
+        limit=limit,
+        offset=offset,
     )
-
-
-__all__ = ["router"]

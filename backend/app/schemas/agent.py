@@ -3,11 +3,13 @@
 """Pydantic schemas for agent registry, run trace, and Day 0 contracts."""
 
 from datetime import datetime
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field
 
 JsonObject = dict[str, object]
+SSEEventName = str
 
 
 class AgentRunDTO(BaseModel):
@@ -19,6 +21,19 @@ class AgentRunDTO(BaseModel):
     duration_ms: int | None = None
     quality_score: float | None = None
     created_at: datetime
+
+
+class AgentTraceDTO(BaseModel):
+    run_id: UUID
+    parent_run_id: UUID | None = None
+    agent_name: str
+    skill_name: str
+    status: Literal["pending", "running", "success", "failed", "skipped"]
+    duration_ms: int | None = None
+    quality_score: float | None = None
+    provider: str | None = None
+    model: str | None = None
+    token_usage: JsonObject | None = None
 
 
 class AgentRunDetailDTO(AgentRunDTO):
@@ -69,3 +84,8 @@ class AgentRunOut(BaseModel):
 class AgentRunListOut(BaseModel):
     items: list[AgentRunOut]
     total: int
+
+
+class AgentSSEEventDTO(BaseModel):
+    event: SSEEventName
+    data: JsonObject = Field(default_factory=dict)

@@ -30,6 +30,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--domain", default="course_websec", help="Target knowledge domain.")
     parser.add_argument("--title", default=None, help="Document title override.")
     parser.add_argument("--source-url", default=None, help="Original source URL.")
+    parser.add_argument(
+        "--storage-prefix",
+        default="course_websec/mineru_ingested",
+        help="Object storage prefix for imported assets.",
+    )
+    parser.add_argument(
+        "--force-reingest",
+        action="store_true",
+        help="Bypass PDF content-hash idempotency and refresh the existing document.",
+    )
     return parser.parse_args()
 
 
@@ -47,6 +57,8 @@ async def main() -> None:
             domain=args.domain,
             title=args.title,
             source_url=args.source_url,
+            storage_prefix=args.storage_prefix,
+            force_reingest=args.force_reingest,
         )
         await session.commit()
 
@@ -55,6 +67,8 @@ async def main() -> None:
         f"documents={len(result.document_ids)} chunks={result.chunk_count} "
         f"assets={result.asset_count} domain={result.domain}"
     )
+    if result.chunk_count == 0 and result.asset_count == 0:
+        print("[ingest_pdf_mineru] already ingested, skipped")
 
 
 if __name__ == "__main__":

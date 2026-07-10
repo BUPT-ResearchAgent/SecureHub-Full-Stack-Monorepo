@@ -1,62 +1,34 @@
-export type ResourceType = 'doc' | 'ppt' | 'mindmap' | 'quiz' | 'lab' | 'video' | 'readings';
+// EvidenceChunkDTO is defined in api-types:
+// `chunk_text` is the primary text field, `excerpt` is legacy fallback only.
+export type {
+  AgentRunDTO,
+  CapabilityDTO,
+  EvidenceChunkDTO,
+  EvidenceCollectionMode,
+  GeneratedResourceDTO,
+  JsonObject,
+  LLMHealthDTO,
+  LearningPathDTO,
+  ProfileDTO,
+  ResourceType,
+} from './api-types';
 
-export type CapabilityDTO = {
-  dimension: string;
-  score: number;
-  confidence: number;
-  evidence_count: number;
-};
+import type { AgentRunDTO, EvidenceChunkDTO, ResourceType } from './api-types';
 
-export type ProfileDTO = {
-  user_id: string;
-  dimensions: Record<string, unknown>;
-  capabilities: CapabilityDTO[];
-  updated_at: string;
-};
-
-export type GeneratedResourceDTO = {
-  id: string;
-  user_id?: string;
-  course_id?: string;
-  resource_type: ResourceType;
-  title: string;
-  created_at: string;
-  quality_score?: number | null;
-};
-
-export type EvidenceChunkDTO = {
-  chunk_id: string;
-  document_id: string;
-  source_url?: string | null;
-  platform?: string | null;
-  author?: string | null;
-  published_at?: string | null;
-  fetched_at?: string | null;
-  rights_note?: string | null;
-  asset_type?: string | null;
-  excerpt: string;
-  page_no?: number | null;
-  chapter?: string | null;
-  timestamp?: number | null;
-  reliability?: number | null;
-  metadata?: {
-    collection_mode?: 'manual' | 'api' | 'scrapling' | 'mediacrawler' | 'mindspider_reference';
-    [key: string]: unknown;
-  };
-};
-
-export type AgentRunDTO = {
-  id?: string;
-  run_id?: string;
-  parent_run_id?: string | null;
-  workflow_name?: string;
-  agent_name: string;
-  skill_name: string;
-  status: string;
-  duration_ms?: number | null;
-  quality_score?: number | null;
-  created_at?: string;
-};
+export type SSEErrorCode =
+  | 'ApiKeyMissing'
+  | 'InsufficientEvidence'
+  | 'sse_reconnecting'
+  | 'BudgetExceeded'
+  | 'LLMProviderError'
+  | 'QualityCheckFailed'
+  | 'SkillTimeout'
+  | 'RateLimited'
+  | 'EmptyStream'
+  | 'NetworkError'
+  | 'sse_error'
+  | 'InternalError'
+  | 'UnknownError';
 
 export type ProgressEvent = {
   event: 'progress';
@@ -109,7 +81,7 @@ export type DoneEvent = {
 export type ErrorEvent = {
   event: 'error';
   data: {
-    code?: string;
+    code?: SSEErrorCode | string;
     message: string;
     recoverable?: boolean;
   };

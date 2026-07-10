@@ -1,7 +1,7 @@
-# Status: [planned]
+# Status: real
 
 from app.agents.base import AgentCapability, BaseAgent
-from app.agents.hot_analyst.skills import recommend_readings
+from app.agents.hot_analyst.skills import analyze_hot_event, recommend_readings
 
 
 class HotAnalystAgent(BaseAgent):
@@ -11,5 +11,6 @@ class HotAnalystAgent(BaseAgent):
     tools = ["rag.retrieve", "llm.xfyun"]
     risk_level = "high"
     skills = {
+        "AnalyzeHotEvent": analyze_hot_event.AnalyzeHotEvent,
         "RecommendReadings": recommend_readings.RecommendReadings,
     }

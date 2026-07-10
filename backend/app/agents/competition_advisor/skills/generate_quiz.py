@@ -1,4 +1,4 @@
-# Status: [planned]
+# Status: real
 
 from app.agents.base import BaseSkill, SkillContext
 from app.agents.planned_skill import PlannedSkillInput, PlannedSkillOutput, prepare_planned_skill_output

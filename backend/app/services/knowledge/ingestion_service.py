@@ -13,9 +13,17 @@ from uuid import NAMESPACE_URL, UUID, uuid5
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.db.models.knowledge.chunk import Chunk
 from app.repositories.knowledge.document_assets import DocumentAssetRepository
 from app.repositories.knowledge.documents import DocumentRepository
 from app.services.knowledge.chunking_service import ChunkingService
+
+
+@dataclass(slots=True)
+class PreChunkedItem:
+    text: str
+    chunk_index: int
+    metadata: dict[str, Any]
 
 
 @dataclass(slots=True)
@@ -25,8 +33,10 @@ class IngestionRequest:
     title: str
     url: str | None = None
     raw_text: str | None = None
+    content_hash: str | None = None
     metadata: dict[str, Any] | None = None
     assets: list[dict[str, Any]] | None = None  # [{asset_type, object_key, mime_type, ...}]
+    pre_chunked: list[PreChunkedItem] | None = None
 
 
 @dataclass(slots=True)
@@ -56,7 +66,7 @@ class IngestionService:
         metadata.setdefault("license", "unknown")
         metadata.setdefault("rights_note", "教学演示用途；保留原始来源，不批量转载。")
 
-        content_hash = (
+        content_hash = request.content_hash or (
             sha256(request.raw_text.encode("utf-8")).hexdigest()
             if request.raw_text
             else None
@@ -122,6 +132,26 @@ class IngestionService:
             )
             asset_count += 1
 
+        all_assets = await asset_repo.list_by_document(document.id)
+        asset_ids_by_key = {
+            (asset.asset_type, asset.object_key): str(asset.id)
+            for asset in all_assets
+        }
+
+        if request.pre_chunked is not None:
+            chunk_ids = await self._create_pre_chunked_rows(
+                document_id=document.id,
+                domain=request.domain,
+                items=request.pre_chunked,
+                document_metadata=metadata,
+                asset_ids_by_key=asset_ids_by_key,
+            )
+            return IngestionResult(
+                document_id=document.id,
+                chunk_count=len(chunk_ids),
+                asset_count=asset_count,
+            )
+
         chunk_ids = await ChunkingService(self.session).chunk_document(
             document.id,
             metadata={
@@ -139,3 +169,64 @@ class IngestionService:
             chunk_count=len(chunk_ids),
             asset_count=asset_count,
         )
+
+    async def _create_pre_chunked_rows(
+        self,
+        *,
+        document_id: UUID,
+        domain: str,
+        items: list[PreChunkedItem],
+        document_metadata: dict[str, Any],
+        asset_ids_by_key: dict[tuple[str, str], str],
+    ) -> list[UUID]:
+        from app.repositories.knowledge.chunks import ChunkRepository
+
+        chunks = ChunkRepository(self.session)
+        existing = await chunks.list_by_document(document_id)
+        if existing:
+            return [row.id for row in existing]
+
+        source_metadata = {
+            "source_url": document_metadata.get("source_url"),
+            "asset_type": document_metadata.get("asset_type"),
+            "platform": document_metadata.get("platform"),
+            "author": document_metadata.get("author"),
+            "published_at": document_metadata.get("published_at"),
+            "fetched_at": document_metadata.get("fetched_at"),
+            "rights_note": document_metadata.get("rights_note"),
+            "license": document_metadata.get("license"),
+            "collection_mode": document_metadata.get("collection_mode"),
+        }
+        source_metadata = {key: value for key, value in source_metadata.items() if value is not None}
+
+        rows: list[Chunk] = []
+        for item in sorted(items, key=lambda row: row.chunk_index):
+            item_metadata = dict(source_metadata)
+            item_metadata.update(item.metadata)
+            object_key = item_metadata.get("asset_object_key")
+            asset_type = item_metadata.get("asset_type") or "markdown_chapter"
+            if "asset_id" not in item_metadata and isinstance(object_key, str):
+                asset_id = asset_ids_by_key.get((str(asset_type), object_key))
+                if asset_id is not None:
+                    item_metadata["asset_id"] = asset_id
+
+            chunk_id = uuid5(
+                NAMESPACE_URL,
+                f"securehub:chunk:{document_id}:{item.chunk_index}",
+            )
+            rows.append(
+                Chunk(
+                    id=chunk_id,
+                    document_id=document_id,
+                    domain=domain,
+                    chunk_text=item.text,
+                    chunk_index=item.chunk_index,
+                    token_count=len(item.text.split()),
+                    embedding=None,
+                    embedding_status="pending",
+                    metadata_=item_metadata | {"chunker": "chapter_window_v1"},
+                )
+            )
+
+        await chunks.bulk_create(rows)
+        return [row.id for row in rows]

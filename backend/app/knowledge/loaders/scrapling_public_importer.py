@@ -25,8 +25,15 @@ from app.db.models.knowledge.document_asset import DocumentAsset
 from app.db.models.storage.storage_object import StorageObject
 from app.db.session import get_sessionmaker
 from app.knowledge.loaders.generic_web_loader import WebSourceSpec, generic_web_import
-from app.knowledge.loaders.owasp_loader import OWASP_CONTENT_XPATH
-from app.knowledge.loaders.portswigger_loader import PORTSWIGGER_CONTENT_XPATH
+from app.knowledge.loaders.github_docs_loader import (
+    DEFAULT_GITHUB_WEBSEC_SOURCES,
+    GitHubDocsSource,
+    _topic_from_path,
+)
+from app.knowledge.loaders.owasp_loader import DEFAULT_OWASP_WEBSEC_SOURCES
+from app.knowledge.loaders.portswigger_loader import DEFAULT_PORTSWIGGER_WEBSEC_SOURCES
+from app.services.knowledge.crawling.crawler_policy import CrawlPolicy, CrawlRequest
+from app.services.knowledge.crawling.scrapling_client import ScraplingClient
 
 
 OWASP_RIGHTS_NOTE = (
@@ -43,117 +50,44 @@ PUBLIC_WEB_RIGHTS_NOTE = (
 )
 
 
+def _github_sources_to_specs(sources: list[GitHubDocsSource]) -> list[WebSourceSpec]:
+    specs: list[WebSourceSpec] = []
+    for source in sources:
+        specs.append(
+            WebSourceSpec(
+                url=source.url,
+                title=source.title or f"{source.owner}/{source.repo} {source.path}",
+                platform="github",
+                author="OWASP CheatSheetSeries Contributors",
+                license="CC BY-SA 4.0",
+                rights_note=(
+                    "OWASP CheatSheetSeries 官方仓库；按 CC BY-SA 4.0 署名引用；"
+                    "raw markdown 直取"
+                ),
+                source_type="github_docs",
+                reliability=0.95,
+                html_text=source.html_text,
+                metadata={
+                    "repo": f"{source.owner}/{source.repo}",
+                    "ref": source.ref,
+                    "path": source.path,
+                    "topic": _topic_from_path(source.path),
+                },
+            )
+        )
+    return specs
+
+
+PLATFORM_SOURCES: dict[str, list[WebSourceSpec]] = {
+    "owasp": DEFAULT_OWASP_WEBSEC_SOURCES,
+    "portswigger": DEFAULT_PORTSWIGGER_WEBSEC_SOURCES,
+    "github": _github_sources_to_specs(DEFAULT_GITHUB_WEBSEC_SOURCES),
+}
+
 WEBSEC_CORE_SOURCES: list[WebSourceSpec] = [
-    WebSourceSpec(
-        url="https://owasp.org/www-community/attacks/SQL_Injection",
-        title="OWASP SQL Injection",
-        platform="owasp",
-        author="OWASP",
-        license="CC BY-SA 4.0",
-        rights_note=OWASP_RIGHTS_NOTE,
-        source_type="owasp_public",
-        reliability=0.9,
-        xpath=OWASP_CONTENT_XPATH,
-    ),
-    WebSourceSpec(
-        url="https://owasp.org/www-community/attacks/xss/",
-        title="OWASP Cross Site Scripting",
-        platform="owasp",
-        author="OWASP",
-        license="CC BY-SA 4.0",
-        rights_note=OWASP_RIGHTS_NOTE,
-        source_type="owasp_public",
-        reliability=0.9,
-        xpath=OWASP_CONTENT_XPATH,
-    ),
-    WebSourceSpec(
-        url="https://owasp.org/www-community/attacks/csrf",
-        title="OWASP Cross-Site Request Forgery",
-        platform="owasp",
-        author="OWASP",
-        license="CC BY-SA 4.0",
-        rights_note=OWASP_RIGHTS_NOTE,
-        source_type="owasp_public",
-        reliability=0.9,
-        xpath=OWASP_CONTENT_XPATH,
-    ),
-    WebSourceSpec(
-        url="https://owasp.org/www-community/vulnerabilities/Unrestricted_File_Upload",
-        title="OWASP Unrestricted File Upload",
-        platform="owasp",
-        author="OWASP",
-        license="CC BY-SA 4.0",
-        rights_note=OWASP_RIGHTS_NOTE,
-        source_type="owasp_public",
-        reliability=0.9,
-        xpath=OWASP_CONTENT_XPATH,
-    ),
-    WebSourceSpec(
-        url="https://portswigger.net/web-security/sql-injection",
-        title="PortSwigger SQL injection",
-        platform="portswigger",
-        author="PortSwigger Web Security Academy",
-        license="public learning reference",
-        rights_note=PORTSWIGGER_RIGHTS_NOTE,
-        source_type="portswigger_public",
-        reliability=0.9,
-        xpath=PORTSWIGGER_CONTENT_XPATH,
-    ),
-    WebSourceSpec(
-        url="https://portswigger.net/web-security/cross-site-scripting",
-        title="PortSwigger Cross-site scripting",
-        platform="portswigger",
-        author="PortSwigger Web Security Academy",
-        license="public learning reference",
-        rights_note=PORTSWIGGER_RIGHTS_NOTE,
-        source_type="portswigger_public",
-        reliability=0.9,
-        xpath=PORTSWIGGER_CONTENT_XPATH,
-    ),
-    WebSourceSpec(
-        url="https://portswigger.net/web-security/csrf",
-        title="PortSwigger CSRF",
-        platform="portswigger",
-        author="PortSwigger Web Security Academy",
-        license="public learning reference",
-        rights_note=PORTSWIGGER_RIGHTS_NOTE,
-        source_type="portswigger_public",
-        reliability=0.9,
-        xpath=PORTSWIGGER_CONTENT_XPATH,
-    ),
-    WebSourceSpec(
-        url="https://portswigger.net/web-security/file-upload",
-        title="PortSwigger File upload vulnerabilities",
-        platform="portswigger",
-        author="PortSwigger Web Security Academy",
-        license="public learning reference",
-        rights_note=PORTSWIGGER_RIGHTS_NOTE,
-        source_type="portswigger_public",
-        reliability=0.9,
-        xpath=PORTSWIGGER_CONTENT_XPATH,
-    ),
-    WebSourceSpec(
-        url="https://portswigger.net/web-security/ssrf",
-        title="PortSwigger SSRF",
-        platform="portswigger",
-        author="PortSwigger Web Security Academy",
-        license="public learning reference",
-        rights_note=PORTSWIGGER_RIGHTS_NOTE,
-        source_type="portswigger_public",
-        reliability=0.9,
-        xpath=PORTSWIGGER_CONTENT_XPATH,
-    ),
-    WebSourceSpec(
-        url="https://portswigger.net/web-security/access-control",
-        title="PortSwigger Access control vulnerabilities",
-        platform="portswigger",
-        author="PortSwigger Web Security Academy",
-        license="public learning reference",
-        rights_note=PORTSWIGGER_RIGHTS_NOTE,
-        source_type="portswigger_public",
-        reliability=0.9,
-        xpath=PORTSWIGGER_CONTENT_XPATH,
-    ),
+    source
+    for platform in ("owasp", "portswigger", "github")
+    for source in PLATFORM_SOURCES[platform]
 ]
 
 
@@ -161,7 +95,7 @@ WEBSEC_CORE_SOURCES: list[WebSourceSpec] = [
 class PublicWebImportOptions:
     sources: list[WebSourceSpec]
     domain: str = "course_websec"
-    storage_prefix: str = "course_websec/scrapling_public"
+    storage_prefix: str = "course_websec"
     replace_existing: bool = False
     dry_run: bool = False
 
@@ -169,6 +103,7 @@ class PublicWebImportOptions:
 @dataclass(slots=True)
 class ImportedSource:
     url: str
+    document_ids: list[str]
     document_count: int
     chunk_count: int
     asset_count: int
@@ -198,7 +133,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--source-file", type=Path, default=None)
     parser.add_argument("--url", action="append", default=[])
     parser.add_argument("--title", default=None)
-    parser.add_argument("--platform", default=None)
+    parser.add_argument("--platform", choices=["owasp", "portswigger", "github", "all"], default=None)
+    parser.add_argument("--source-platform", default=None)
     parser.add_argument("--author", default=None)
     parser.add_argument("--published-at", default=None)
     parser.add_argument("--license", default="unknown")
@@ -208,7 +144,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--css-selector", default=None)
     parser.add_argument("--xpath", default=None)
     parser.add_argument("--domain", default="course_websec")
-    parser.add_argument("--storage-prefix", default="course_websec/scrapling_public")
+    parser.add_argument("--storage-prefix", default="course_websec")
     parser.add_argument(
         "--limit",
         type=int,
@@ -230,16 +166,18 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
 def build_sources(args: argparse.Namespace) -> list[WebSourceSpec]:
     sources: list[WebSourceSpec] = []
+    if args.platform is not None:
+        sources.extend(_platform_sources(args.platform))
     if args.preset == "websec-core":
         sources.extend(WEBSEC_CORE_SOURCES)
     if args.source_file is not None:
-        sources.extend(load_source_file(args.source_file))
+        sources.extend(load_source_file(args.source_file, candidates=sources or WEBSEC_CORE_SOURCES))
     for url in args.url:
         sources.append(
             WebSourceSpec(
                 url=url,
                 title=args.title,
-                platform=args.platform,
+                platform=args.source_platform,
                 author=args.author,
                 published_at=args.published_at,
                 license=args.license,
@@ -257,9 +195,55 @@ def build_sources(args: argparse.Namespace) -> list[WebSourceSpec]:
     return sources
 
 
-def load_source_file(path: Path) -> list[WebSourceSpec]:
+def load_source_file(
+    path: Path,
+    *,
+    candidates: list[WebSourceSpec] | None = None,
+) -> list[WebSourceSpec]:
+    if path.is_dir():
+        return load_cache_dir(path, candidates=candidates or WEBSEC_CORE_SOURCES)
     rows = read_rows(path)
     return [row_to_source(row) for row in rows if row.get("url")]
+
+
+def load_cache_dir(
+    path: Path,
+    *,
+    candidates: list[WebSourceSpec],
+) -> list[WebSourceSpec]:
+    if not path.exists():
+        return []
+    by_stem = {_safe_url_key(source.url): source for source in candidates}
+    sources: list[WebSourceSpec] = []
+    files_by_stem: dict[str, list[Path]] = {}
+    for file_path in sorted(path.iterdir()):
+        if file_path.is_file() and file_path.suffix.lower() in {".html", ".htm", ".md"}:
+            files_by_stem.setdefault(file_path.stem, []).append(file_path)
+
+    for stem, files in sorted(files_by_stem.items()):
+        file_path = next(
+            (item for item in files if item.suffix.lower() in {".html", ".htm"}),
+            files[0],
+        )
+        if file_path.suffix.lower() not in {".html", ".htm", ".md"}:
+            continue
+        source = by_stem.get(stem)
+        text = file_path.read_text(encoding="utf-8", errors="replace")
+        if source is not None:
+            sources.append(_clone_source(source, html_text=text))
+            continue
+        sources.append(
+            WebSourceSpec(
+                url=file_path.resolve().as_uri(),
+                title=file_path.stem.replace("_", " "),
+                platform=file_path.parent.name,
+                author="SecureHub cache replay",
+                rights_note=PUBLIC_WEB_RIGHTS_NOTE,
+                html_text=text,
+                metadata={"cache_file": str(file_path)},
+            )
+        )
+    return sources
 
 
 def read_rows(path: Path) -> list[dict[str, Any]]:
@@ -313,6 +297,8 @@ async def run_import(options: PublicWebImportOptions) -> PublicWebImportSummary:
         domain=options.domain,
         requested_count=len(options.sources),
     )
+    policy = CrawlPolicy(max_pages_per_run=11, download_delay_seconds=2.0)
+    _validate_sources_for_dry_run(options.sources, policy=policy)
     if options.dry_run:
         return summary
 
@@ -328,20 +314,25 @@ async def run_import(options: PublicWebImportOptions) -> PublicWebImportSummary:
             summary.deleted_storage_objects = deleted_storage_objects
             await session.commit()
 
+        client = ScraplingClient(policy=policy)
         for source in options.sources:
             try:
                 result = await generic_web_import(
                     [source],
                     session=session,
                     domain=options.domain,
-                    storage_prefix=(
-                        f"{options.storage_prefix}/{source.platform or 'web'}"
+                    storage_prefix=_platform_storage_prefix(
+                        options.storage_prefix,
+                        source.platform or "web",
                     ),
+                    client=client,
+                    policy=policy,
                 )
                 await session.commit()
                 summary.imported.append(
                     ImportedSource(
                         url=source.url,
+                        document_ids=[str(item) for item in result.document_ids],
                         document_count=len(result.document_ids),
                         chunk_count=result.chunk_count,
                         asset_count=result.asset_count,
@@ -399,6 +390,7 @@ def format_summary(summary: PublicWebImportSummary) -> str:
         "imported": [
             {
                 "url": item.url,
+                "document_ids": item.document_ids,
                 "documents": item.document_count,
                 "chunks": item.chunk_count,
                 "assets": item.asset_count,
@@ -465,6 +457,68 @@ def _optional_str(value: object) -> str | None:
         return None
     text = str(value).strip()
     return text or None
+
+
+def _platform_sources(platform: str) -> list[WebSourceSpec]:
+    if platform == "all":
+        return list(WEBSEC_CORE_SOURCES)
+    return list(PLATFORM_SOURCES[platform])
+
+
+def _validate_sources_for_dry_run(
+    sources: list[WebSourceSpec],
+    *,
+    policy: CrawlPolicy,
+) -> None:
+    batch_counts: dict[str, int] = {}
+    for source in sources:
+        batch_key = source.platform or "web"
+        batch_counts[batch_key] = batch_counts.get(batch_key, 0) + 1
+        options: dict[str, object] = {}
+        if source.css_selector:
+            options["css_selector"] = source.css_selector
+        if source.xpath:
+            options["xpath"] = source.xpath
+        policy.validate_request(CrawlRequest(url=source.url, options=options))
+    for count in batch_counts.values():
+        policy.validate_batch_size(count)
+
+
+def _platform_storage_prefix(base: str, platform: str) -> str:
+    normalized = base.replace("\\", "/").rstrip("/")
+    if normalized.rsplit("/", 1)[-1] == platform:
+        return normalized
+    return f"{normalized}/{platform}"
+
+
+def _clone_source(source: WebSourceSpec, *, html_text: str) -> WebSourceSpec:
+    return WebSourceSpec(
+        url=source.url,
+        title=source.title,
+        platform=source.platform,
+        author=source.author,
+        published_at=source.published_at,
+        license=source.license,
+        rights_note=source.rights_note,
+        source_type=source.source_type,
+        asset_type=source.asset_type,
+        reliability=source.reliability,
+        css_selector=source.css_selector,
+        xpath=source.xpath,
+        html_text=html_text,
+        metadata=source.metadata,
+    )
+
+
+def _safe_url_key(url: str) -> str:
+    from hashlib import sha256
+    from urllib.parse import urlparse
+
+    parsed = urlparse(url)
+    host = (parsed.hostname or "web").replace(".", "_")
+    path = parsed.path.strip("/").replace("/", "_") or "index"
+    suffix = sha256(url.encode("utf-8")).hexdigest()[:10]
+    return f"{host}_{path}_{suffix}"
 
 
 if __name__ == "__main__":

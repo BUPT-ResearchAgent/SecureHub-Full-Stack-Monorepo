@@ -1,4 +1,4 @@
-# Status: [planned]
+# Status: real
 
 from app.agents.base import BaseSkill, SkillContext
 from app.agents.planned_skill import PlannedSkillInput, PlannedSkillOutput, prepare_planned_skill_output
@@ -24,6 +24,16 @@ You are outcome_evaluator checking generated output against evidence.
 
 [Task]
 {task_instruction}
+
+[Generated artifacts to evaluate]
+{artifact_text}
+
+Evaluate the generated artifacts above against the evidence. The artifact must
+contain a non-empty learning path, course document, and quiz. Check factual
+support, internal consistency, instructional relevance, and safety. The server
+owns evidence_chunk_ids; use their presence as citation linkage and do not
+invent or rewrite them. Set accept=true only when there are no critical
+defects. Otherwise set accept=false and describe each defect structurally.
 
 Return JSON matching:
 {output_schema_hint}
