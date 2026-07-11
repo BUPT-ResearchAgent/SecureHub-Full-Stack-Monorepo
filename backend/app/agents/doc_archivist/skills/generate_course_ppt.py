@@ -1,16 +1,17 @@
 # Status: real
+# Declarative Skill: SkillExecutor owns ctx.log_run for this contract.
 
-from app.agents.base import BaseSkill, SkillContext
-from app.agents.planned_skill import PlannedSkillInput, PlannedSkillOutput, prepare_planned_skill_output
+from app.agents.base import BaseSkill
+from app.agents.skill_contracts import SkillInput, SkillOutput
 
 
-class GenerateCoursePPTInput(PlannedSkillInput):
+class GenerateCoursePPTInput(SkillInput):
     kp_id: str | None = None
 
 
-class GenerateCoursePPTOutput(PlannedSkillOutput):
+class GenerateCoursePPTOutput(SkillOutput):
     reveal_markdown: str = ""
-    slides: list[dict[str, str]] = []
+    slides: list[dict[str, object]] = []
 
 
 PROMPT_TEMPLATE = """
@@ -34,21 +35,3 @@ class GenerateCoursePPT(BaseSkill):
     name = "GenerateCoursePPT"
     applicable_domains = ["course_websec"]
     output_schema = GenerateCoursePPTOutput
-
-    async def run(self, inp: GenerateCoursePPTInput, ctx: SkillContext) -> GenerateCoursePPTOutput:
-        out = await prepare_planned_skill_output(
-            self,
-            inp,
-            ctx,
-            prompt_template=PROMPT_TEMPLATE,
-            output_model=GenerateCoursePPTOutput,
-        )
-        await ctx.log_run(
-            agent_id=self.agent_id,
-            skill_id=self.skill_id,
-            input_summary=inp.model_dump(),
-            output_summary=out.model_dump(),
-            evidence_chunk_ids=out.evidence_chunk_ids,
-            quality_score=out.quality_score,
-        )
-        return out

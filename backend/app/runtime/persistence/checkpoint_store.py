@@ -114,6 +114,58 @@ class CheckpointStore:
     async def save_checkpoint(self, *args: Any, **kwargs: Any) -> WorkflowCheckpoint:
         return await self.save(*args, **kwargs)
 
+    async def migrate(
+        self,
+        checkpoint: WorkflowCheckpoint,
+        *,
+        checkpoint_schema_version: str,
+        state_json: dict[str, Any],
+        runtime_build_sha: str,
+    ) -> WorkflowCheckpoint:
+        """Append an explicitly transformed control-plane checkpoint.
+
+        Migration is allowed only while a root is paused or awaiting approval.
+        It intentionally does not reuse ``save`` because there may be no active
+        worker lease at the moment a human resumes a paused root.  The source
+        checkpoint remains immutable and the caller records the reviewed
+        migration in the audit log.
+        """
+        state = mapping(state_json, field="state_json")
+        self._assert_safe_state(state)
+        root = await self.session.scalar(
+            select(WorkflowRun)
+            .where(WorkflowRun.id == checkpoint.workflow_run_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        if root is None:
+            raise RunNotFoundError(str(checkpoint.workflow_run_id))
+        if root.status not in {"paused", "waiting_approval"}:
+            raise ValueError("checkpoint migration requires a paused or waiting-approval root")
+        sequence = int(
+            await self.session.scalar(
+                select(func.coalesce(func.max(WorkflowCheckpoint.checkpoint_seq), 0)).where(
+                    WorkflowCheckpoint.workflow_run_id == checkpoint.workflow_run_id
+                )
+            )
+            or 0
+        ) + 1
+        migrated = WorkflowCheckpoint(
+            id=uuid4(),
+            workflow_run_id=checkpoint.workflow_run_id,
+            checkpoint_seq=sequence,
+            workflow_definition_digest=checkpoint.workflow_definition_digest,
+            catalog_version=checkpoint.catalog_version,
+            checkpoint_schema_version=str(checkpoint_schema_version),
+            runtime_build_sha=str(runtime_build_sha),
+            state_json=state,
+            event_cursor=checkpoint.event_cursor,
+            lease_epoch=checkpoint.lease_epoch,
+        )
+        self.session.add(migrated)
+        await self.session.flush()
+        return migrated
+
     async def latest(self, workflow_run_id: UUID | str) -> WorkflowCheckpoint | None:
         result = await self.session.execute(
             select(WorkflowCheckpoint)

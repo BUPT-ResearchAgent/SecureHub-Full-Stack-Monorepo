@@ -302,11 +302,11 @@ function CourseStudyInner() {
             <button
               type="button"
               onClick={openBackendStatusLLMTab}
-              title="查看 LLM 健康状态，确认 DeepSeek 是否使用真实模型链路"
+              title="查看 LLM 健康状态；真实模式以讯飞星火为主链，DeepSeek 仅在显式 real fallback 时接替草稿"
               className="inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[11px] font-medium text-emerald-700 transition-colors hover:bg-emerald-100"
             >
               <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-              DeepSeek · real
+              讯飞星火主链
             </button>
             <CourseSwitcher course={course} onSelect={(id) => selectCourse(id)} />
             <Popover>

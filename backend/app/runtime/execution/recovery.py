@@ -90,6 +90,29 @@ class RecoveryService:
                     },
                 )
                 return RecoveryResult("blocked", checkpoint, decision)
+            if decision.status == "migratable":
+                # A worker owns an execution lease, not authority to rewrite
+                # persisted collaboration state.  A control-plane resume must
+                # first append the explicitly registered migration checkpoint.
+                await self.run_store.transition_run(
+                    run.id,
+                    expected_state_version=run.state_version,
+                    lease_epoch=lease.epoch,
+                    status="blocked",
+                    changes={
+                        "error": {
+                            "code": "SEMANTIC_VERSION_INCOMPATIBLE",
+                            "reasons": list(decision.reasons),
+                            "action": "explicit_checkpoint_migration_required",
+                        }
+                    },
+                    event_type="error",
+                    event_payload={
+                        "code": "SEMANTIC_VERSION_INCOMPATIBLE",
+                        "recoverable": False,
+                    },
+                )
+                return RecoveryResult("blocked", checkpoint, decision)
             return RecoveryResult("resume", checkpoint, decision)
         return RecoveryResult("resume", checkpoint)
 

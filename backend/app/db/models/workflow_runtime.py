@@ -231,3 +231,42 @@ class WorkflowEvent(UUIDPrimaryKeyMixin, Base):
     publish_lease_owner: Mapped[str | None] = mapped_column(String(128))
     publish_lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class WorkflowApproval(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    """Durable human-in-the-loop decision for a root or high-risk node."""
+
+    __tablename__ = "workflow_approvals"
+    __table_args__ = (
+        Index("ix_workflow_approvals_run_status", "workflow_run_id", "status"),
+    )
+
+    workflow_run_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("workflow_runs.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    node_id: Mapped[str | None] = mapped_column(String(120), index=True)
+    kind: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending", index=True)
+    request: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    decision: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    requested_by: Mapped[str | None] = mapped_column(String(128))
+    decided_by: Mapped[str | None] = mapped_column(String(128))
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class WorkflowAuditLog(UUIDPrimaryKeyMixin, Base):
+    """Append-only control/audit facts without prompt or provider-response text."""
+
+    __tablename__ = "workflow_audit_logs"
+    __table_args__ = (
+        Index("ix_workflow_audit_logs_run_created", "workflow_run_id", "created_at"),
+    )
+
+    workflow_run_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("workflow_runs.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    action: Mapped[str] = mapped_column(String(96), nullable=False, index=True)
+    actor_id: Mapped[str | None] = mapped_column(String(128))
+    node_id: Mapped[str | None] = mapped_column(String(120))
+    details: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)

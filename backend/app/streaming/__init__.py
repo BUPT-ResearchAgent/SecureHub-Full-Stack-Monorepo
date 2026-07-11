@@ -1,6 +1,6 @@
-# Status: [planned]
+"""Durable WorkflowEvent SSE transport."""
 
-from app.streaming.events import DoneEvent, ErrorEvent, EvidenceEvent, ProgressEvent, TokenEvent
-from app.streaming.sse import sse_response
+from app.streaming.agent_events import serialize_workflow_events, workflow_event_response
+from app.streaming.sse_gateway import WorkflowSSEGateway
 
-__all__ = ["DoneEvent", "ErrorEvent", "EvidenceEvent", "ProgressEvent", "TokenEvent", "sse_response"]
+__all__ = ["WorkflowSSEGateway", "serialize_workflow_events", "workflow_event_response"]

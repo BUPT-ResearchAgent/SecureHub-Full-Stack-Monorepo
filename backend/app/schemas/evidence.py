@@ -121,8 +121,8 @@ def evidence_card_to_dto(card: Any, *, default_platform: str = "manual") -> Evid
     """Project an ``EvidenceCard`` (or any object with the same attrs / dict) to a DTO.
 
     The argument is intentionally typed as ``Any`` — we accept both
-    ``app.runtime.harness.types.EvidenceCard`` (Pydantic) and the dict shape returned
-    by ``default_evidence_fixtures``. ``getattr`` + ``dict.get`` are unified through
+    retrieval records and the dict shape returned by explicit fixture injection.
+    ``getattr`` + ``dict.get`` are unified through
     ``_lookup``.
     """
 

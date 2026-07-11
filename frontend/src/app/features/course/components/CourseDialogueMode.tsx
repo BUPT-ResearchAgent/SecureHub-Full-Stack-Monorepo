@@ -68,6 +68,11 @@ export function CourseDialogueMode({ course }: { course: CourseCatalogItem }) {
       onWorkflowChange={setWorkflowId}
       onRun={workflowRun.run}
       onPause={workflowRun.pause}
+      onResume={workflowRun.resume}
+      onRetry={workflowRun.retry}
+      onCancel={workflowRun.cancel}
+      onApprove={workflowRun.approve}
+      onReject={workflowRun.reject}
       onReset={workflowRun.reset}
       mockControlsEnabled={mockControlsEnabled}
       compact

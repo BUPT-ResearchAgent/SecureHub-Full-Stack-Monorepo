@@ -1,59 +1,24 @@
 # Status: real
 
-"""Skill execution harness.
+"""Canonical runtime Skill execution contracts.
 
-Implements the unified skill execution chain mandated by the project ironclad rules:
-
-    validate -> rag.retrieve -> evidence_floor -> compose prompt -> LLM ->
-    parse output -> safety review -> quality_check (optional) -> log_run
-
-Every generative skill in SecureHub MUST run through this harness so that:
-- evidence floor is enforced (>= MIN_EVIDENCE chunks)
-- evidence_chunk_ids are propagated to outputs
-- agent_runs is written for every invocation
-- guardrails + quality check are applied
-- mock / fixture fallback is available when no LLM API key is configured
+Only these contracts participate in production execution.  Legacy harness
+objects and direct ``skill.run()`` adapters were removed in Wave 6.
 """
 
-from app.runtime.harness.base import Harness, SkillSpec, run_skill
-from app.runtime.harness.context import HarnessConfig, HarnessContext
+from app.runtime.harness.contracts import CandidateOutput, SkillDefinition
 from app.runtime.harness.errors import (
     AgentRunPersistenceFailed,
-    CancellationRequested,
-    GuardrailBlocked,
-    GuardrailViolation,
-    HarnessError,
-    InsufficientEvidence,
-    LLMOutputInvalid,
-    QualityCheckFailed,
-    QualityRejected,
-    SafetyBlocked,
-    SkillTimeout,
-    ToolUnavailable,
 )
-from app.runtime.harness.types import BaseSkill, EvidenceCard, RunStatus, SkillContract, SkillIO
+from app.runtime.harness.context import ExecutionCancelled, ExecutionContext
+from app.runtime.harness.executor import SkillExecutionError, SkillExecutor
 
 __all__ = [
-    "Harness",
-    "HarnessConfig",
-    "HarnessContext",
-    "SkillSpec",
-    "BaseSkill",
-    "SkillContract",
-    "SkillIO",
-    "EvidenceCard",
-    "RunStatus",
-    "GuardrailBlocked",
-    "GuardrailViolation",
-    "HarnessError",
-    "InsufficientEvidence",
-    "LLMOutputInvalid",
     "AgentRunPersistenceFailed",
-    "CancellationRequested",
-    "QualityCheckFailed",
-    "QualityRejected",
-    "SafetyBlocked",
-    "SkillTimeout",
-    "ToolUnavailable",
-    "run_skill",
+    "CandidateOutput",
+    "ExecutionCancelled",
+    "ExecutionContext",
+    "SkillDefinition",
+    "SkillExecutionError",
+    "SkillExecutor",
 ]

@@ -18,16 +18,26 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import get_settings
-from app.db.models.workflow_runtime import WorkflowProviderCall, WorkflowRun, WorkflowStepAttempt
-from app.runtime.contracts import EventEnvelope, ExecutionMode, RunStatus
+from app.db.models.workflow_runtime import WorkflowApproval, WorkflowProviderCall, WorkflowRun, WorkflowStepAttempt
+from app.runtime.contracts import EventEnvelope, ExecutionMode, RunStatus, RuntimeSemanticVersion
+from app.runtime.persistence.approval_store import ApprovalNotFoundError, ApprovalStore
+from app.runtime.persistence.checkpoint_store import CheckpointStore
 from app.runtime.persistence.event_store import EventStore
 from app.runtime.persistence.run_store import RunStore
+from app.runtime.observability import RuntimeMetricsService
 from app.runtime.skill_catalog import build_production_skill_catalog
 from app.runtime.state_machine import InvalidStateTransition, SecureHubStateMachine
+from app.runtime.versioning.compatibility import CompatibilityPolicy
+from app.runtime.versioning.compatibility import CompatibilityDecision
+from app.runtime.versioning.checkpoint_migrations import (
+    CheckpointMigrationRegistry,
+    build_runtime_checkpoint_migrations,
+)
 from app.runtime.workflow_registry import WorkflowRegistry
 from app.schemas.agent_control import (
     WorkflowNodeResponse,
     WorkflowRunCancelResponse,
+    WorkflowApprovalResponse,
     WorkflowRunControlResponse,
     WorkflowRunResponse,
     WorkflowRunStartRequest,
@@ -46,11 +56,12 @@ class WorkflowApplicationError(RuntimeError):
 
 
 def build_default_workflow_registry() -> WorkflowRegistry:
+    from app.runtime.workflows.course_learning_full_v1 import COURSE_LEARNING_FULL_V1
     from app.runtime.workflows.product_workflows import PRODUCT_WORKFLOWS
     from app.runtime.workflows.resource_generate_v1 import RESOURCE_GENERATE_V1
 
     registry = WorkflowRegistry()
-    for definition in (RESOURCE_GENERATE_V1, *PRODUCT_WORKFLOWS):
+    for definition in (RESOURCE_GENERATE_V1, COURSE_LEARNING_FULL_V1, *PRODUCT_WORKFLOWS):
         registry.register(definition)
     return registry
 
@@ -64,6 +75,7 @@ class WorkflowApplicationService:
         wakeup: Wakeup | None = None,
         live_notifier: Any | None = None,
         runtime_build_sha: str = "dev",
+        checkpoint_migrations: CheckpointMigrationRegistry | None = None,
     ) -> None:
         self.sessionmaker = sessionmaker
         self.workflow_registry = workflow_registry or build_default_workflow_registry()
@@ -71,6 +83,8 @@ class WorkflowApplicationService:
         self.live_notifier = live_notifier
         self.runtime_build_sha = runtime_build_sha
         self.skill_catalog = build_production_skill_catalog()
+        self.checkpoint_migrations = checkpoint_migrations or build_runtime_checkpoint_migrations()
+        self.compatibility_policy = CompatibilityPolicy(self.checkpoint_migrations)
 
     async def start(
         self,
@@ -111,6 +125,7 @@ class WorkflowApplicationService:
                     requested_provider=provider,
                     requested_model=model,
                     input_payload=validated_input,
+                    budget=self._initial_budget(request.budget),
                     idempotency_key=key,
                     return_created=True,
                 )
@@ -124,6 +139,7 @@ class WorkflowApplicationService:
                 mode=request.mode,
                 provider=provider,
                 model=model,
+                budget=dict(request.budget or {}),
             )
             if created:
                 await EventStore(session).append_event(
@@ -210,6 +226,13 @@ class WorkflowApplicationService:
                 envelopes = [event for event in envelopes if event.sequence <= until_sequence]
             return envelopes
 
+    async def metrics(self, run_id: UUID | str, *, actor_user_id: UUID | str | None = None) -> dict[str, Any]:
+        async with self.sessionmaker() as session:
+            run = await RunStore(session).get_run(run_id)
+            assert run is not None
+            self._assert_owner(run, actor_user_id)
+            return await RuntimeMetricsService(session).snapshot(workflow_run_id=run.id)
+
     async def cancel(
         self, run_id: UUID | str, *, actor_user_id: UUID | str | None = None
     ) -> WorkflowRunCancelResponse:
@@ -219,6 +242,7 @@ class WorkflowApplicationService:
             assert run is not None
             self._assert_owner(run, actor_user_id)
             run = await store.request_cancel(run.id)
+            await ApprovalStore(session).audit(run.id, action="cancel_requested", actor_id=actor_user_id)
             await session.commit()
             return WorkflowRunCancelResponse(run_id=run.id, status=run.status, cancel_requested=True)
 
@@ -242,6 +266,7 @@ class WorkflowApplicationService:
                 event_type="progress",
                 event_payload={"root_status": "pausing", "status": "pausing"},
             )
+            await ApprovalStore(session).audit(run.id, action="pause_requested", actor_id=actor_user_id)
             await session.commit()
             return WorkflowRunControlResponse(run_id=run.id, status=run.status, compatibility="compatible")
 
@@ -259,6 +284,13 @@ class WorkflowApplicationService:
                 )
             if run.status != RunStatus.PAUSED:
                 raise WorkflowApplicationError("RUN_NOT_RESUMABLE", "run is not paused", status_code=409)
+            compatibility = await self._resume_compatibility(session, run)
+            if compatibility.status == "incompatible":
+                raise WorkflowApplicationError(
+                    "SEMANTIC_VERSION_INCOMPATIBLE",
+                    "run checkpoint is incompatible with the current runtime definition",
+                    status_code=409,
+                )
             run = await store.transition_run(
                 run.id,
                 expected_state_version=run.state_version,
@@ -268,12 +300,18 @@ class WorkflowApplicationService:
                 event_type="progress",
                 event_payload={"root_status": "queued", "status": "queued", "resume_requested": True},
             )
+            await ApprovalStore(session).audit(
+                run.id,
+                action="resume_requested",
+                actor_id=actor_user_id,
+                details={"compatibility": compatibility.status},
+            )
             await session.commit()
         if self.wakeup is not None:
             result = self.wakeup(run.id)
             if hasattr(result, "__await__"):
                 await result
-        return WorkflowRunControlResponse(run_id=run.id, status=run.status, compatibility="compatible")
+        return WorkflowRunControlResponse(run_id=run.id, status=run.status, compatibility=compatibility.status)
 
     async def retry(self, run_id: UUID | str, *, actor_user_id: UUID | str | None = None) -> WorkflowRunControlResponse:
         """Approve exactly one new attempt after an unknown provider outcome.
@@ -339,12 +377,149 @@ class WorkflowApplicationService:
                     "unknown_provider_call_ids": retry_intent["unknown_provider_call_ids"],
                 },
             )
+            await ApprovalStore(session).audit(run.id, action="provider_retry_requested", actor_id=actor_user_id)
             await session.commit()
         if self.wakeup is not None:
             result = self.wakeup(run.id)
             if hasattr(result, "__await__"):
                 await result
         return WorkflowRunControlResponse(run_id=run.id, status=run.status, compatibility="compatible")
+
+    async def decide_approval(
+        self,
+        run_id: UUID | str,
+        approval_id: UUID | str,
+        *,
+        approved: bool,
+        decision: dict[str, Any] | None = None,
+        actor_user_id: UUID | str | None = None,
+    ) -> WorkflowApprovalResponse:
+        async with self.sessionmaker() as session:
+            store = RunStore(session)
+            run = await store.get_run(run_id)
+            assert run is not None
+            self._assert_owner(run, actor_user_id)
+            approvals = ApprovalStore(session)
+            try:
+                # Verify the URL root before mutating the approval. Otherwise
+                # a valid owner of one run could consume a pending approval
+                # belonging to another root and then receive a misleading 404.
+                existing = await approvals.get(approval_id)
+                if existing.workflow_run_id != run.id:
+                    raise WorkflowApplicationError("APPROVAL_NOT_FOUND", "approval not found", status_code=404)
+                approval = await approvals.decide(
+                    approval_id,
+                    approved=approved,
+                    actor_id=actor_user_id,
+                    decision=decision,
+                )
+            except ApprovalNotFoundError as exc:
+                raise WorkflowApplicationError("APPROVAL_NOT_FOUND", "approval not found", status_code=404) from exc
+            if approved and run.status == RunStatus.WAITING_APPROVAL:
+                compatibility = await self._resume_compatibility(session, run)
+                if compatibility.status == "incompatible":
+                    raise WorkflowApplicationError(
+                        "SEMANTIC_VERSION_INCOMPATIBLE",
+                        "approval cannot resume an incompatible checkpoint",
+                        status_code=409,
+                    )
+                run = await store.transition_run(
+                    run.id,
+                    expected_state_version=run.state_version,
+                    lease_epoch=None,
+                    status=RunStatus.QUEUED,
+                    changes={"lease_owner": None, "lease_expires_at": None, "error": {}},
+                    event_type="progress",
+                    event_payload={
+                        "root_status": "queued",
+                        "status": "queued",
+                        "approval_id": str(approval.id),
+                        "approval_kind": approval.kind,
+                        "approval_granted": True,
+                    },
+                )
+            elif not approved and run.status not in {RunStatus.BLOCKED, RunStatus.CANCELLED, RunStatus.SUCCEEDED, RunStatus.FAILED}:
+                run = await store.transition_run(
+                    run.id,
+                    expected_state_version=run.state_version,
+                    lease_epoch=None,
+                    status=RunStatus.BLOCKED,
+                    changes={"error": {"code": "APPROVAL_REJECTED", "message": "required workflow approval was rejected"}},
+                    event_type="error",
+                    event_payload={
+                        "code": "APPROVAL_REJECTED",
+                        "message": "required workflow approval was rejected",
+                        "terminal": True,
+                        "status": "blocked",
+                    },
+                )
+            await session.commit()
+        if approved and run.status == RunStatus.QUEUED and self.wakeup is not None:
+            result = self.wakeup(run.id)
+            if hasattr(result, "__await__"):
+                await result
+        return WorkflowApprovalResponse(
+            approval_id=approval.id,
+            run_id=approval.workflow_run_id,
+            node_id=approval.node_id,
+            kind=approval.kind,
+            status=approval.status,
+            request=dict(approval.request or {}),
+            decision=dict(approval.decision or {}),
+        )
+
+    async def _resume_compatibility(self, session: AsyncSession, run: WorkflowRun):
+        try:
+            version = int(str(run.workflow_version or "1").removeprefix("v"))
+            definition = self.workflow_registry.get(run.workflow_name, version)
+        except Exception as exc:
+            raise WorkflowApplicationError("INVALID_WORKFLOW", "stored workflow definition is unavailable", status_code=409) from exc
+        checkpoint = await CheckpointStore(session).latest(run.id)
+        if checkpoint is None:
+            # A legacy/control-plane pause can exist before RuntimeEngine had
+            # reached a checkpoint boundary. There is no state to reinterpret;
+            # requeueing remains safe and the engine still validates the root
+            # before it executes any side effect.
+            return CompatibilityDecision("compatible")
+        target = RuntimeSemanticVersion(
+            workflow_definition_digest=definition.definition_digest,
+            catalog_version=definition.catalog_version,
+            provider_policy_version=definition.provider_policy_version,
+            checkpoint_schema_version=definition.checkpoint_schema_version,
+            runtime_build_sha=self.runtime_build_sha,
+        )
+        decision = self.compatibility_policy.assess(run, checkpoint, target)
+        if decision.status != "migratable":
+            return decision
+        try:
+            migrated_state = self.checkpoint_migrations.migrate(
+                checkpoint.checkpoint_schema_version,
+                target.checkpoint_schema_version,
+                dict(checkpoint.state_json or {}),
+            )
+            migrated = await CheckpointStore(session).migrate(
+                checkpoint,
+                checkpoint_schema_version=target.checkpoint_schema_version,
+                state_json=migrated_state,
+                runtime_build_sha=target.runtime_build_sha,
+            )
+            await ApprovalStore(session).audit(
+                run.id,
+                action="checkpoint_migrated",
+                details={
+                    "from_schema": checkpoint.checkpoint_schema_version,
+                    "to_schema": target.checkpoint_schema_version,
+                    "source_checkpoint_seq": checkpoint.checkpoint_seq,
+                    "target_checkpoint_seq": migrated.checkpoint_seq,
+                },
+            )
+        except (TypeError, ValueError) as exc:
+            raise WorkflowApplicationError(
+                "SEMANTIC_VERSION_INCOMPATIBLE",
+                "registered checkpoint migration rejected the stored state",
+                status_code=409,
+            ) from exc
+        return CompatibilityDecision("compatible", ("explicit_checkpoint_migration_applied",))
 
     @staticmethod
     def _normalise_input(workflow_name: str, request: WorkflowRunStartRequest) -> dict[str, Any]:
@@ -365,7 +540,18 @@ class WorkflowApplicationService:
             payload.setdefault("question", payload.get("query", "Tutor question"))
         elif workflow_name == "assessment_update_v1":
             payload.setdefault("answers", [])
+        elif workflow_name == "course_learning_full_v1":
+            payload.setdefault("query", "Generate a parallel course resource pack")
         return payload
+
+    @staticmethod
+    def _initial_budget(value: dict[str, Any] | None) -> dict[str, Any]:
+        requested = dict(value or {})
+        limits = requested.get("limits")
+        return {
+            "limits": dict(limits) if isinstance(limits, dict) else requested,
+            "requested": requested,
+        }
 
     @staticmethod
     def _provider_selection(request: WorkflowRunStartRequest) -> tuple[str | None, str | None]:
@@ -466,12 +652,14 @@ class WorkflowApplicationService:
         mode: ExecutionMode | str,
         provider: str | None,
         model: str | None,
+        budget: dict[str, Any],
     ) -> None:
         if (
             dict(run.input_payload or {}) != input_payload
             or str(run.mode) != str(mode)
             or run.requested_provider != provider
             or run.requested_model != model
+            or dict(run.budget or {}).get("requested", dict(run.budget or {})) != budget
         ):
             raise WorkflowApplicationError(
                 "IDEMPOTENCY_KEY_REUSED",

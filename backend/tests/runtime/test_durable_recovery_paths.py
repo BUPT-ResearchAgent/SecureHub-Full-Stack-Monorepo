@@ -657,6 +657,55 @@ async def test_worker_heartbeat_renews_lease_before_a_second_worker_can_claim(tm
 
 
 @pytest.mark.anyio
+async def test_expired_running_root_is_reclaimed_from_a_fresh_sqlite_session(tmp_path) -> None:
+    database = tmp_path / "runtime-expired-claim.db"
+    engine = create_async_engine(f"sqlite+aiosqlite:///{database}")
+    try:
+        async with engine.begin() as connection:
+            await connection.run_sync(Base.metadata.create_all)
+        sessions = async_sessionmaker(engine, expire_on_commit=False)
+        async with sessions() as session:
+            store = RunStore(session)
+            root = await store.create_run(
+                workflow_name=_CONTROL_DEFINITION.name,
+                workflow_version="1",
+                workflow_definition_digest="e" * 64,
+                catalog_version="catalog-v1",
+                provider_policy_version="provider-v1",
+                checkpoint_schema_version="checkpoint-v1",
+                runtime_build_sha="test",
+                mode="fixture",
+                input_payload={"value": "expired claim"},
+            )
+            await session.commit()
+            first = await store.claim_next("worker-a", lease_seconds=60)
+            assert first is not None
+            running = await store.transition_run(
+                first.id,
+                expected_state_version=first.state_version,
+                lease_epoch=first.lease_epoch,
+                status="running",
+            )
+            await session.execute(
+                update(WorkflowRun)
+                .where(WorkflowRun.id == running.id)
+                .values(lease_expires_at=utcnow() - timedelta(seconds=1))
+            )
+            await session.commit()
+
+        # A restarted worker hydrates SQLite's timestamp without tzinfo. The
+        # claim must still execute in SQL and fence the old epoch.
+        async with sessions() as fresh_session:
+            replacement = await RunStore(fresh_session).claim_next("worker-b", lease_seconds=60)
+            assert replacement is not None
+            assert replacement.id == root.id
+            assert replacement.lease_epoch == first.lease_epoch + 1
+            await fresh_session.commit()
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.anyio
 async def test_resume_and_explicit_retry_release_obsolete_leases_before_requeue(tmp_path) -> None:
     database = tmp_path / "runtime-requeue.db"
     engine = create_async_engine(f"sqlite+aiosqlite:///{database}")

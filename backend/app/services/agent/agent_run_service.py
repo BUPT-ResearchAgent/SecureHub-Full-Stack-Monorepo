@@ -2,8 +2,8 @@
 
 """AgentRunService — agent_runs 表的唯一写入者（规则 §3.7）。
 
-每次 skill 运行通过 HarnessContext.log_run() 调用此 service，
-记录 workflow / agent / skill / status / duration_ms / token_usage。
+RuntimeEngine 通过 AgentRunRecorder 调用此 service，记录
+workflow / agent / skill / status / duration_ms / token_usage。
 """
 
 from __future__ import annotations

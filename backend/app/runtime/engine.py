@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import time
 from collections.abc import Awaitable, Callable
@@ -13,26 +14,37 @@ from uuid import UUID
 
 from pydantic import BaseModel, ValidationError
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.db.models.workflow_runtime import WorkflowStepAttempt
-from app.runtime.contracts import ErrorCode, ExecutionMode, ProviderSelection, RunStatus, StepStatus
+from app.db.models.workflow_runtime import WorkflowEvidenceSnapshot, WorkflowStepAttempt
+from app.runtime.contracts import ArtifactRef, ErrorCode, EvidenceRef, ExecutionMode, ProviderSelection, RunStatus, StepStatus
 from app.runtime.harness.contracts import CandidateOutput, SkillDefinition
-from app.runtime.harness.execution_context import ExecutionCancelled, ExecutionContext
+from app.runtime.harness.context import ExecutionCancelled, ExecutionContext
 from app.runtime.harness.executor import SkillExecutionError, SkillExecutor
+from app.runtime.budget import BudgetController, BudgetExceeded
 from app.runtime.ports.run_recorder import AgentRunRecorder, RunRecordingError
+from app.runtime.persistence.approval_store import ApprovalStore
 from app.runtime.state_machine import InvalidStateTransition, SecureHubStateMachine
 from app.runtime.workflow_definition import NodeDefinition, WorkflowDefinition
 from app.runtime.workflow_registry import WorkflowRegistry
+from app.runtime.typed_state import TypedWorkflowState
 
 
 ActionHandler = Callable[[str, dict[str, Any], dict[str, Any], ExecutionContext], Awaitable[dict[str, Any]]]
 
 
 class RuntimeEngineError(RuntimeError):
-    def __init__(self, code: ErrorCode | str, message: str, *, blocked: bool = False) -> None:
+    def __init__(
+        self,
+        code: ErrorCode | str,
+        message: str,
+        *,
+        blocked: bool = False,
+        node_id: str | None = None,
+    ) -> None:
         self.code = str(code)
         self.blocked = blocked
+        self.node_id = node_id
         super().__init__(message)
 
 
@@ -60,6 +72,7 @@ class RuntimeEngine:
         checkpoint_store: Any | None = None,
         provider_call_store: Any | None = None,
         runtime_build_sha: str = "dev",
+        parallel_sessionmaker: async_sessionmaker[AsyncSession] | None = None,
     ) -> None:
         self.session = session
         self.workflow_registry = workflow_registry
@@ -72,6 +85,7 @@ class RuntimeEngine:
         self.checkpoint_store = checkpoint_store
         self.provider_call_store = provider_call_store
         self.runtime_build_sha = runtime_build_sha
+        self.parallel_sessionmaker = parallel_sessionmaker
 
     async def execute(self, workflow_run_id: UUID | str, *, lease_owner: str | None = None) -> ExecutionResult:
         run = await self.run_store.get_run(workflow_run_id)
@@ -96,7 +110,10 @@ class RuntimeEngine:
         if run.cancel_requested_at is not None or run.status == RunStatus.CANCELLING:
             return await self._cancel_root(run)
 
-        state, attempts = await self._recover_state(run.id)
+        state, attempts = await self._recover_state(
+            run.id,
+            workflow_schema_version=definition.checkpoint_schema_version,
+        )
         try:
             await self._recover_completed_provider_results(
                 run,
@@ -163,7 +180,7 @@ class RuntimeEngine:
                 except ExecutionCancelled:
                     return await self._cancel_root(await self.run_store.get_run(run.id))
                 except RuntimeEngineError as exc:
-                    if exc.code == ErrorCode.PROVIDER_UNKNOWN_OUTCOME:
+                    if exc.code in {ErrorCode.PROVIDER_UNKNOWN_OUTCOME, ErrorCode.APPROVAL_REQUIRED}:
                         return await self._wait_for_approval(run, exc)
                     return await self._fail_root(run, exc.code, str(exc), blocked=exc.blocked)
                 except Exception as exc:  # noqa: BLE001 - terminal convergence boundary
@@ -179,6 +196,15 @@ class RuntimeEngine:
                     condition = "accept"
                 else:
                     condition = "defect"
+                    defects = self._normalise_defects(output.get("defects"))
+                    repeated_defect = state.record_defects(defects, node_id=current.node_id)
+                    if repeated_defect or any(item["code"] == "safety_violation" for item in defects):
+                        return await self._fail_root(
+                            run,
+                            ErrorCode.QUALITY_REJECTED,
+                            "QualityCheck produced a repeated or non-reworkable defect",
+                            blocked=True,
+                        )
                     if rework_count >= definition.max_rework_attempts:
                         return await self._fail_root(
                             run,
@@ -186,7 +212,7 @@ class RuntimeEngine:
                             "QualityCheck rejected candidate after bounded rework",
                             blocked=True,
                         )
-                    successors = definition.successors(current.node_id, condition="defect")
+                    successors = definition.rework_targets(current.node_id, defects)
                     if not successors:
                         return await self._fail_root(
                             run,
@@ -222,15 +248,71 @@ class RuntimeEngine:
                     # candidate. Leaving it in ``state`` would cause the
                     # loop below to skip the producer and re-check the same
                     # rejected output instead of creating a new attempt.
-                    rework_target = successors[0]
                     state.pop(current.node_id, None)
-                    state.pop(rework_target.node_id, None)
-                    current = rework_target
+                    for rework_target in successors:
+                        state.pop(rework_target.node_id, None)
+                    if len(successors) == 1:
+                        current = successors[0]
+                        continue
+                    try:
+                        fanout_results = await self._execute_fanout(
+                            run=run,
+                            definition=definition,
+                            nodes=successors,
+                            root_input=root_input,
+                            state=state,
+                            attempts=attempts,
+                        )
+                    except RuntimeEngineError as exc:
+                        return await self._fail_root(run, exc.code, str(exc), blocked=exc.blocked)
+                    for node_id, branch_state in fanout_results.items():
+                        state[node_id] = branch_state
+                        attempts[node_id] = attempts.get(node_id, 0) + 1
+                    await self._write_checkpoint(run, definition, state)
+                    join = definition.common_join(tuple(node.node_id for node in successors))
+                    if join is None or join.node_id != current.node_id:
+                        return await self._fail_root(
+                            run,
+                            ErrorCode.INVALID_WORKFLOW,
+                            "parallel rework branches must rejoin the QualityCheck node",
+                        )
+                    current = join
                     continue
 
             successors = definition.successors(current.node_id, condition=condition)
             if len(successors) > 1:
-                return await self._fail_root(run, ErrorCode.INVALID_WORKFLOW, "parallel execution is not enabled for this root")
+                # A resumed root reconstructs successful branches from durable
+                # step attempts. Do not issue a second provider/action call for
+                # those branches merely because their common predecessor is the
+                # current node again after recovery.
+                pending_successors = tuple(
+                    node for node in successors if node.node_id not in state
+                )
+                if pending_successors:
+                    try:
+                        fanout_results = await self._execute_fanout(
+                            run=run,
+                            definition=definition,
+                            nodes=pending_successors,
+                            root_input=root_input,
+                            state=state,
+                            attempts=attempts,
+                        )
+                    except RuntimeEngineError as exc:
+                        return await self._fail_root(run, exc.code, str(exc), blocked=exc.blocked)
+                    for node_id, branch_state in fanout_results.items():
+                        state[node_id] = branch_state
+                        attempts[node_id] = attempts.get(node_id, 0) + 1
+                    await self._write_checkpoint(run, definition, state)
+                join = definition.common_join(tuple(node.node_id for node in successors))
+                if join is None:
+                    return await self._fail_root(
+                        run,
+                        ErrorCode.INVALID_WORKFLOW,
+                        "fan-out branches require one deterministic shared join",
+                    )
+                current = join
+                continue
             current = successors[0] if successors else None
 
         run = await self.run_store.get_run(run.id)
@@ -267,13 +349,20 @@ class RuntimeEngine:
         definition: WorkflowDefinition,
         node: NodeDefinition,
         root_input: dict[str, Any],
-        state: dict[str, dict[str, Any]],
+        state: TypedWorkflowState,
         attempt: int,
+        reserve_budget: bool = True,
     ) -> dict[str, Any]:
+        if reserve_budget:
+            try:
+                await self._reserve_node_budget(run, node)
+            except BudgetExceeded as exc:
+                raise RuntimeEngineError(ErrorCode.BUDGET_EXCEEDED, str(exc), blocked=True) from exc
         if node.kind == "action":
             return await self._execute_action(run, definition, node, root_input, state, attempt)
         skill = self._resolve_skill(definition, node, root_input)
-        mapped_input = node.input_mapper(root_input, state) if node.input_mapper else dict(root_input)
+        projected_state = state.project(definition.input_sources_for(node.node_id))
+        mapped_input = node.input_mapper(root_input, projected_state) if node.input_mapper else dict(root_input)
         step = await self.run_store.create_step_attempt(
             workflow_run_id=run.id,
             node_id=node.node_id,
@@ -330,6 +419,15 @@ class RuntimeEngine:
         try:
             candidate = await self.skill_executor.execute(skill, mapped_input, context)
             output = candidate.output_payload()
+            try:
+                await self._settle_provider_budget(
+                    run,
+                    node=node,
+                    provider=candidate.actual_provider or context.provider_selection.requested_provider or "unknown",
+                    usage=candidate.usage,
+                )
+            except BudgetExceeded as exc:
+                raise RuntimeEngineError(ErrorCode.BUDGET_EXCEEDED, str(exc), blocked=True) from exc
             evidence_ids = self._uuid_evidence_ids(candidate)
             await self.run_recorder.succeed(
                 agent_run_id,
@@ -373,9 +471,11 @@ class RuntimeEngine:
                 "agent_run_id": str(agent_run_id),
                 "step_attempt_id": str(step.id),
                 "evidence_snapshot_ids": [str(item.evidence_snapshot_id) for item in candidate.evidence],
-            "quality_score": self._quality_score(output),
-            "usage": candidate.usage,
-            "provider_call_id": candidate.provider_call_id,
+                "evidence_refs": [item.model_dump(mode="json") for item in candidate.evidence],
+                "quality_score": self._quality_score(output),
+                "usage": candidate.usage,
+                "provider_call_id": candidate.provider_call_id,
+                "stream_attempt": candidate.stream_attempt,
             }
         except ExecutionCancelled:
             await self._mark_step_cancelled(run, step, agent_run_id, started)
@@ -390,34 +490,166 @@ class RuntimeEngine:
             await self._mark_step_failed(run, step, agent_run_id, started, ErrorCode.INTERNAL, "skill execution failed", blocked=False)
             raise RuntimeEngineError(ErrorCode.INTERNAL, "skill execution failed") from exc
 
+    async def _execute_fanout(
+        self,
+        *,
+        run: Any,
+        definition: WorkflowDefinition,
+        nodes: tuple[NodeDefinition, ...],
+        root_input: dict[str, Any],
+        state: TypedWorkflowState,
+        attempts: dict[str, int],
+    ) -> dict[str, dict[str, Any]]:
+        """Execute independent branches with isolated DB sessions when available.
+
+        SQLAlchemy sessions are not safe for concurrent use.  Production
+        wiring supplies a sessionmaker, so each fan-out branch owns a separate
+        transaction/session while the shared root lease epoch fences every
+        write.  Unit callers without a sessionmaker retain deterministic
+        sequential behaviour rather than sharing a session unsafely.
+        """
+        if not nodes:
+            return {}
+        base_state = TypedWorkflowState.from_checkpoint(state.checkpoint_payload())
+        dialect = getattr(getattr(self.session, "bind", None), "dialect", None)
+        can_parallel = (
+            self.parallel_sessionmaker is not None
+            and len(nodes) > 1
+            and getattr(dialect, "name", None) == "postgresql"
+            and all(node.kind == "skill" for node in nodes)
+        )
+        if not can_parallel:
+            results: dict[str, dict[str, Any]] = {}
+            for node in nodes:
+                branch_state = TypedWorkflowState.from_checkpoint(base_state.checkpoint_payload())
+                results[node.node_id] = await self._execute_node(
+                    run=run,
+                    definition=definition,
+                    node=node,
+                    root_input=root_input,
+                    state=branch_state,
+                    attempt=attempts.get(node.node_id, 0) + 1,
+                )
+            return results
+
+        # Reserve all branch capacity before any provider can observe a call.
+        # The reservations use the parent session and therefore cannot race on
+        # the root's ledger. Branch sessions settle their actual usage under a
+        # fenced row lock below.
+        try:
+            for node in nodes:
+                await self._reserve_node_budget(run, node)
+        except BudgetExceeded as exc:
+            raise RuntimeEngineError(ErrorCode.BUDGET_EXCEEDED, str(exc), blocked=True) from exc
+
+        concurrency = min(
+            definition.max_parallel_nodes,
+            *(node.max_concurrency or definition.max_parallel_nodes for node in nodes),
+        )
+        semaphore = asyncio.Semaphore(concurrency)
+
+        async def execute_branch(node: NodeDefinition) -> tuple[str, dict[str, Any]]:
+            async with semaphore:
+                async with self.parallel_sessionmaker() as branch_session:
+                    branch_engine = self._branch_engine(branch_session)
+                    branch_run = await branch_engine.run_store.get_run(run.id)
+                    if branch_run is None:
+                        raise RuntimeEngineError(ErrorCode.RUN_NOT_FOUND, "fan-out root disappeared")
+                    branch_state = TypedWorkflowState.from_checkpoint(base_state.checkpoint_payload())
+                    result = await branch_engine._execute_node(
+                        run=branch_run,
+                        definition=definition,
+                        node=node,
+                        root_input=root_input,
+                        state=branch_state,
+                        attempt=attempts.get(node.node_id, 0) + 1,
+                        reserve_budget=False,
+                    )
+                    await branch_session.commit()
+                    return node.node_id, result
+
+        values = await asyncio.gather(*(execute_branch(node) for node in nodes))
+        return dict(values)
+
+    def _branch_engine(self, session: AsyncSession) -> "RuntimeEngine":
+        """Create a per-branch facade without introducing a second Runtime."""
+        from app.runtime.harness.executor import SkillExecutor
+        from app.runtime.persistence.checkpoint_store import CheckpointStore
+        from app.runtime.persistence.event_store import EventStore
+        from app.runtime.persistence.evidence_snapshot_store import EvidenceSnapshotStore
+        from app.runtime.persistence.provider_call_store import ProviderCallStore
+        from app.runtime.persistence.run_store import RunStore
+        from app.runtime.ports.run_recorder import AgentRunRecorder
+
+        parent_executor = self.skill_executor
+        executor = SkillExecutor(
+            retriever=getattr(parent_executor, "_retriever", None),
+            provider_resolver=getattr(parent_executor, "_provider_resolver", None),
+            evidence_snapshot_store=EvidenceSnapshotStore(session),
+            provider_call_store=ProviderCallStore(session),
+            context_builder=getattr(parent_executor, "_context_builder", None),
+            provider_policy=getattr(parent_executor, "_provider_policy", None),
+            fallback_provider_resolver=getattr(parent_executor, "_fallback_provider_resolver", None),
+        )
+        events = EventStore(session)
+        return RuntimeEngine(
+            session=session,
+            workflow_registry=self.workflow_registry,
+            skill_catalog=self.skill_catalog,
+            run_store=RunStore(session, event_store=events),
+            event_store=events,
+            skill_executor=executor,
+            run_recorder=AgentRunRecorder(session),
+            action_handler=self.action_handler,
+            checkpoint_store=CheckpointStore(session),
+            provider_call_store=ProviderCallStore(session),
+            runtime_build_sha=self.runtime_build_sha,
+            parallel_sessionmaker=self.parallel_sessionmaker,
+        )
+
     async def _execute_action(
         self,
         run: Any,
         definition: WorkflowDefinition,
         node: NodeDefinition,
         root_input: dict[str, Any],
-        state: dict[str, dict[str, Any]],
+        state: TypedWorkflowState,
         attempt: int,
     ) -> dict[str, Any]:
-        step = await self.run_store.create_step_attempt(
-            workflow_run_id=run.id,
-            node_id=node.node_id,
-            attempt=attempt,
-            status=StepStatus.PENDING,
-            lease_epoch=run.lease_epoch,
-        )
-        step = await self.run_store.transition_step_attempt(
-            step.id,
-            expected_state_version=step.state_version,
-            lease_epoch=run.lease_epoch,
-            status=StepStatus.RUNNING,
-            event_type="progress",
-            event_payload=self._node_payload(run, node, step, {"node_status": "running", "percentage": 85}),
-        )
-        await self.session.commit()
+        if node.approval_required or node.risk_level == "high":
+            approvals = ApprovalStore(self.session)
+            if not await approvals.has_approved(
+                workflow_run_id=run.id,
+                kind="workflow_action",
+                node_id=node.node_id,
+            ):
+                raise RuntimeEngineError(
+                    ErrorCode.APPROVAL_REQUIRED,
+                    "high-risk workflow action requires explicit approval",
+                    node_id=node.node_id,
+                )
+        step = await self._recover_action_step(run, node)
+        if step is None:
+            step = await self.run_store.create_step_attempt(
+                workflow_run_id=run.id,
+                node_id=node.node_id,
+                attempt=attempt,
+                status=StepStatus.PENDING,
+                lease_epoch=run.lease_epoch,
+            )
+            step = await self.run_store.transition_step_attempt(
+                step.id,
+                expected_state_version=step.state_version,
+                lease_epoch=run.lease_epoch,
+                status=StepStatus.RUNNING,
+                event_type="progress",
+                event_payload=self._node_payload(run, node, step, {"node_status": "running", "percentage": 85}),
+            )
+            await self.session.commit()
         context = self._execution_context(run, step, node)
         try:
-            output = await self.action_handler(node.action_name or "", root_input, state, context)
+            projected_state = state.project(definition.input_sources_for(node.node_id))
+            output = await self.action_handler(node.action_name or "", root_input, projected_state, context)
             step = await self.run_store.transition_step_attempt(
                 step.id,
                 expected_state_version=step.state_version,
@@ -433,7 +665,11 @@ class RuntimeEngine:
                 publish_ready=True,
             )
             await self.session.commit()
-            return {"output": output, "step_attempt_id": str(step.id)}
+            return {
+                "output": output,
+                "step_attempt_id": str(step.id),
+                "artifact_refs": self._artifact_refs_from_output(output),
+            }
         except Exception as exc:
             # Do not expose a storage/provider response body, but retain the
             # exception category so an operator can distinguish a persistence
@@ -449,6 +685,44 @@ class RuntimeEngine:
                 blocked=True,
             )
             raise RuntimeEngineError(ErrorCode.ARTIFACT_PERSIST_FAILED, message, blocked=True) from exc
+
+    async def _recover_action_step(self, run: Any, node: NodeDefinition) -> Any | None:
+        """Adopt an interrupted deterministic action instead of creating attempt N+1.
+
+        Artifact actions may have committed a staging/active effect before a
+        worker dies or a cooperative pause reaches a boundary. Their durable
+        step identity is the recovery key, just as a completed ProviderCall
+        is for skill execution.
+        """
+        step = await self.session.scalar(
+            select(WorkflowStepAttempt)
+            .where(
+                WorkflowStepAttempt.workflow_run_id == run.id,
+                WorkflowStepAttempt.node_id == node.node_id,
+                WorkflowStepAttempt.status.in_((StepStatus.PENDING, StepStatus.RUNNING)),
+            )
+            .order_by(WorkflowStepAttempt.attempt.desc())
+            .limit(1)
+        )
+        if step is None:
+            return None
+        step = await self.run_store.adopt_step_attempt(step.id, lease_epoch=run.lease_epoch)
+        if step.status == StepStatus.PENDING:
+            step = await self.run_store.transition_step_attempt(
+                step.id,
+                expected_state_version=step.state_version,
+                lease_epoch=run.lease_epoch,
+                status=StepStatus.RUNNING,
+                event_type="progress",
+                event_payload=self._node_payload(
+                    run,
+                    node,
+                    step,
+                    {"node_status": "running", "recovered_action_attempt": True, "percentage": 85},
+                ),
+            )
+            await self.session.commit()
+        return step
 
     async def _mark_step_failed(
         self,
@@ -543,6 +817,15 @@ class RuntimeEngine:
 
     async def _wait_for_approval(self, run: Any, error: RuntimeEngineError) -> ExecutionResult:
         try:
+            approval_kind = (
+                "provider_retry" if error.code == ErrorCode.PROVIDER_UNKNOWN_OUTCOME else "workflow_action"
+            )
+            approval = await ApprovalStore(self.session).request(
+                workflow_run_id=run.id,
+                node_id=error.node_id,
+                kind=approval_kind,
+                request={"code": error.code, "message": str(error)[:400]},
+            )
             if run.status != RunStatus.WAITING_APPROVAL:
                 SecureHubStateMachine.assert_run_transition(run.status, RunStatus.WAITING_APPROVAL)
                 run = await self.run_store.transition_run(
@@ -552,7 +835,16 @@ class RuntimeEngine:
                     status=RunStatus.WAITING_APPROVAL,
                     changes={"error": {"code": error.code, "message": str(error)[:400]}},
                     event_type="progress",
-                    event_payload=self._root_payload(run, {"root_status": "waiting_approval", "status": "waiting_approval", "code": error.code}),
+                    event_payload=self._root_payload(
+                        run,
+                        {
+                            "root_status": "waiting_approval",
+                            "status": "waiting_approval",
+                            "code": error.code,
+                            "approval_id": str(approval.id),
+                            "approval_kind": approval.kind,
+                        },
+                    ),
                 )
                 await self.session.commit()
             return ExecutionResult(run.id, run.status, None)
@@ -584,7 +876,7 @@ class RuntimeEngine:
         self,
         run: Any,
         definition: WorkflowDefinition,
-        state: dict[str, dict[str, Any]],
+        state: TypedWorkflowState,
     ) -> ExecutionResult:
         """Persist a checkpoint then converge a cooperative pause exactly once."""
         try:
@@ -615,7 +907,12 @@ class RuntimeEngine:
             await self.session.rollback()
             raise RuntimeEngineError(ErrorCode.LEASE_FENCED, "unable to converge paused root") from exc
 
-    async def _recover_state(self, workflow_run_id: UUID) -> tuple[dict[str, dict[str, Any]], dict[str, int]]:
+    async def _recover_state(
+        self,
+        workflow_run_id: UUID,
+        *,
+        workflow_schema_version: str = "v1",
+    ) -> tuple[TypedWorkflowState, dict[str, int]]:
         rows = list(
             (
                 await self.session.execute(
@@ -625,7 +922,29 @@ class RuntimeEngine:
                 )
             ).scalars().all()
         )
-        state: dict[str, dict[str, Any]] = {}
+        snapshot_rows = list(
+            (
+                await self.session.execute(
+                    select(WorkflowEvidenceSnapshot).where(
+                        WorkflowEvidenceSnapshot.workflow_run_id == workflow_run_id
+                    )
+                )
+            ).scalars().all()
+        )
+        snapshot_refs = {
+            str(row.id): EvidenceRef(
+                evidence_snapshot_id=row.id,
+                chunk_id=row.chunk_id or "",
+                document_id=row.document_id,
+                content_digest=row.content_digest,
+                citation=self._lineage_value(row.citation),
+                source=self._lineage_value(row.source),
+                rights=self._lineage_value(row.rights),
+            ).model_dump(mode="json")
+            for row in snapshot_rows
+            if row.chunk_id
+        }
+        state = TypedWorkflowState(workflow_schema_version=workflow_schema_version)
         attempts: dict[str, int] = {}
         for row in rows:
             attempts[row.node_id] = max(attempts.get(row.node_id, 0), row.attempt)
@@ -633,12 +952,15 @@ class RuntimeEngine:
                 continue
             output = dict(row.output_ref or {})
             candidate = output.get("candidate_output")
+            evidence_snapshot_ids = [str(value) for value in output.get("evidence_snapshot_ids") or []]
             state[row.node_id] = {
                 "output": candidate if isinstance(candidate, dict) else output,
                 "step_attempt_id": str(row.id),
                 "agent_run_id": str(row.agent_run_id) if row.agent_run_id else None,
                 "provider_call_id": output.get("provider_call_id"),
-                "evidence_snapshot_ids": list(output.get("evidence_snapshot_ids") or []),
+                "evidence_snapshot_ids": evidence_snapshot_ids,
+                "evidence_refs": [snapshot_refs[value] for value in evidence_snapshot_ids if value in snapshot_refs],
+                "artifact_refs": self._artifact_refs_from_output(output),
                 "quality_score": row.quality_score,
             }
         return state, attempts
@@ -648,7 +970,7 @@ class RuntimeEngine:
         run: Any,
         definition: WorkflowDefinition,
         root_input: dict[str, Any],
-        state: dict[str, dict[str, Any]],
+        state: TypedWorkflowState,
         attempts: dict[str, int],
     ) -> None:
         """Finish a step from a persisted strict candidate without re-calling a provider.
@@ -798,6 +1120,8 @@ class RuntimeEngine:
                 )
             )
 
+        limits = dict((run.budget or {}).get("limits") or {})
+        max_tokens = node.budget_tokens or limits.get("max_provider_tokens") or limits.get("max_tokens") or 800
         return ExecutionContext(
             workflow_run_id=run.id,
             step_attempt_id=step.id,
@@ -815,10 +1139,61 @@ class RuntimeEngine:
             stream=True,
             emit=emit,
             cancellation_requested=cancelled,
-            extras={"provider_attempt": step.attempt},
+            extras={"provider_attempt": step.attempt, "max_tokens": int(max_tokens)},
         )
 
-    async def _write_checkpoint(self, run: Any, definition: WorkflowDefinition, state: dict[str, dict[str, Any]]) -> None:
+    async def _reserve_node_budget(self, run: Any, node: NodeDefinition) -> None:
+        limits = dict((run.budget or {}).get("limits") or {})
+        estimate = int(node.budget_tokens or limits.get("max_provider_tokens") or 1)
+        def reserve(raw: dict[str, Any]) -> dict[str, Any]:
+            BudgetController.assert_can_start_node(
+                raw,
+                node_id=node.node_id,
+                estimated_tokens=estimate,
+                node_limit_tokens=node.budget_tokens,
+            )
+            return BudgetController.reserve_node(
+                raw,
+                node_id=node.node_id,
+                estimated_tokens=estimate,
+            )
+
+        await self.run_store.mutate_budget(
+            run.id,
+            lease_epoch=run.lease_epoch,
+            mutate=reserve,
+        )
+        await self.session.commit()
+
+    async def _settle_provider_budget(
+        self,
+        run: Any,
+        *,
+        node: NodeDefinition,
+        provider: str,
+        usage: dict[str, Any],
+    ) -> None:
+        def settle(raw: dict[str, Any]) -> dict[str, Any]:
+            BudgetController.assert_can_start_provider(
+                raw,
+                provider=provider,
+                estimated_tokens=0,
+            )
+            return BudgetController.record_provider_usage(
+                raw,
+                node_id=node.node_id,
+                provider=provider,
+                usage=usage,
+            )
+
+        await self.run_store.mutate_budget(
+            run.id,
+            lease_epoch=run.lease_epoch,
+            mutate=settle,
+        )
+        await self.session.commit()
+
+    async def _write_checkpoint(self, run: Any, definition: WorkflowDefinition, state: TypedWorkflowState) -> None:
         if self.checkpoint_store is None:
             return
         try:
@@ -828,7 +1203,7 @@ class RuntimeEngine:
                 catalog_version=definition.catalog_version,
                 checkpoint_schema_version=definition.checkpoint_schema_version,
                 runtime_build_sha=self.runtime_build_sha,
-                state_json={key: self._checkpoint_value(value) for key, value in state.items()},
+                state_json=state.checkpoint_payload(),
                 event_cursor=max(int(run.next_event_sequence or 1) - 1, 0),
                 lease_epoch=run.lease_epoch,
             )
@@ -864,6 +1239,69 @@ class RuntimeEngine:
             return float(value) if value is not None else None
         except (TypeError, ValueError):
             return None
+
+    @staticmethod
+    def _normalise_defects(value: Any) -> list[dict[str, Any]]:
+        allowed = {
+            "evidence_missing",
+            "fact_conflict",
+            "schema_invalid",
+            "instructional_mismatch",
+            "citation_mismatch",
+            "safety_violation",
+        }
+        result: list[dict[str, Any]] = []
+        for item in value if isinstance(value, list) else []:
+            if not isinstance(item, dict):
+                continue
+            code = str(item.get("code") or item.get("taxonomy") or "schema_invalid")
+            result.append(
+                {
+                    "code": code if code in allowed else "schema_invalid",
+                    "message": str(item.get("message") or item.get("reason") or code)[:400],
+                    "target_node": item.get("target_node"),
+                    "resource_type": item.get("resource_type"),
+                }
+            )
+        return result or [{"code": "schema_invalid", "message": "QualityCheck returned no valid defect taxonomy"}]
+
+    @staticmethod
+    def _lineage_value(value: Any) -> str | None:
+        if isinstance(value, dict):
+            for key in ("value", "url", "source", "citation", "rights_note", "license"):
+                if value.get(key):
+                    return str(value[key])
+            return None
+        return str(value) if value else None
+
+    @classmethod
+    def _artifact_refs_from_output(cls, output: dict[str, Any]) -> list[dict[str, Any]]:
+        """Normalise one action result or a fan-out result into typed lineage."""
+        candidates: list[dict[str, Any]] = [output]
+        resources = output.get("resources")
+        if isinstance(resources, list):
+            candidates.extend(item for item in resources if isinstance(item, dict))
+        refs: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for candidate in candidates:
+            resource_id = candidate.get("resource_id")
+            if not resource_id or str(resource_id) in seen:
+                continue
+            seen.add(str(resource_id))
+            refs.append(
+                ArtifactRef(
+                    resource_id=str(resource_id),
+                    resource_type=str(candidate.get("resource_type") or "resource"),
+                    evidence_snapshot_ids=[str(value) for value in candidate.get("evidence_snapshot_ids") or []],
+                    quality_score=cls._quality_score(candidate),
+                    content_digest=candidate.get("content_digest"),
+                    object_key=candidate.get("object_key"),
+                    parent_resource_id=candidate.get("parent_resource_id"),
+                    lineage_root_id=candidate.get("lineage_root_id"),
+                    version=int(candidate.get("version") or 1),
+                ).model_dump(mode="json")
+            )
+        return refs
 
     @staticmethod
     def _uuid_evidence_ids(candidate: CandidateOutput) -> list[UUID]:
@@ -910,14 +1348,23 @@ class RuntimeEngine:
             "skill_name": node.skill_name,
             "step_attempt_id": str(step.id),
             "mode": run.mode,
+            "requested_provider": run.requested_provider,
+            "requested_model": run.requested_model,
             **payload,
         }
 
     @staticmethod
-    def _final_output(definition: WorkflowDefinition, state: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    def _final_output(definition: WorkflowDefinition, state: TypedWorkflowState) -> dict[str, Any]:
         if "persist_artifact" in state:
             output = state["persist_artifact"].get("output", {})
             return {"ref": output.get("resource_id"), "quality_score": output.get("quality_score"), "artifact": output}
+        if "persist_artifacts" in state:
+            output = state["persist_artifacts"].get("output", {})
+            return {
+                "ref": (output.get("resource_ids") or [None])[0],
+                "quality_score": output.get("quality_score"),
+                "artifacts": output.get("resources", []),
+            }
         last = state.get(definition.nodes[-1].node_id, {})
         return {"ref": last.get("step_attempt_id"), "output": last.get("output", {}), "quality_score": last.get("quality_score")}
 

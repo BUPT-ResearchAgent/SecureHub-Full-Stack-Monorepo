@@ -1,14 +1,15 @@
 # Status: real
+# Declarative Skill: SkillExecutor owns ctx.log_run for this contract.
 
-from app.agents.base import BaseSkill, SkillContext
-from app.agents.planned_skill import PlannedSkillInput, PlannedSkillOutput, prepare_planned_skill_output
+from app.agents.base import BaseSkill
+from app.agents.skill_contracts import SkillInput, SkillOutput
 
 
-class GenerateHandsOnLabInput(PlannedSkillInput):
+class GenerateHandsOnLabInput(SkillInput):
     kp_id: str | None = None
 
 
-class GenerateHandsOnLabOutput(PlannedSkillOutput):
+class GenerateHandsOnLabOutput(SkillOutput):
     prerequisites: list[str] = []
     setup: list[str] = []
     steps: list[dict[str, str]] = []
@@ -37,21 +38,3 @@ class GenerateHandsOnLab(BaseSkill):
     name = "GenerateHandsOnLab"
     applicable_domains = ["course_websec"]
     output_schema = GenerateHandsOnLabOutput
-
-    async def run(self, inp: GenerateHandsOnLabInput, ctx: SkillContext) -> GenerateHandsOnLabOutput:
-        out = await prepare_planned_skill_output(
-            self,
-            inp,
-            ctx,
-            prompt_template=PROMPT_TEMPLATE,
-            output_model=GenerateHandsOnLabOutput,
-        )
-        await ctx.log_run(
-            agent_id=self.agent_id,
-            skill_id=self.skill_id,
-            input_summary=inp.model_dump(),
-            output_summary=out.model_dump(),
-            evidence_chunk_ids=out.evidence_chunk_ids,
-            quality_score=out.quality_score,
-        )
-        return out

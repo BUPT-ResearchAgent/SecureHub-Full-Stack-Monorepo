@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.seeds._constants import COURSE_WEBSEC_ID
 from app.runtime.artifacts.saga import ArtifactSaga
-from app.runtime.harness.execution_context import ExecutionContext
+from app.runtime.harness.context import ExecutionContext
 from app.services.storage import StorageService
 
 
@@ -30,6 +30,8 @@ class WorkflowActionService:
     ) -> dict[str, Any]:
         if action_name == "PersistGeneratedResource":
             return await self.persist_generated_resource(root_input, state, context)
+        if action_name == "PersistResourceFanout":
+            return await self.persist_resource_fanout(root_input, state, context)
         if action_name == "PersistProfile":
             return await self.persist_profile(root_input, state, context)
         if action_name == "PersistLearningPath":
@@ -44,14 +46,19 @@ class WorkflowActionService:
         state: dict[str, Any],
         context: ExecutionContext,
     ) -> dict[str, Any]:
+        resource_type = str(root_input.get("resource_type") or "doc")
+        recovered = await self._recover_existing_resource(resource_type, context)
+        if recovered is not None:
+            return recovered
+
         producer = state.get("producer") or {}
         output = dict(producer.get("output") or {})
         quality = dict((state.get("quality_check") or {}).get("output") or {})
-        resource_type = str(root_input.get("resource_type") or "doc")
         title = str(output.get("title") or f"{resource_type}: {root_input.get('query', 'SecureHub resource')}")[:240]
         encoded = json.dumps(output, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
         resource_content = {"schema_version": "v1", "output": output}
         evidence_ids = self._uuid_list(output.get("evidence_chunk_ids") or [])
+        options = dict(root_input.get("options") or {})
         saga = ArtifactSaga(self.session, self.storage_service)
         staged = await saga.stage(
             workflow_run_id=context.workflow_run_id,
@@ -67,20 +74,120 @@ class WorkflowActionService:
             evidence_chunk_ids=evidence_ids,
             quality_score=self._as_float(quality.get("quality_score") or output.get("quality_score")),
             mime_type="application/json",
-            metadata={"quality_defects": quality.get("defects", [])},
+            metadata={
+                "quality_defects": quality.get("defects", []),
+                "evidence_snapshot_ids": list(producer.get("evidence_snapshot_ids") or []),
+            },
+            parent_resource_id=options.get("parent_resource_id"),
             lease_epoch=context.lease_epoch,
         )
         # Stage metadata + hidden outbox event must survive before activation.
         await self.session.commit()
         active = await saga.activate(staged.storage_object_id, lease_epoch=context.lease_epoch)
         await self.session.commit()
+        from app.db.models.resource.generated_resource import GeneratedResource
+
+        resource = await self.session.get(GeneratedResource, active.resource_id)
+        assert resource is not None
+        return self._resource_result(resource)
+
+    async def _recover_existing_resource(
+        self,
+        resource_type: str,
+        context: ExecutionContext,
+    ) -> dict[str, Any] | None:
+        """Finish or reuse a staged artifact after a process loss.
+
+        An action step can die after ArtifactSaga durably activates one branch
+        but before its step output is persisted. The existing resource is the
+        authority for that `(root, resource_type)` effect; a resumed action
+        receives a new step attempt, so it must not create a second artifact
+        merely to reconstruct output.
+        """
+        from sqlalchemy import select
+
+        from app.db.models.resource.generated_resource import GeneratedResource
+        from app.db.models.storage.storage_object import StorageObject
+
+        rows = list(
+            (
+                await self.session.execute(
+                    select(GeneratedResource)
+                    .where(
+                        GeneratedResource.workflow_run_id == context.workflow_run_id,
+                        GeneratedResource.resource_type == resource_type,
+                        GeneratedResource.status.in_(("staging", "active")),
+                    )
+                    .order_by(GeneratedResource.created_at.desc())
+                )
+            ).scalars().all()
+        )
+        for resource in rows:
+            if resource.status == "staging":
+                storage = await self.session.scalar(
+                    select(StorageObject)
+                    .where(
+                        StorageObject.status == "staging",
+                        StorageObject.metadata_["resource_id"].as_string() == str(resource.id),
+                    )
+                    .limit(1)
+                )
+                if storage is not None:
+                    saga = ArtifactSaga(self.session, self.storage_service)
+                    await saga.activate(storage.id, lease_epoch=context.lease_epoch)
+                    await self.session.commit()
+                    await self.session.refresh(resource)
+            if resource.status == "active":
+                return self._resource_result(resource)
+        return None
+
+    @staticmethod
+    def _resource_result(resource: Any) -> dict[str, Any]:
+        metadata = dict(resource.metadata_ or {})
         return {
-            "resource_id": str(active.resource_id),
-            "resource_type": resource_type,
-            "object_key": active.staging_key,
-            "storage_status": "active",
-            "quality_score": self._as_float(quality.get("quality_score") or output.get("quality_score")),
-            "evidence_snapshot_ids": list(producer.get("evidence_snapshot_ids") or []),
+            "resource_id": str(resource.id),
+            "resource_type": resource.resource_type,
+            "object_key": resource.object_key,
+            "storage_status": resource.status,
+            "quality_score": resource.quality_score,
+            "evidence_snapshot_ids": [str(value) for value in metadata.get("evidence_snapshot_ids") or []],
+            "version": int(resource.version),
+            "parent_resource_id": str(resource.parent_resource_id) if resource.parent_resource_id else None,
+            "lineage_root_id": str(resource.lineage_root_id or resource.id),
+        }
+
+    async def persist_resource_fanout(
+        self,
+        root_input: dict[str, Any],
+        state: dict[str, Any],
+        context: ExecutionContext,
+    ) -> dict[str, Any]:
+        """Persist each quality-approved branch as a distinct typed ArtifactRef."""
+        resource_types = {
+            "resource_doc": "doc",
+            "resource_ppt": "ppt",
+            "resource_quiz": "quiz",
+            "resource_lab": "lab",
+        }
+        resources: list[dict[str, Any]] = []
+        quality = state.get("quality_check") or {}
+        for node_id, resource_type in resource_types.items():
+            producer = state.get(node_id)
+            if not isinstance(producer, dict):
+                continue
+            result = await self.persist_generated_resource(
+                {**root_input, "resource_type": resource_type},
+                {"producer": producer, "quality_check": quality},
+                context,
+            )
+            result["producer_node_id"] = node_id
+            resources.append(result)
+        if not resources:
+            raise ValueError("parallel resource workflow has no producer output to persist")
+        return {
+            "resources": resources,
+            "resource_ids": [item["resource_id"] for item in resources],
+            "quality_score": self._as_float(((quality.get("output") or {}) if isinstance(quality, dict) else {}).get("quality_score")),
         }
 
     async def persist_profile(

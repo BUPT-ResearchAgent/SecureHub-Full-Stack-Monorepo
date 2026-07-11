@@ -14,6 +14,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models.resource.generated_resource import GeneratedResource
+from app.db.models.resource.resource_version import ResourceVersion
 from app.db.models.storage.storage_object import StorageObject
 from app.db.models.workflow_runtime import WorkflowEvent
 from app.runtime.persistence.common import as_uuid, mapping, optional_uuid, utcnow, validate_event_payload
@@ -82,12 +83,14 @@ class ArtifactSaga:
         mime_type: str | None = "application/octet-stream",
         object_key: str | None = None,
         metadata: dict[str, Any] | None = None,
+        parent_resource_id: UUID | str | None = None,
         lease_epoch: int | None = None,
     ) -> StagedArtifact:
         if not resource_type.strip() or not title.strip():
             raise ValueError("resource_type and title are required")
         run_id = as_uuid(workflow_run_id, field="workflow_run_id")
         resource_id = uuid4()
+        parent_id = optional_uuid(parent_resource_id, field="parent_resource_id")
         storage_id = uuid4()
         staging_key = object_key or f"runtime/staging/{run_id}/{resource_id}/artifact.bin"
         checksum = sha256(content).hexdigest()
@@ -125,6 +128,20 @@ class ArtifactSaga:
                         "resource_id": str(resource_id),
                     }
                 )
+                parent_resource = await self.session.get(GeneratedResource, parent_id) if parent_id else None
+                version = int(parent_resource.version or 1) + 1 if parent_resource is not None else 1
+                lineage_root_id = (
+                    parent_resource.lineage_root_id or parent_resource.id
+                    if parent_resource is not None
+                    else resource_id
+                )
+                saga_metadata.update(
+                    {
+                        "parent_resource_id": str(parent_id) if parent_id else None,
+                        "lineage_root_id": str(lineage_root_id),
+                        "version": version,
+                    }
+                )
                 storage_object = StorageObject(
                     id=storage_id,
                     provider=str(getattr(self.provider, "provider_name", "unknown")),
@@ -147,7 +164,9 @@ class ArtifactSaga:
                     agent_run_id=optional_uuid(agent_run_id, field="agent_run_id"),
                     workflow_run_id=run_id,
                     step_attempt_id=optional_uuid(step_attempt_id, field="step_attempt_id"),
-                    version=1,
+                    parent_resource_id=parent_id,
+                    lineage_root_id=lineage_root_id,
+                    version=version,
                     resource_type=resource_type,
                     title=title,
                     content=mapping(resource_content or {}, field="resource_content"),
@@ -157,7 +176,15 @@ class ArtifactSaga:
                     status="staging",
                     metadata_=saga_metadata,
                 )
-                self.session.add_all((storage_object, resource))
+                version_row = ResourceVersion(
+                    resource_id=resource_id,
+                    version=version,
+                    content=mapping(resource_content or {}, field="resource_content"),
+                    object_key=None,
+                    change_summary="initial generation" if parent_id is None else "quality-approved regeneration",
+                    metadata_=saga_metadata,
+                )
+                self.session.add_all((storage_object, resource, version_row))
                 await self.session.flush()
         except Exception:
             # Best effort only; a remote staging object without a DB row is
@@ -220,6 +247,14 @@ class ArtifactSaga:
             storage.activated_at = now
             resource.status = "active"
             resource.object_key = staging_key
+            version_row = await self.session.scalar(
+                select(ResourceVersion).where(
+                    ResourceVersion.resource_id == resource.id,
+                    ResourceVersion.version == resource.version,
+                )
+            )
+            if version_row is not None:
+                version_row.object_key = staging_key
             if not await self.events.mark_publish_ready(resolved_event_id):
                 raise RuntimeError("artifact outbox event is missing or already terminal")
             await self.session.flush()
