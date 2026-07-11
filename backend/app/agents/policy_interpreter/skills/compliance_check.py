@@ -1,5 +1,6 @@
 # Status: real
 # Declarative Skill: SkillExecutor owns ctx.log_run for this contract.
+# Declarative Skill: SkillExecutor owns ctx.log_run for this contract.
 
 from app.agents.base import BaseSkill
 from app.agents.skill_contracts import SkillInput, SkillOutput
