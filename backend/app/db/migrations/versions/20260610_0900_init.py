@@ -21,7 +21,11 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    op.execute("CREATE EXTENSION IF NOT EXISTS vector")
+    # SQLite backs the CI/test loop and cannot parse PostgreSQL extensions.
+    # The pgvector extension remains mandatory for production PostgreSQL.
+    is_pg = op.get_bind().dialect.name == "postgresql"
+    if is_pg:
+        op.execute("CREATE EXTENSION IF NOT EXISTS vector")
 
     op.create_table(
         "courses",
@@ -93,7 +97,16 @@ def upgrade() -> None:
         sa.Column("dimensions", postgresql.JSONB(astext_type=sa.Text()), nullable=False),
         sa.Column("embedding", pgvector.sqlalchemy.Vector(dim=1024), nullable=True),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
-        sa.CheckConstraint("jsonb_typeof(dimensions) = 'object'", name="ck_user_profiles_dimensions_object"),
+        *(
+            [
+                sa.CheckConstraint(
+                    "jsonb_typeof(dimensions) = 'object'",
+                    name="ck_user_profiles_dimensions_object",
+                )
+            ]
+            if is_pg
+            else []
+        ),
     )
     op.create_table(
         "agent_skills",
@@ -173,4 +186,5 @@ def downgrade() -> None:
         "courses",
     ]:
         op.drop_table(table_name)
-    op.execute("DROP EXTENSION IF EXISTS vector")
+    if op.get_bind().dialect.name == "postgresql":
+        op.execute("DROP EXTENSION IF EXISTS vector")

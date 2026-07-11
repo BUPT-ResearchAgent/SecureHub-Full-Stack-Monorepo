@@ -13,6 +13,7 @@ import { LLMErrorState, LoadingState } from '@/app/components/StateView';
 import { useEvidence } from '@/app/components/EvidenceDrawer';
 import { useAgentTraceDispatch } from '@/app/features/agents/store';
 import { isMockMode } from '@/lib/mock';
+import { isWorkflowDraftReplacement } from '@/lib/workflow-run.types';
 import { streamPersonaChat } from '../api';
 import { mockPersona } from '../mockData';
 import { useCourseDispatch } from '../store';
@@ -233,6 +234,14 @@ export function PersonaBuilder({ userId = mockPersona.userId }: PersonaBuilderPr
 
     cancelRef.current?.();
     cancelRef.current = streamPersonaChat(userId, message, [], {
+      onWorkflowEvent(event) {
+        if (!isWorkflowDraftReplacement(event)) return;
+        setTurns((current) =>
+          current.map((turn, index) => (
+            index === current.length - 1 && turn.role === 'assistant' ? { ...turn, content: '' } : turn
+          )),
+        );
+      },
       onToken(token) {
         setTurns((current) =>
           current.map((turn, index) =>
@@ -249,15 +258,17 @@ export function PersonaBuilder({ userId = mockPersona.userId }: PersonaBuilderPr
         traceDispatch({ type: 'upsertRun', run });
       },
       onDone() {
-        const fullDimensions = requiredDimensions.reduce<Partial<Record<PersonaDimensionKey, string>>>(
-          (next, key) => ({ ...next, [key]: demoDimensions[key] }),
-          {},
-        );
-        setIdentified(fullDimensions);
         setStreaming(false);
-        courseDispatch({ type: 'setPersona', persona: buildPersona(userId, fullDimensions) });
-        const pick = pickChallengeForClaim(message);
-        if (pick) setChallengeQueue((current) => [...current, pick]);
+        if (isMockMode()) {
+          const fullDimensions = requiredDimensions.reduce<Partial<Record<PersonaDimensionKey, string>>>(
+            (next, key) => ({ ...next, [key]: demoDimensions[key] }),
+            {},
+          );
+          setIdentified(fullDimensions);
+          courseDispatch({ type: 'setPersona', persona: buildPersona(userId, fullDimensions) });
+          const pick = pickChallengeForClaim(message);
+          if (pick) setChallengeQueue((current) => [...current, pick]);
+        }
       },
       onError(event) {
         if (event.code === 'sse_reconnecting') {

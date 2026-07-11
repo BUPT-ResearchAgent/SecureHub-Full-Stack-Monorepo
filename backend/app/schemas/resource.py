@@ -18,6 +18,9 @@ class ResourceGenerateRequest(BaseModel):
     kp_id: UUID
     user_id: UUID
     options: JsonObject | None = None
+    mode: Literal["fixture", "real"] = "real"
+    provider: str | None = None
+    model: str | None = None
 
 
 class GeneratedResourceDTO(BaseModel):

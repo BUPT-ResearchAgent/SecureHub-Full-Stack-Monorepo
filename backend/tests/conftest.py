@@ -1,6 +1,7 @@
 # Status: real
 
 import os
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -8,6 +9,21 @@ from pgvector.sqlalchemy import Vector
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID as PG_UUID
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.ext.compiler import compiles
+
+# Offline tests must not inherit a developer's real COS configuration from
+# ``.env``. Provider-specific COS tests construct explicit Settings/fakes.
+_TEST_STORAGE_ROOT = Path(__file__).resolve().parents[1] / "data" / ".pytest-storage"
+os.environ["STORAGE_PROVIDER"] = "local"
+os.environ["STORAGE_LOCAL_ROOT"] = str(_TEST_STORAGE_ROOT)
+# HTTP tests use isolated SQLite/session overrides and must not start the
+# production PostgreSQL-scanning supervisor during FastAPI lifespan setup.
+# Production startup still validates the persisted catalog before its Worker
+# can claim work.
+os.environ["RUNTIME_SUPERVISOR_ENABLED"] = "false"
+
+from app.core.config import get_settings
+
+get_settings.cache_clear()
 
 from app.db import models  # noqa: F401
 from app.db.base import Base

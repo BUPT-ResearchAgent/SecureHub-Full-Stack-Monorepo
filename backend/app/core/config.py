@@ -61,6 +61,7 @@ class Settings(BaseSettings):
     AGENT_RUN_EVENT_HISTORY_LIMIT: int = Field(default=2048, ge=1, le=10000)
     AGENT_RUN_EVENT_SUBSCRIBER_QUEUE_LIMIT: int = Field(default=256, ge=1, le=4096)
     AGENT_RUN_COMPLETED_TTL_SECONDS: int = Field(default=3600, ge=1, le=86400)
+    RUNTIME_SUPERVISOR_ENABLED: bool = True
     EMBEDDING_PROVIDER: str = "qwen_openai_compatible"
     EMBEDDING_MODEL: str = "text-embedding-v4"
     EMBEDDING_DIM: int = 1024

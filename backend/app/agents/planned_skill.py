@@ -74,6 +74,30 @@ async def _legacy_rag_retrieve(
     ]
 
 
+async def _fixture_rag_retrieve(
+    _query: str,
+    *,
+    domain: str,
+    top_k: int,
+    filters: dict[str, Any] | None = None,
+) -> list[EvidenceCard]:
+    """Return only contract-valid canned evidence for an explicit mock run."""
+    del filters
+    return [
+        EvidenceCard(
+            chunk_id=str(hit["chunk_id"]),
+            document_id=str(hit.get("document_id") or ""),
+            domain=str(hit.get("domain") or domain),
+            source=hit.get("source"),
+            excerpt=str(hit.get("excerpt") or hit.get("chunk_text") or ""),
+            reliability=float(hit.get("reliability", 0.0)),
+            score=float(hit.get("score", 0.0)),
+            metadata=dict(hit.get("metadata") or {}),
+        )
+        for hit in default_evidence_fixtures(domain)[: max(top_k, 3)]
+    ]
+
+
 async def _legacy_llm_complete(
     prompt: str,
     *,
@@ -89,6 +113,18 @@ async def _legacy_llm_complete(
         return json.loads(raw)
     except (TypeError, ValueError):
         return {"content": str(raw), "quality_score": 0.7}
+
+
+async def _fixture_llm_complete(
+    _prompt: str,
+    *,
+    skill_name: str,
+    stream: bool = False,
+    emit=None,
+) -> dict[str, Any]:
+    """Fixture mode must not probe a configured external LLM provider."""
+    del stream, emit
+    return default_llm_output(skill_name)
 
 
 async def prepare_planned_skill_output(
@@ -107,9 +143,10 @@ async def prepare_planned_skill_output(
     - 旧调用方一般在 skill.run 内再写一次 ``ctx.log_run`` —— 这是双写，新代码中第二次
       调用会变成 noop（``HarnessContext.log_run`` 已落表）。
     """
+    fixture_mode = bool(getattr(ctx.config, "mock_mode", False))
     harness = Harness(
-        rag_retrieve=_legacy_rag_retrieve,
-        llm_complete=_legacy_llm_complete,
+        rag_retrieve=_fixture_rag_retrieve if fixture_mode else _legacy_rag_retrieve,
+        llm_complete=_fixture_llm_complete if fixture_mode else _legacy_llm_complete,
     )
     output = await run_through_harness(
         skill,
