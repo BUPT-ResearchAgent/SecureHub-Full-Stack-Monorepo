@@ -620,15 +620,31 @@ async def test_worker_heartbeat_renews_lease_before_a_second_worker_can_claim(tm
             started.set()
             await release.wait()
 
-        worker = RuntimeWorker(sessions, execute_claim, owner="worker-a", lease_seconds=0.15)
+        # This test crosses a real lease deadline.  A 150 ms lease leaves only
+        # a few milliseconds for aiosqlite scheduling under the full suite,
+        # which turns an otherwise valid heartbeat test into a timing race.
+        # One second still keeps the test bounded while exercising the same
+        # independent-session renewal and second-worker fencing behavior.
+        lease_seconds = 1.0
+        worker = RuntimeWorker(sessions, execute_claim, owner="worker-a", lease_seconds=lease_seconds)
         task = asyncio.create_task(worker.run_once())
         try:
             await asyncio.wait_for(started.wait(), timeout=2)
-            await asyncio.sleep(0.19)
+            # Capture the first committed deadline, then wait beyond the
+            # original one-second lease.  The next read must therefore be
+            # protected by a later heartbeat renewal, not merely by the
+            # original claim.  The extra 100 ms is scheduling margin, not a
+            # replacement for the heartbeat assertion below.
+            async with sessions() as observer:
+                observed = await RunStore(observer).get_run(run.id)
+                assert observed is not None and observed.lease_expires_at is not None
+                original_expiry = observed.lease_expires_at
+            await asyncio.sleep(lease_seconds + 0.1)
             async with sessions() as observer:
                 current = await RunStore(observer).get_run(run.id)
                 assert current is not None and current.lease_owner == "worker-a"
                 assert current.lease_epoch == 1
+                assert current.lease_expires_at is not None and current.lease_expires_at > original_expiry
                 assert lease_is_active(current.lease_expires_at)
                 assert await RunStore(observer).claim_next("worker-b", lease_seconds=1) is None
                 await observer.commit()

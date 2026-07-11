@@ -1,6 +1,6 @@
 # SecureHub Agent Runtime TODO
 
-> Version: v2.1
+> Version: v2.2
 > Updated: 2026-07-11
 > Authority: `Plan/2026-07-11_SecureHub_多智能体底层完整架构实施方案.md` v1.1
 > Delivery evidence: `Workout/Agent-Runtime-Wave-0-3.md`
@@ -18,6 +18,20 @@ The fixed nine business Agents remain:
 `policy_interpreter`, `hot_analyst`, `job_analyst`, `competition_advisor`,
 `career_planner`, `topic_explorer`, `doc_archivist`, `task_orchestrator`, and
 `outcome_evaluator`.
+
+### Post-Merge Verification Note
+
+- PR #43 merged the Wave 0-3 implementation into `upstream/dev`. A separate
+  follow-up stabilizes the SQLite heartbeat test without weakening production
+  lease/fencing semantics; two consecutive full `pytest -q` runs report
+  `255 passed, 3 skipped`.
+- `backend/data/runtime_wave_storage/` is regenerated local Artifact Saga
+  output and is ignored precisely. Existing local evidence files are retained,
+  not deleted or committed.
+- The currently available local PostgreSQL volume remains at
+  `20260611_0960`, before the durable-runtime migrations, so it cannot
+  independently re-query the six historical real roots. It was not migrated
+  for verification and no external database was queried without authority.
 
 ## Wave 0: Contract Freeze
 

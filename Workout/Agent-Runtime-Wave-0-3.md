@@ -77,14 +77,35 @@ reported exactly 9 Agents and 28 Skills.
 
 | Command or gate | Result |
 | --- | --- |
-| `pytest -q` | `255 passed, 3 skipped` |
-| Focused post-review runtime checks | `pytest -q tests/runtime/test_skill_executor_guardrails.py tests/runtime/test_durable_recovery_paths.py` -> `16 passed` |
+| Post-merge `pytest -q` stability gate | The former 150 ms SQLite heartbeat assertion was made lease-expiry-aware with a 1 s lease; two consecutive full runs now each report `255 passed, 3 skipped` |
+| Focused post-review runtime checks | `pytest -q tests/runtime/test_skill_executor_guardrails.py tests/runtime/test_durable_recovery_paths.py` -> `17 passed` |
 | SQLite migration round trip | `upgrade head -> downgrade 20260611_0960 -> upgrade head` passed; head `20260711_1020` |
 | Persisted catalog gate | Fresh migrated SQLite mirror validated exactly `9 agents / 28 skills` |
 | Frontend typecheck/build | `pnpm typecheck` and `pnpm build` passed |
 | WorkflowRunClient harness | reducer, duplicate suppression, disconnect reconnect, refresh cursor recovery, Last-Event-ID gap replay, and provider stream replacement passed |
 | Browser check | Login UI checked with Playwright at desktop and `390x844`; no blank canvas, overlap, or text clipping observed |
 | Diff hygiene | `git diff --check` passed; only CRLF conversion warnings were emitted |
+
+## Post-Merge Verification Boundary
+
+- PR [#43](https://github.com/BUPT-ResearchAgent/SecureHub-Full-Stack-Monorepo/pull/43)
+  merged the original Wave 0-3 implementation into `upstream/dev` at
+  `bc679f6a`. The original evidence root IDs above are retained as historical
+  execution evidence.
+- The heartbeat test used a 150 ms lease and a fixed 190 ms observation under
+  an independent SQLite renewal session. Under full-suite load that left only a
+  few milliseconds of scheduling margin and could correctly fence a late
+  worker. The production lease/fencing semantics were not relaxed; the test now
+  crosses a one-second original lease and proves a later heartbeat expiry
+  prevents a second worker claim.
+- The local Docker PostgreSQL volume was restarted only for a read-only audit.
+  It is at Alembic revision `20260611_0960`, has no `workflow_*` tables, and
+  contains no generated resources. It therefore cannot independently re-query
+  the six historical roots. No migration was run against that volume and no
+  external Neon database was queried without authority.
+- `backend/data/runtime_wave_storage/` contains regenerated local staged
+  Artifact Saga output and is ignored precisely; existing artifacts were not
+  deleted or included in source control.
 
 ## External Blocker
 
@@ -97,5 +118,8 @@ COS gate.
 
 ## Commit
 
-Implementation commit: `dbe3e857` (`feat(runtime): complete agent runtime
-waves 0-3`). No push is performed by this delivery.
+The implementation was authored as `dbe3e857`
+(`feat(runtime): complete agent runtime waves 0-3`) and recorded by
+`337fffc2`; its clean rebased equivalents `31bc9ec2` and `e58626c2` were
+merged through PR #43. The follow-up stability/ignore hygiene change is kept
+separate from the original Wave delivery.
