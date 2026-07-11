@@ -19,6 +19,20 @@ class AgentRun(UUIDPrimaryKeyMixin, Base):
     agent_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("agents.id"))
     skill_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("agent_skills.id"))
     parent_run_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("agent_runs.id"), index=True)
+    # Durable runtime links are additive. Existing Agent Run callers continue
+    # to work while new workflow execution records correlate every child.
+    workflow_run_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("workflow_runs.id"), index=True
+    )
+    step_attempt_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("workflow_step_attempts.id"), index=True
+    )
+    attempt: Mapped[int | None] = mapped_column(Integer)
+    provider: Mapped[str | None] = mapped_column(String(64))
+    model: Mapped[str | None] = mapped_column(String(128))
+    error_code: Mapped[str | None] = mapped_column(String(96))
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     input_summary: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, nullable=False)
     output_summary: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, nullable=False)
     evidence_chunk_ids: Mapped[list[UUID]] = mapped_column(

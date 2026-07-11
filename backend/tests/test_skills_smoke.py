@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import asyncio
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -34,7 +35,7 @@ from app.agents.task_orchestrator.skills.generate_learning_path import (
     GenerateLearningPath,
     GenerateLearningPathInput,
 )
-from app.runtime.harness import HarnessContext
+from app.runtime.harness import HarnessConfig, HarnessContext
 
 
 @pytest.mark.parametrize(
@@ -50,8 +51,24 @@ from app.runtime.harness import HarnessContext
 def test_skill_runs_with_fixture_evidence(skill_factory, inp_factory):
     async def go():
         skill = skill_factory()
-        ctx = HarnessContext(user_id="demo", workflow_name="course_learning")
-        out = await skill.run(inp_factory(), ctx)
+        ctx = HarnessContext(
+            user_id="demo",
+            workflow_name="course_learning",
+            config=HarnessConfig(mock_mode=True, llm_provider="fixture"),
+        )
+        # Fixture smoke must stay offline even when a developer has live
+        # retrieval/provider credentials configured locally.
+        with (
+            patch(
+                "app.agents.planned_skill.retrieve",
+                new=AsyncMock(side_effect=AssertionError("fixture smoke called live retriever")),
+            ),
+            patch(
+                "app.agents.planned_skill.xfyun_chat",
+                new=AsyncMock(side_effect=AssertionError("fixture smoke called live provider")),
+            ),
+        ):
+            out = await skill.run(inp_factory(), ctx)
         return out
 
     out = asyncio.run(go())

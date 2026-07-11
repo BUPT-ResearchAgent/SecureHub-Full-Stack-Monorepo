@@ -6,6 +6,7 @@ import { useAgentTraceDispatch } from '@/app/features/agents/store';
 import { ConversationPane } from '@/app/features/chat/components/ConversationPane';
 import type { ChatAgent, ChatMessage, ChatSession } from '@/app/features/chat/types';
 import { useRafTokenBuffer } from '@/lib/raf-token-buffer';
+import { isWorkflowDraftReplacement } from '@/lib/workflow-run.types';
 import { streamTutorAsk } from '../api';
 import { useCourseState } from '../store';
 
@@ -101,6 +102,11 @@ export function TutorDialog() {
       question,
       currentKpId,
       {
+        onWorkflowEvent(event) {
+          if (!isWorkflowDraftReplacement(event)) return;
+          tokenBuffer.cancel();
+          patchMessage(assistantMessage.id, { content: '' });
+        },
         onToken(token) {
           appendToken(assistantMessage.id, token.content);
         },

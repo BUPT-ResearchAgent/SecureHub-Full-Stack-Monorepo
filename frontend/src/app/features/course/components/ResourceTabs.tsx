@@ -7,6 +7,7 @@ import { useEvidence } from '@/app/components/EvidenceDrawer';
 import { useAgentTraceDispatch } from '@/app/features/agents/store';
 import { mockResources } from '../mockData';
 import { useRafTokenBuffer } from '@/lib/raf-token-buffer';
+import { isWorkflowDraftReplacement } from '@/lib/workflow-run.types';
 import { useCourseDispatch, useCourseState } from '../store';
 import type { ResourceItem, ResourceType } from '../types';
 import { resourceTypeIcon, resourceTypeLabel } from '../utils';
@@ -174,6 +175,11 @@ export function ResourceTabs() {
         options: { tone: 'case_driven' },
       },
       {
+        onWorkflowEvent(event) {
+          if (!isWorkflowDraftReplacement(event)) return;
+          tokenBuffer.cancel();
+          updateResource(targetType, (previous) => ({ ...previous, content: '' }));
+        },
         onProgress(progress) {
           setProgressText(`${progress.node_name} · ${progress.percentage ?? 0}%`);
         },

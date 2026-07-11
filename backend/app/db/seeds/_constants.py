@@ -66,19 +66,44 @@ AGENTS: list[tuple[str, str, str]] = [
     ),
 ]
 
-# Core skills (task brief §8.3).
+# Frozen production Skill catalog.  The name is kept for compatibility with
+# older seed callers, but v1.1 deliberately contains all 28 production
+# bindings rather than only the old 14-skill "core" subset.
 CORE_SKILLS: dict[str, list[str]] = {
-    "career_planner": ["BuildLearningPersona", "UpdatePersona", "RecommendResources"],
-    "task_orchestrator": ["GenerateLearningPath"],
+    "policy_interpreter": ["InterpretPolicy", "ComplianceCheck"],
+    "hot_analyst": ["AnalyzeHotEvent", "RecommendReadings"],
+    "job_analyst": ["AnalyzeJobMarket", "SkillGapAnalysis"],
+    "competition_advisor": [
+        "GenerateCompetitionPlan",
+        "GenerateQuiz",
+        "RecommendCompetition",
+    ],
+    "career_planner": [
+        "BuildLearningPersona",
+        "UpdatePersona",
+        "RecommendResources",
+        "RouteTutorQuestion",
+        "GenerateGrowthPlan",
+    ],
+    "topic_explorer": [
+        "GenerateHandsOnLab",
+        "GenerateResearchTopic",
+        "RecommendReadings",
+    ],
     "doc_archivist": [
         "GenerateCourseDoc",
         "GenerateCoursePPT",
         "GenerateMindmap",
         "GenerateVideoStoryboard",
+        "GenerateProposal",
     ],
-    "competition_advisor": ["GenerateQuiz"],
-    "topic_explorer": ["GenerateHandsOnLab", "RecommendReadings"],
-    "outcome_evaluator": ["RunAssessment", "QualityCheck", "UpdateCapability"],
+    "task_orchestrator": ["GenerateLearningPath", "DecomposeWBS"],
+    "outcome_evaluator": [
+        "EvaluateSubmission",
+        "RunAssessment",
+        "QualityCheck",
+        "UpdateCapability",
+    ],
 }
 
 

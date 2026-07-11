@@ -25,12 +25,14 @@ You are doc_archivist generating a course explanation document.
 [Task]
 {task_instruction}
 
-Return concise Markdown content with evidence references as JSON matching the
-schema below. JSON validity is mandatory: encode content and markdown as JSON
-strings, escaping every newline, backslash, and internal double quote. Do not
-use fenced code blocks. Express any code as short inline pseudocode that does
-not contain double quotes. Keep the document focused enough to finish the JSON
-object without truncation.
+Return a compact teaching summary with evidence references as JSON matching
+the schema below. JSON validity is mandatory. For both ``content`` and
+``markdown``, emit one single-line value only: no literal line breaks, no
+internal double quote characters, no fenced code blocks, and at most 220 characters per
+field. Use Chinese punctuation instead of quotation marks. Keep ``sections``
+to at most three short labels. This bounded representation is required so the
+provider can produce one unambiguous JSON object without truncation or invalid
+string escaping.
 
 Return JSON matching:
 {output_schema_hint}

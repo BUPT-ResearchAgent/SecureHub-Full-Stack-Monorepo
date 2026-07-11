@@ -2,6 +2,7 @@
 
 """Assessment request and response DTOs."""
 
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -18,6 +19,9 @@ class AssessmentRunRequest(BaseModel):
     user_id: UUID
     course_id: UUID
     answers: list[dict[str, object]] = Field(default_factory=list)
+    mode: Literal["fixture", "real"] = "real"
+    provider: str | None = None
+    model: str | None = None
 
 
 class AssessmentRunResponse(BaseModel):

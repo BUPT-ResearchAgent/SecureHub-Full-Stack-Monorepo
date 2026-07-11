@@ -19,6 +19,14 @@ from app.db.models.learning import (
 )
 from app.db.models.resource import GeneratedResource, ResourceVersion
 from app.db.models.storage import StorageObject
+from app.db.models.workflow_runtime import (
+    WorkflowCheckpoint,
+    WorkflowEvidenceSnapshot,
+    WorkflowEvent,
+    WorkflowProviderCall,
+    WorkflowRun,
+    WorkflowStepAttempt,
+)
 
 KnowledgePoint = KnowledgeNode
 KpPrerequisite = KnowledgeEdge
@@ -47,4 +55,10 @@ __all__ = [
     "User",
     "UserCapability",
     "UserProfile",
+    "WorkflowCheckpoint",
+    "WorkflowEvidenceSnapshot",
+    "WorkflowEvent",
+    "WorkflowProviderCall",
+    "WorkflowRun",
+    "WorkflowStepAttempt",
 ]

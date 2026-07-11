@@ -10,6 +10,8 @@ from typing import Any
 
 from fastapi.responses import StreamingResponse
 
+from app.runtime.contracts import EventEnvelope
+
 
 AGENT_EVENT_TYPES = frozenset(
     {"progress", "evidence", "token", "artifact", "trace", "done", "error"}
@@ -43,6 +45,29 @@ async def serialize_agent_events(events: AsyncIterator[dict[str, Any]]) -> Async
 def agent_event_response(events: AsyncIterator[dict[str, Any]]) -> StreamingResponse:
     return StreamingResponse(
         serialize_agent_events(events),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+async def serialize_workflow_events(events: AsyncIterator[EventEnvelope]) -> AsyncIterator[str]:
+    """Serialize the durable EventEnvelope, using sequence as SSE id."""
+    async for envelope in events:
+        payload = envelope.as_sse_payload()
+        yield (
+            f"id: {envelope.sequence}\n"
+            f"event: {envelope.event_type}\n"
+            f"data: {json.dumps(payload, ensure_ascii=False, default=str)}\n\n"
+        )
+
+
+def workflow_event_response(events: AsyncIterator[EventEnvelope]) -> StreamingResponse:
+    return StreamingResponse(
+        serialize_workflow_events(events),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

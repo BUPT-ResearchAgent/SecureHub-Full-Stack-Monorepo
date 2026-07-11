@@ -9,6 +9,11 @@ import { isMockMode } from '@/lib/mock';
 import { getMockEvidenceForCourse } from '@/lib/mock/courses.mock';
 import { useRafTokenBuffer } from '@/lib/raf-token-buffer';
 import type { AgentRunDTO } from '@/lib/sse.types';
+import {
+  isWorkflowDraftReplacement,
+  type WorkflowEvent,
+  type WorkflowRunStartResponse,
+} from '@/lib/workflow-run.types';
 import type { CourseCatalogItem } from '../catalog/courseCatalog.types';
 import { streamPersonaChat } from '../api';
 import { CompanionComposer } from './CompanionComposer';
@@ -34,6 +39,8 @@ export function LearningCompanionPanel({
   onMockWorkflowRun,
   onExternalWorkflowBegin,
   onWorkflowTrace,
+  onWorkflowStart,
+  onWorkflowEvent,
   onShowWorkflow,
   onImageWorkflowRun,
   workflowCollapsed,
@@ -43,6 +50,8 @@ export function LearningCompanionPanel({
   onMockWorkflowRun: () => void;
   onExternalWorkflowBegin: () => void;
   onWorkflowTrace: (run: AgentRunDTO) => void;
+  onWorkflowStart: (start: WorkflowRunStartResponse) => void;
+  onWorkflowEvent: (event: WorkflowEvent) => void;
   /** Chat-first：右侧编排图折叠时，header 显示「显示编排图」入口。 */
   onShowWorkflow?: () => void;
   onImageWorkflowRun?: () => void;
@@ -248,6 +257,13 @@ export function LearningCompanionPanel({
 
     onExternalWorkflowBegin();
     streamCancelRef.current = streamPersonaChat(userId, question, [], {
+      onWorkflowStart,
+      onWorkflowEvent(event) {
+        onWorkflowEvent(event);
+        if (!isWorkflowDraftReplacement(event)) return;
+        tokenBuffer.cancel();
+        updateAssistant(assistantId, (message) => ({ ...message, content: '' }));
+      },
       onEvidence(chunk) {
         evidence.pushEvidence([chunk]);
         updateAssistant(assistantId, (message) => ({

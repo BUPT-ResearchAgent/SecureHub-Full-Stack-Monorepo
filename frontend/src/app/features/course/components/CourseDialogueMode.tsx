@@ -92,6 +92,8 @@ export function CourseDialogueMode({ course }: { course: CourseCatalogItem }) {
             onMockWorkflowRun={workflowRun.run}
             onExternalWorkflowBegin={workflowRun.beginExternalRun}
             onWorkflowTrace={workflowRun.applyTrace}
+            onWorkflowStart={workflowRun.applyWorkflowStart}
+            onWorkflowEvent={workflowRun.applyWorkflowEvent}
             onShowWorkflow={showWorkflow}
             onImageWorkflowRun={runImageAnalysisWorkflow}
             workflowCollapsed={collapsed}
@@ -120,6 +122,8 @@ export function CourseDialogueMode({ course }: { course: CourseCatalogItem }) {
           onMockWorkflowRun={workflowRun.run}
           onExternalWorkflowBegin={workflowRun.beginExternalRun}
           onWorkflowTrace={workflowRun.applyTrace}
+          onWorkflowStart={workflowRun.applyWorkflowStart}
+          onWorkflowEvent={workflowRun.applyWorkflowEvent}
           onShowWorkflow={showWorkflow}
           onImageWorkflowRun={runImageAnalysisWorkflow}
           workflowCollapsed={!overlayOpen}
