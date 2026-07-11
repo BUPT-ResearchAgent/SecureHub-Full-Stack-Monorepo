@@ -97,6 +97,5 @@ COS gate.
 
 ## Commit
 
-The local commit that contains this report is the Wave 0-3 delivery commit;
-the exact hash is recorded in the task handoff after commit creation. No push
-is performed by this delivery.
+Implementation commit: `dbe3e857` (`feat(runtime): complete agent runtime
+waves 0-3`). No push is performed by this delivery.
