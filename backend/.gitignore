@@ -1,3 +1,7 @@
 .vercel
 .env*
 data/.pytest-storage/
+
+# Local Artifact Saga/live runtime smoke outputs; they are regenerated and
+# may contain staged artifacts for real roots, never source-controlled data.
+data/runtime_wave_storage/
