@@ -3,15 +3,18 @@
 > Version: v2.2
 > Updated: 2026-07-11
 > Authority: `Plan/2026-07-11_SecureHub_多智能体底层完整架构实施方案.md` v1.1
-> Delivery evidence: `Workout/Agent-Runtime-Wave-0-3.md`
+> Delivery evidence: `Workout/Agent-Runtime-Wave-0-3.md` and
+> `Workout/Agent-Runtime-Wave-4-6.md`
 
 ## Current Status
 
-Wave 0-3 is complete and accepted. This means the contract freeze, Golden
-Vertical Slice, Durable Core, frozen full production catalog, five product
-adapters, and the WorkflowRunClient are delivered. It does **not** mark Wave
-4-6 collaboration expansion, HITL/operations/security deepening, or legacy
-removal as done.
+Wave 0-6 implementation is complete. In addition to the Wave 0-3 durable
+core, Wave 4 adds typed artifact/evidence lineage, bounded collaboration
+fan-out, defect-aware QualityCheck rework and transparent real-to-real provider
+replacement. Wave 5 adds pause/resume/retry/approval, budgets, tool policy,
+checkpoint migration, metrics and audit facts. Wave 6 removes legacy execution
+and duplicate SSE authorities. External live gates remain explicitly separate
+from this code-complete status.
 
 The fixed nine business Agents remain:
 
@@ -98,30 +101,40 @@ The fixed nine business Agents remain:
 
 ### Wave 4: Collaboration Expansion
 
-- [ ] Add parallel resource fan-out and full ArtifactRef/EvidenceRef/TypedState
-  collaboration beyond the Wave 0-3 sequential paths.
-- [ ] Extend QualityCheck defect taxonomy, rework lineage, resource versioning,
-  and budgets beyond the delivered bounded Golden Slice behavior.
-- [ ] Validate real-to-real provider fallback and full visible-stream replacement
-  against a live alternative provider.
+- [x] Add `course_learning_full_v1` resource fan-out, minimal typed-state
+  projection and durable `ArtifactRef` / `EvidenceRef` lineage. PostgreSQL
+  uses isolated branch sessions; SQLite retains deterministic sequential mode.
+- [x] Add QualityCheck defect taxonomy, deterministic defect routes, repeated
+  defect detection and bounded rework lineage.
+- [x] Add Spark-primary / DeepSeek-explicit-real-fallback policy, provider
+  stream attempts and draft replacement without provider text concatenation.
+- [x] Cover fallback replacement with isolated provider fakes. A live fallback
+  gate is still blocked until both real provider credentials are available.
 
 ### Wave 5: HITL, Policy, And Operations
 
-- [ ] Add production approval/HITL handling, full pause/resume/retry UI, and
-  multi-level budget/rate/permission policy enforcement.
-- [ ] Add operational metrics/evals/audit views, signed artifact access, and
-  the broader security hardening described by v1.1.
+- [x] Add durable approval/audit records, pause/resume/retry APIs, ownership
+  checks, WorkflowRunClient controls and checkpoint compatibility/migration.
+- [x] Add root/node/provider budget accounting, rate/circuit policy, typed
+  ALLOW/ASK/DENY model-tool policy and high-risk Workflow Action approval.
+- [x] Add per-root metrics/evals/trace-safe audit summaries and recovery tests.
 
 ### Wave 6: Legacy Removal And Final Acceptance
 
-- [ ] Retire remaining compatibility-only `BaseSkill`, legacy Harness,
-  in-memory registry, direct `skill.run()`, and duplicate serializer paths
-  once all consumers have migrated.
-- [ ] Run the full multi-provider, multi-worker, browser, migration, and
-  deployment/operations acceptance gate.
+- [x] Retire legacy `planned_skill.py`, direct `skill.run()`, production
+  `RunRegistry`, old Harness/context/graph authority, implicit skill fixtures,
+  duplicate SSE serializers/endpoints and production LangGraph execution.
+- [x] Run migration round-trip, two full backend suites, focused recovery/fault
+  tests, typecheck/build/client harness and desktop/mobile browser checks.
+- [x] Record deployment, recovery, demo and external-gate handling in
+  `docs/operations/agent-runtime-wave-4-6.md` and the Wave 4-6 report.
 
 ## External Gate
 
+- [ ] Supply valid PostgreSQL, Spark, DeepSeek, DashScope/RAG and COS
+  credentials, then re-run the real provider primary/fallback, RAG and COS
+  gates. Current local configuration has real execution disabled; real requests
+  return sanitised `503` failures and never fixture fallback.
 - [ ] Re-run the Tencent COS runtime artifact smoke only after account billing
   is restored. The last real `put_object` returned
   `451 UnavailableForLegalReasons`; it is an external blocker, not a success,

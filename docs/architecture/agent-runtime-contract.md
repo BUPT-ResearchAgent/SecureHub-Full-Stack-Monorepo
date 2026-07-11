@@ -1,7 +1,7 @@
 # SecureHub Agent Runtime Contract
 
 Version: `v1.1`
-Status: frozen for Waves 0-3
+Status: implemented and frozen through Waves 0-6
 Authority: the v1.1 implementation plan dated 2026-07-11
 
 This is the executable contract for `backend/app/runtime/contracts.py`. It
@@ -173,3 +173,53 @@ source. Downgrade is supported for empty/test databases; production rollback
 uses forward-compatible code and feature flags, preserving provider-call and
 artifact audit history. A stopped worker is replaced through lease expiry and a
 new fencing epoch.
+
+## Wave 4-6 Control Plane Amendments
+
+### Typed Collaboration And Fan-out
+
+`TypedWorkflowState` is checkpointed as typed node records, not an unbounded
+conversation transcript. A node may see only the `input_sources` declared by
+its `WorkflowDefinition`. `EvidenceRef` contains snapshot and provenance
+identity; `ArtifactRef` contains resource, version and lineage identity. The
+full course workflow fans out document, PPT, quiz and lab resources, then
+rejoins at one explicit QualityCheck node. PostgreSQL branches use independent
+sessions and the shared fenced root lease; SQLite is intentionally sequential
+because it is a disposable/test backend, not the concurrent worker authority.
+
+QualityCheck normalises `evidence_missing`, `fact_conflict`,
+`schema_invalid`, `instructional_mismatch`, `citation_mismatch` and
+`safety_violation`. Defect routing is deterministic, rework is bounded by the
+definition, and a repeated or safety defect blocks the root. Every rework keeps
+its previous evidence/artifact lineage rather than overwriting it.
+
+### Provider, Budget And Approval Policy
+
+For `real` roots, Spark is the requested primary chain and DeepSeek is an
+explicit real fallback. Every fallback starts a new durable provider call and
+stream attempt. A `trace.provider_switch.replace_draft=true` event tells the
+client to discard the failed draft; text from two providers is never joined.
+
+Root, node and provider usage is reserved and settled through the durable
+budget ledger. Exhaustion blocks before an action/artifact is committed.
+Provider policy exposes rate/circuit state without pretending an upstream call
+was exactly once. Model tools are evaluated by `PolicyEngine` as `ALLOW`,
+`ASK` or `DENY`; ports and Workflow Actions are never model tools. High-risk
+actions and unknown provider outcomes create a durable approval record and
+audit fact before a user decision can requeue work.
+
+### Recovery, Metrics And Legacy Boundary
+
+Pause/resume only requeues a compatible checkpoint. A version mismatch is
+`migratable` only when an explicit checkpoint migration is registered and
+persisted; otherwise it is incompatible. Recovery adopts incomplete action
+steps and active/staging artifacts by durable identity, preventing duplicate
+resource activation after a worker crash.
+
+`GET /workflow-runs/{id}/metrics` reports root statuses, provider outcomes,
+unknown calls, outbox lag, trace count and audit count without prompts,
+reasoning or model text. `workflow_approvals` and `workflow_audit_logs` are
+durable control-plane facts. Production has one RuntimeEngine, StateMachine,
+PostgreSQL, `workflow_events`, SkillExecutor and typed collaboration medium;
+legacy `RunRegistry`, direct Skill execution, old Harness/graphs and duplicate
+SSE serializers are not production authorities.
