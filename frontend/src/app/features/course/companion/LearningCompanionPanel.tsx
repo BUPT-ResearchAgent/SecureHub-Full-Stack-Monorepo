@@ -5,8 +5,6 @@ import { useEvidence } from '@/app/components/EvidenceDrawer';
 import { cn } from '@/app/components/ui/utils';
 import { useAgentTraceDispatch } from '@/app/features/agents/store';
 import { analyzeImage } from '@/lib/api';
-import { isMockMode } from '@/lib/mock';
-import { getMockEvidenceForCourse } from '@/lib/mock/courses.mock';
 import { useRafTokenBuffer } from '@/lib/raf-token-buffer';
 import type { AgentRunDTO } from '@/lib/sse.types';
 import {
@@ -15,7 +13,9 @@ import {
   type WorkflowRunStartResponse,
 } from '@/lib/workflow-run.types';
 import type { CourseCatalogItem } from '../catalog/courseCatalog.types';
-import { streamPersonaChat } from '../api';
+import { startCourseTask } from '../api';
+import { useCourseDispatch, useCourseState } from '../store';
+import { createCourseTaskLifecycle } from '../workflow/courseTaskLifecycle';
 import { CompanionComposer } from './CompanionComposer';
 import { CompanionMessageList } from './CompanionMessageList';
 import { getCompanionPreset } from './companionPresets';
@@ -36,29 +36,30 @@ function splitTokens(content: string): string[] {
 
 export function LearningCompanionPanel({
   course,
-  onMockWorkflowRun,
-  onExternalWorkflowBegin,
   onWorkflowTrace,
   onWorkflowStart,
   onWorkflowEvent,
   onShowWorkflow,
   onImageWorkflowRun,
+  presenterMode = false,
   workflowCollapsed,
   className,
 }: {
   course: CourseCatalogItem;
-  onMockWorkflowRun: () => void;
-  onExternalWorkflowBegin: () => void;
   onWorkflowTrace: (run: AgentRunDTO) => void;
   onWorkflowStart: (start: WorkflowRunStartResponse) => void;
   onWorkflowEvent: (event: WorkflowEvent) => void;
   /** Chat-first：右侧编排图折叠时，header 显示「显示编排图」入口。 */
   onShowWorkflow?: () => void;
   onImageWorkflowRun?: () => void;
+  /** Fixtures are only available when CourseStudy explicitly enables PresenterMode. */
+  presenterMode?: boolean;
   workflowCollapsed?: boolean;
   className?: string;
 }) {
   const preset = useMemo(() => getCompanionPreset(course), [course]);
+  const { taskContext } = useCourseState();
+  const courseDispatch = useCourseDispatch();
   const [draft, setDraft] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
   const evidence = useEvidence();
@@ -144,21 +145,6 @@ export function LearningCompanionPanel({
       }, startAt + index * 140);
       timersRef.current.push(timer);
     });
-  };
-
-  const runMockAnswer = (assistantId: string) => {
-    timersRef.current.forEach((timer) => window.clearTimeout(timer));
-    timersRef.current = [];
-    onMockWorkflowRun();
-
-    const courseEvidence = getMockEvidenceForCourse(course.id);
-    const evidenceTimer = window.setTimeout(() => {
-      evidence.pushEvidence(courseEvidence);
-      updateAssistant(assistantId, (message) => ({ ...message, evidence: courseEvidence }));
-    }, 1400);
-    timersRef.current.push(evidenceTimer);
-
-    streamAssistantText(assistantId, preset.mockAnswer);
   };
 
   const runImageAnswer = (assistantId: string, imageAttachments: CompanionAttachment[]) => {
@@ -250,13 +236,11 @@ export function LearningCompanionPanel({
       return;
     }
 
-    if (isMockMode()) {
-      runMockAnswer(assistantId);
-      return;
-    }
-
-    onExternalWorkflowBegin();
-    streamCancelRef.current = streamPersonaChat(userId, question, [], {
+    streamCancelRef.current = startCourseTask({
+      intent: 'build_persona',
+      context: taskContext,
+      payload: { message: question, history: [] },
+    }, createCourseTaskLifecycle('build_persona', courseDispatch, {
       onWorkflowStart,
       onWorkflowEvent(event) {
         onWorkflowEvent(event);
@@ -294,7 +278,7 @@ export function LearningCompanionPanel({
           content: error.message || '学习助手暂时无法完成本次回答。',
         }));
       },
-    });
+    }), { mode: presenterMode ? 'fixture' : 'real' });
   };
 
   const stop = () => {

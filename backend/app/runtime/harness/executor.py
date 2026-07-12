@@ -161,6 +161,7 @@ class SkillExecutor:
                 lease_epoch=context.lease_epoch,
                 response_ref={
                     "parse_category": category,
+                    "validation_errors": self._validation_error_summary(exc),
                     "content_length": len(raw_text),
                     "response_digest": hashlib.sha256(raw_text.encode("utf-8")).hexdigest(),
                 },
@@ -449,6 +450,19 @@ class SkillExecutor:
         if isinstance(exc, TypeError):
             return "non_object_json"
         return "invalid_payload"
+
+    @staticmethod
+    def _validation_error_summary(exc: BaseException) -> list[dict[str, str]]:
+        """Keep field-level schema diagnostics without retaining model output."""
+        if not isinstance(exc, ValidationError):
+            return []
+        return [
+            {
+                "location": ".".join(str(part) for part in error.get("loc", ())),
+                "type": str(error.get("type", "validation_error")),
+            }
+            for error in exc.errors(include_url=False)
+        ]
 
     @staticmethod
     def _assert_safe_text(text: str, *, boundary: str) -> None:

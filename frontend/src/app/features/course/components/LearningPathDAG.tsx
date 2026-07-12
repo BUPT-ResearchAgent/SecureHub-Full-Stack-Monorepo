@@ -1,50 +1,73 @@
-// Status: partial-real
-// 4-B-3 升级：从单条路径升级为「3 候选路径 + 难度热力 + 导师标注 + 动态重规划 + 资源推送时间轴」。
-// 入口处仍保持向后兼容（仍可通过 store.path 显示原有数据）。
+// Status: real
 
-import { useMemo, useState } from 'react';
+import { Network, Route } from 'lucide-react';
 import { Card, Tag } from '@/app/components/PageShell';
-import { useCourseState } from '../store';
-import { CandidatePathSelector } from '../path/CandidatePathSelector';
-import { CandidatePathGraph } from '../path/CandidatePathGraph';
-import { PathReplanAnimation } from '../path/PathReplanAnimation';
-import { PushTimeline } from '../path/PushTimeline';
-import { buildCandidatePaths } from '@/lib/mock/learning-path.mock';
+import { useCourseDispatch, useCourseState } from '../store';
 
 export interface LearningPathDAGProps {
   courseId?: string;
 }
 
+const statusTone = {
+  locked: 'amber',
+  ready: 'blue',
+  active: 'green',
+  done: 'green',
+} as const;
+
+/** Displays only the durable course_plan_v1 projection stored for this course. */
 export function LearningPathDAG({ courseId }: LearningPathDAGProps) {
-  const { path } = useCourseState();
-  const candidatePaths = useMemo(() => buildCandidatePaths(), []);
-  const [selectedId, setSelectedId] = useState<string>(candidatePaths[0].id);
+  const { path, taskContext } = useCourseState();
+  const dispatch = useCourseDispatch();
 
-  const selectedPath = candidatePaths.find((p) => p.id === selectedId) ?? candidatePaths[0];
-
-  return (
-    <div className="space-y-4">
-      <Card
-        title="学习路径图谱"
-        subtitle={`当前课程：${courseId ?? path?.courseId ?? 'Web 安全基础'} · AI 为你准备了 3 条候选路径`}
-      >
-        <CandidatePathSelector
-          paths={candidatePaths}
-          selectedId={selectedId}
-          onSelect={(id) => setSelectedId(id)}
-        />
-        <div className="mt-4">
-          <CandidatePathGraph path={selectedPath} />
-        </div>
-        <div className="mt-3 flex flex-wrap gap-2">
-          <Tag tone="blue">共 {selectedPath.nodes.length} 个节点</Tag>
-          <Tag tone="green">推荐给：{selectedPath.recommendedForPersona.join(' / ')}</Tag>
+  if (!path) {
+    return (
+      <Card title="学习路径图谱" subtitle={`当前课程：${courseId ?? taskContext.courseId}`}>
+        <div className="flex min-h-52 flex-col items-center justify-center gap-3 rounded-lg border border-dashed border-slate-200 bg-slate-50 px-4 text-center text-sm text-slate-500">
+          <Network className="h-6 w-6 text-slate-400" />
+          <p>尚未生成可恢复的学习路径。</p>
+          <p className="text-xs">请在课程入口创建路径任务；完成后会从 durable root 投影到这里。</p>
         </div>
       </Card>
+    );
+  }
 
-      <PathReplanAnimation />
-
-      <PushTimeline />
-    </div>
+  return (
+    <Card title="学习路径图谱" subtitle={`当前课程：${courseId ?? path.courseId}`}>
+      <div className="space-y-3">
+        {path.nodes.map((node, index) => {
+          const prerequisites = path.edges
+            .filter((edge) => edge.target === node.id)
+            .map((edge) => path.nodes.find((candidate) => candidate.id === edge.source)?.label ?? edge.source);
+          return (
+            <button
+              key={node.id}
+              type="button"
+              onClick={() => dispatch({ type: 'setCurrentKp', kpId: node.id })}
+              className={`w-full rounded-lg border p-3 text-left transition-colors ${
+                node.id === taskContext.kpId
+                  ? 'border-brand-blue-300 bg-brand-blue-50'
+                  : 'border-slate-200 bg-white hover:border-brand-blue-200 hover:bg-slate-50'
+              }`}
+            >
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="inline-flex items-center gap-2 text-sm font-medium text-slate-900">
+                  <Route className="h-4 w-4 text-brand-blue-600" />
+                  {index + 1}. {node.label}
+                </span>
+                <Tag tone={statusTone[node.status]}>{node.status}</Tag>
+              </div>
+              {prerequisites.length > 0 && (
+                <p className="mt-2 text-xs text-slate-500">先修：{prerequisites.join(' / ')}</p>
+              )}
+            </button>
+          );
+        })}
+      </div>
+      <div className="mt-4 flex flex-wrap gap-2">
+        <Tag tone="blue">真实节点 {path.nodes.length}</Tag>
+        <Tag tone="green">先修边 {path.edges.length}</Tag>
+      </div>
+    </Card>
   );
 }

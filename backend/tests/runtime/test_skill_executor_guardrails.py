@@ -7,7 +7,7 @@ from __future__ import annotations
 from uuid import uuid4
 
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from app.runtime.contracts import ErrorCode, ExecutionMode
 from app.runtime.harness.contracts import SkillDefinition
@@ -181,3 +181,15 @@ async def test_observed_empty_provider_stream_is_completed_not_unknown() -> None
     assert exc_info.value.code == ErrorCode.PROVIDER_UNAVAILABLE
     assert calls.completed[0]["outcome"] == "unavailable"
     assert calls.unknown == []
+
+
+def test_strict_parse_diagnostic_is_field_only_and_does_not_retain_input() -> None:
+    try:
+        _Output.model_validate({"answer": 7})
+    except ValidationError as exc:
+        summary = SkillExecutor._validation_error_summary(exc)
+    else:  # pragma: no cover - documents the expected strict Pydantic contract.
+        raise AssertionError("invalid provider payload unexpectedly validated")
+
+    assert summary == [{"location": "answer", "type": "string_type"}]
+    assert "7" not in str(summary)

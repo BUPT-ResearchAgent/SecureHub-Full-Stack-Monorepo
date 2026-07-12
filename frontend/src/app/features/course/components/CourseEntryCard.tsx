@@ -1,11 +1,62 @@
+import { useState } from 'react';
 import { BookOpen, Play, ShieldCheck } from 'lucide-react';
 import { Card, Tag } from '@/app/components/PageShell';
+import { ErrorState } from '@/app/components/StateView';
+import { learningPathFromWorkflowStatus, startCourseTask } from '../api';
+import { useCourseDispatch, useCourseState } from '../store';
+import { createCourseTaskLifecycle } from '../workflow/courseTaskLifecycle';
 
 export interface CourseEntryCardProps {
   courseId?: string;
 }
 
 export function CourseEntryCard({ courseId = 'course_websec' }: CourseEntryCardProps) {
+  const { taskContext } = useCourseState();
+  const dispatch = useCourseDispatch();
+  const [planning, setPlanning] = useState(false);
+  const [error, setError] = useState<string>();
+
+  const planCourse = () => {
+    if (planning) return;
+    setPlanning(true);
+    setError(undefined);
+    startCourseTask({
+      intent: 'plan_course',
+      context: taskContext,
+      payload: { targetNodeId: taskContext.kpId, depth: 3 },
+    }, createCourseTaskLifecycle('plan_course', dispatch, {
+      onWorkflowTerminal(status) {
+        if (status.status !== 'succeeded') {
+          setPlanning(false);
+          setError(status.error?.message ?? `学习路径任务终态为 ${status.status}`);
+          return;
+        }
+        try {
+          const path = learningPathFromWorkflowStatus(status, taskContext.courseId);
+          dispatch({ type: 'setPath', path });
+          dispatch({
+            type: 'setTaskContext',
+            context: {
+              ...taskContext,
+              currentPathNodeIds: path.nodes
+                .filter((node) => node.status === 'active' || node.status === 'done')
+                .map((node) => node.id),
+            },
+          });
+        } catch (cause) {
+          setError(cause instanceof Error ? cause.message : '学习路径结果映射失败');
+        } finally {
+          setPlanning(false);
+        }
+      },
+      onError(workflowError) {
+        if (workflowError.recoverable) return;
+        setPlanning(false);
+        setError(workflowError.message);
+      },
+    }));
+  };
+
   return (
     <div className="space-y-5">
       <Card title="Web 安全基础" subtitle={`课程 ID：${courseId}`}>
@@ -31,6 +82,19 @@ export function CourseEntryCard({ courseId = 'course_websec' }: CourseEntryCardP
           <Tag tone="blue">流式进度</Tag>
           <Tag tone="amber">证据检索门槛</Tag>
         </div>
+        <div className="mt-4 flex flex-wrap items-center gap-3">
+          <button
+            type="button"
+            onClick={planCourse}
+            disabled={planning}
+            className="inline-flex items-center gap-2 rounded-lg bg-brand-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-brand-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            <Play className="h-4 w-4" />
+            {planning ? '正在规划路径…' : '生成个性化路径'}
+          </button>
+          <span className="text-xs text-slate-500">会创建独立 durable root，不复用对话或资源任务。</span>
+        </div>
+        {error && <div className="mt-3"><ErrorState message={error} onRetry={planCourse} /></div>}
       </Card>
     </div>
   );

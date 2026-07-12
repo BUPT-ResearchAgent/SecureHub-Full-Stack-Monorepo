@@ -7,8 +7,9 @@ import { ConversationPane } from '@/app/features/chat/components/ConversationPan
 import type { ChatAgent, ChatMessage, ChatSession } from '@/app/features/chat/types';
 import { useRafTokenBuffer } from '@/lib/raf-token-buffer';
 import { isWorkflowDraftReplacement } from '@/lib/workflow-run.types';
-import { streamTutorAsk } from '../api';
-import { useCourseState } from '../store';
+import { startCourseTask } from '../api';
+import { useCourseDispatch, useCourseState } from '../store';
+import { createCourseTaskLifecycle } from '../workflow/courseTaskLifecycle';
 
 const tutorAgent: ChatAgent = {
   id: 'path',
@@ -52,7 +53,8 @@ function createSession(): ChatSession {
 }
 
 export function TutorDialog() {
-  const { currentKpId } = useCourseState();
+  const { taskContext } = useCourseState();
+  const courseDispatch = useCourseDispatch();
   const evidence = useEvidence();
   const traceDispatch = useAgentTraceDispatch();
   const cancelRef = useRef<() => void>();
@@ -96,12 +98,11 @@ export function TutorDialog() {
       updatedAt: new Date().toISOString(),
     }));
 
-    cancelRef.current = streamTutorAsk(
-      '00000000-0000-0000-0000-000000000001',
-      '00000000-0000-0000-0000-000000000101',
-      question,
-      currentKpId,
-      {
+    cancelRef.current = startCourseTask({
+      intent: 'ask_tutor',
+      context: taskContext,
+      payload: { question },
+    }, createCourseTaskLifecycle('ask_tutor', courseDispatch, {
         onWorkflowEvent(event) {
           if (!isWorkflowDraftReplacement(event)) return;
           tokenBuffer.cancel();
@@ -138,8 +139,7 @@ export function TutorDialog() {
             content: `${copy.title}：${error.message || copy.message}`,
           });
         },
-      },
-    );
+    }));
   };
 
   const resetSession = () => {
@@ -158,8 +158,8 @@ export function TutorDialog() {
   return (
     <div className="space-y-4">
       <div className="rounded-xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-900">
-        当前学习：SQL 注入基础
-        <span className="ml-2 text-xs text-blue-700">知识点 ID：{currentKpId}</span>
+        当前学习：当前课程知识点
+        <span className="ml-2 text-xs text-blue-700">知识点 ID：{taskContext.kpId}</span>
       </div>
       <ConversationPane
         agent={tutorAgent}

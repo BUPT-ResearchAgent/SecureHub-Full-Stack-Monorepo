@@ -5,13 +5,14 @@ import { ErrorBoundary } from '@/app/components/ErrorBoundary';
 import { LLMErrorState, LoadingState } from '@/app/components/StateView';
 import { useEvidence } from '@/app/components/EvidenceDrawer';
 import { useAgentTraceDispatch } from '@/app/features/agents/store';
-import { mockResources } from '../mockData';
+import { isMockMode } from '@/lib/mock';
 import { useRafTokenBuffer } from '@/lib/raf-token-buffer';
 import { isWorkflowDraftReplacement } from '@/lib/workflow-run.types';
 import { useCourseDispatch, useCourseState } from '../store';
 import type { ResourceItem, ResourceType } from '../types';
 import { resourceTypeIcon, resourceTypeLabel } from '../utils';
-import { streamResourceGeneration } from '../api';
+import { startCourseTask } from '../api';
+import { createCourseTaskLifecycle } from '../workflow/courseTaskLifecycle';
 import { DocResourceView } from './DocResourceView';
 import { LabResourceView } from './LabResourceView';
 import { MindmapResourceView } from './MindmapResourceView';
@@ -34,25 +35,17 @@ import type { ResourceVariantKind, ResourceVersion } from '@/lib/types/resource-
 const resourceTypes: ResourceType[] = ['doc', 'ppt', 'mindmap', 'quiz', 'lab', 'video', 'readings'];
 
 function fallbackResource(type: ResourceType): ResourceItem {
-  const fixture = mockResources.find((resource) => resource.type === type);
-  if (fixture) {
-    return {
-      ...fixture,
-      id: `fixture-preview-${type}`,
-      title: `${fixture.title}（演示 fixture 预览）`,
-    };
-  }
   return {
-    id: `fallback-${type}`,
+    id: `pending-${type}`,
     type,
-    title: `${resourceTypeLabel(type)}演示预览`,
+    title: `${resourceTypeLabel(type)}尚未生成`,
     status: 'idle',
-    content: '当前暂无真实 artifact，展示演示 fixture 预览；点击生成后会优先请求真实 / partial-real 资源接口。',
+    content: '尚未生成真实资源。请先创建资源生成任务，系统会在 Evidence、QualityCheck 与 Artifact 均完成后展示结果。',
     evidenceRefs: [],
   };
 }
 
-function initialResourceMap(source: ResourceItem[] = mockResources): Partial<Record<ResourceType, ResourceItem>> {
+function initialResourceMap(source: ResourceItem[] = []): Partial<Record<ResourceType, ResourceItem>> {
   return Object.fromEntries(source.map((resource) => [resource.type, resource])) as Partial<Record<ResourceType, ResourceItem>>;
 }
 
@@ -98,7 +91,7 @@ function ExtensionButton({
 
 export function ResourceTabs() {
   const navigate = useNavigate();
-  const { currentKpId, resources: storedResources } = useCourseState();
+  const { resources: storedResources, taskContext } = useCourseState();
   const courseDispatch = useCourseDispatch();
   const evidence = useEvidence();
   const traceDispatch = useAgentTraceDispatch();
@@ -114,6 +107,7 @@ export function ResourceTabs() {
   const [versionsByType, setVersionsByType] = useState<Partial<Record<ResourceType, ResourceVersion[]>>>({});
   const [activeVersionByType, setActiveVersionByType] = useState<Partial<Record<ResourceType, number>>>({});
   const [iterating, setIterating] = useState(false);
+  const presenterMode = isMockMode();
   const resource = resources[active] ?? fallbackResource(active);
   const isGenerating = resource.status === 'generating';
   const isReconnecting = resource.errorCode === 'sse_reconnecting';
@@ -166,15 +160,11 @@ export function ResourceTabs() {
       errorMessage: undefined,
     }));
 
-    cancelRef.current = streamResourceGeneration(
-      '00000000-0000-0000-0000-000000000101',
-      targetType,
-      {
-        user_id: '00000000-0000-0000-0000-000000000001',
-        kp_id: currentKpId,
-        options: { tone: 'case_driven' },
-      },
-      {
+    cancelRef.current = startCourseTask({
+      intent: 'generate_resource',
+      context: taskContext,
+      payload: { resourceType: targetType, options: { tone: 'case_driven' } },
+    }, createCourseTaskLifecycle('generate_resource', courseDispatch, {
         onWorkflowEvent(event) {
           if (!isWorkflowDraftReplacement(event)) return;
           tokenBuffer.cancel();
@@ -241,8 +231,7 @@ export function ResourceTabs() {
             errorMessage: error.message,
           }));
         },
-      },
-    );
+    }), { mode: presenterMode ? 'fixture' : 'real' });
   };
 
   useEffect(() => {
@@ -253,9 +242,10 @@ export function ResourceTabs() {
       setActive(targetType);
       window.setTimeout(() => startGeneration(targetType), 120);
     };
+    if (!presenterMode) return undefined;
     window.addEventListener('securehub-course-demo-stage', handleDemoStage);
     return () => window.removeEventListener('securehub-course-demo-stage', handleDemoStage);
-  });
+  }, [presenterMode]);
 
   const renderResource = () => {
     if (active === 'doc') return <DocResourceView resource={resource} />;
@@ -275,7 +265,7 @@ export function ResourceTabs() {
             <p className="text-xs font-medium text-brand-blue-700">学完 SQL 注入后的中枢延展示范</p>
             <h3 className="mt-1 text-sm font-semibold text-slate-900">同一画像驱动 Research / Fund / Job / Competition 串场</h3>
             <p className="mt-1 max-w-3xl text-xs leading-relaxed text-slate-500">
-              这些入口只跳转到现有页面或 mock 面板，用于演示课程画像如何延展到科研、就业、竞赛和写作选题；不代表已接入真实 Fund / Job / Competition 数据。
+              这些入口只跳转到现有页面，用于演示课程画像如何延展到科研、就业、竞赛和写作选题；不代表课程工作流已替代这些模块各自的数据链路。
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -296,8 +286,7 @@ export function ResourceTabs() {
       </div>
 
       <div className="rounded-xl border border-amber-200 bg-amber-50/70 px-4 py-3 text-sm text-amber-800">
-        当前资源工作台覆盖 doc / ppt / mindmap / quiz / lab / readings / video_script（前端以 video 类型承载）7 类展示。
-        未触发真实 artifact 时使用演示 fixture 预览，不代表后端已完成真实生成。
+        当前资源工作台支持 doc / ppt / mindmap / quiz / lab / readings / video 7 类真实 artifact。未完成 Artifact Saga 时不会显示为已生成。
       </div>
 
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -337,7 +326,7 @@ export function ResourceTabs() {
         <LLMErrorState code={resource.errorCode} message={resource.errorMessage ?? '资源生成失败'} onRetry={() => startGeneration()} />
       )}
 
-      {resource.status === 'ready' && !variantSelections[active] && (
+      {presenterMode && resource.status === 'ready' && !variantSelections[active] && (
         <ResourceVariants
           variants={getResourceVariants(active)}
           selectedKind={variantSelections[active]}
@@ -355,7 +344,7 @@ export function ResourceTabs() {
       <div className="relative">
         <div className="absolute right-4 top-4 z-10 flex items-center gap-2">
           <ResourceQualityBadge score={resource.qualityScore} />
-          {resource.status === 'ready' && (
+          {presenterMode && resource.status === 'ready' && (
             <>
               <button
                 type="button"
@@ -380,11 +369,11 @@ export function ResourceTabs() {
         </ErrorBoundary>
       </div>
 
-      {debateOpen && resource.status === 'ready' && (
+      {presenterMode && debateOpen && resource.status === 'ready' && (
         <AgentDebatePanel debate={buildAgentDebate(active)} autoPlay />
       )}
 
-      {resource.status === 'ready' && variantSelections[active] && (
+      {presenterMode && resource.status === 'ready' && variantSelections[active] && (
         <ResourceIterationCard
           versions={versionsByType[active] ?? buildResourceVersions(resource.content)}
           activeVersion={activeVersionByType[active] ?? 1}
@@ -420,11 +409,13 @@ export function ResourceTabs() {
         />
       )}
 
-      <ResourceReplayDrawer
-        open={replayOpen}
-        onClose={() => setReplayOpen(false)}
-        timeline={buildReplayTimeline(resource.id, active)}
-      />
+      {presenterMode && (
+        <ResourceReplayDrawer
+          open={replayOpen}
+          onClose={() => setReplayOpen(false)}
+          timeline={buildReplayTimeline(resource.id, active)}
+        />
+      )}
     </div>
   );
 }

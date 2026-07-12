@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { motion } from 'motion/react';
 import { X } from 'lucide-react';
-import { isMockMode } from '@/lib/mock';
 import type { CourseCatalogItem } from '../catalog/courseCatalog.types';
 import { LearningCompanionPanel } from '../companion/LearningCompanionPanel';
 import { AgentWorkflowCanvas } from '../workflow/AgentWorkflowCanvas';
@@ -11,10 +10,14 @@ import { useWorkflowRun } from '../workflow/useWorkflowRun';
 import { workflowById } from '../workflow/workflows';
 import type { WorkflowDefinition } from '../workflow/types';
 import { ResourceShowcaseTray } from './ResourceShowcaseTray';
-import { ScreenplayCueDeck } from '../resources/ScreenplayCueDeck';
-import { getScreenplay } from '@/lib/mock/resource-production.mock';
 
-export function CourseDialogueMode({ course }: { course: CourseCatalogItem }) {
+export function CourseDialogueMode({
+  course,
+  presenterMode = false,
+}: {
+  course: CourseCatalogItem;
+  presenterMode?: boolean;
+}) {
   const [workflowId, setWorkflowId] = useState<WorkflowDefinition['id']>(course.defaultWorkflowId);
 
   useEffect(() => {
@@ -23,7 +26,7 @@ export function CourseDialogueMode({ course }: { course: CourseCatalogItem }) {
 
   const workflow = useMemo(() => workflowById[workflowId], [workflowId]);
   const workflowRun = useWorkflowRun(workflow);
-  const mockControlsEnabled = isMockMode();
+  const mockControlsEnabled = presenterMode;
   const { collapsed, mode, toggle, setCollapsed } = useWorkflowPanelCollapsed();
   const [overlayOpen, setOverlayOpen] = useState(false);
   const [autoRunWorkflowId, setAutoRunWorkflowId] = useState<WorkflowDefinition['id'] | null>(null);
@@ -57,9 +60,12 @@ export function CourseDialogueMode({ course }: { course: CourseCatalogItem }) {
 
   const runImageAnalysisWorkflow = useCallback(() => {
     setWorkflowId('image_analysis');
-    setAutoRunWorkflowId('image_analysis');
+    // Image analysis has its own backend task contract. The visual mock replay
+    // is available only in explicit PresenterMode and never supplies real UI
+    // trace data.
+    if (presenterMode) setAutoRunWorkflowId('image_analysis');
     showWorkflow();
-  }, [showWorkflow]);
+  }, [presenterMode, showWorkflow]);
 
   const canvas = (
     <AgentWorkflowCanvas
@@ -94,14 +100,13 @@ export function CourseDialogueMode({ course }: { course: CourseCatalogItem }) {
           <LearningCompanionPanel
             className="h-full min-h-0"
             course={course}
-            onMockWorkflowRun={workflowRun.run}
-            onExternalWorkflowBegin={workflowRun.beginExternalRun}
             onWorkflowTrace={workflowRun.applyTrace}
             onWorkflowStart={workflowRun.applyWorkflowStart}
             onWorkflowEvent={workflowRun.applyWorkflowEvent}
             onShowWorkflow={showWorkflow}
             onImageWorkflowRun={runImageAnalysisWorkflow}
             workflowCollapsed={collapsed}
+            presenterMode={presenterMode}
           />
 
           {/* 编排图列：脱离文档流，避免影响对话栏居中和整体高度。 */}
@@ -124,21 +129,14 @@ export function CourseDialogueMode({ course }: { course: CourseCatalogItem }) {
         <LearningCompanionPanel
           className="min-h-0 flex-1"
           course={course}
-          onMockWorkflowRun={workflowRun.run}
-          onExternalWorkflowBegin={workflowRun.beginExternalRun}
           onWorkflowTrace={workflowRun.applyTrace}
           onWorkflowStart={workflowRun.applyWorkflowStart}
           onWorkflowEvent={workflowRun.applyWorkflowEvent}
           onShowWorkflow={showWorkflow}
           onImageWorkflowRun={runImageAnalysisWorkflow}
           workflowCollapsed={!overlayOpen}
+          presenterMode={presenterMode}
         />
-      )}
-
-      {workflowRun.state.phase === 'running' && (
-        <div className="pointer-events-none absolute left-1/2 top-4 z-20 w-[420px] -translate-x-1/2">
-          <ScreenplayCueDeck screenplay={getScreenplay('doc')} active />
-        </div>
       )}
 
       <ResourceShowcaseTray runState={workflowRun.state} />

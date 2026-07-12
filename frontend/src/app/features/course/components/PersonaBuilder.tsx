@@ -14,10 +14,10 @@ import { useEvidence } from '@/app/components/EvidenceDrawer';
 import { useAgentTraceDispatch } from '@/app/features/agents/store';
 import { isMockMode } from '@/lib/mock';
 import { isWorkflowDraftReplacement } from '@/lib/workflow-run.types';
-import { streamPersonaChat } from '../api';
-import { mockPersona } from '../mockData';
-import { useCourseDispatch } from '../store';
+import { learningPersonaFromWorkflowStatus, startCourseTask } from '../api';
+import { useCourseDispatch, useCourseState } from '../store';
 import type { LearningPersona, PersonaDimensionKey } from '../types';
+import { createCourseTaskLifecycle } from '../workflow/courseTaskLifecycle';
 import { PersonaTreeCanvas } from '../persona/PersonaTreeCanvas';
 import { PersonaNarrative } from '../persona/PersonaNarrative';
 import { PersonaDimensionDrawer } from '../persona/PersonaDimensionDrawer';
@@ -109,10 +109,11 @@ function buildPersona(
   };
 }
 
-export function PersonaBuilder({ userId = mockPersona.userId }: PersonaBuilderProps) {
+export function PersonaBuilder({ userId = '00000000-0000-0000-0000-000000000001' }: PersonaBuilderProps) {
   const evidence = useEvidence();
   const traceDispatch = useAgentTraceDispatch();
   const courseDispatch = useCourseDispatch();
+  const { taskContext } = useCourseState();
   const cancelRef = useRef<() => void>();
   const [input, setInput] = useState('我学过一点 Python，想入门 Web 安全');
   const [turns, setTurns] = useState<DialogueTurn[]>([initialTurn]);
@@ -233,7 +234,11 @@ export function PersonaBuilder({ userId = mockPersona.userId }: PersonaBuilderPr
     ]);
 
     cancelRef.current?.();
-    cancelRef.current = streamPersonaChat(userId, message, [], {
+    cancelRef.current = startCourseTask({
+      intent: 'build_persona',
+      context: { ...taskContext, userId },
+      payload: { message, history: [] },
+    }, createCourseTaskLifecycle('build_persona', courseDispatch, {
       onWorkflowEvent(event) {
         if (!isWorkflowDraftReplacement(event)) return;
         setTurns((current) =>
@@ -270,6 +275,19 @@ export function PersonaBuilder({ userId = mockPersona.userId }: PersonaBuilderPr
           if (pick) setChallengeQueue((current) => [...current, pick]);
         }
       },
+      onWorkflowTerminal(status) {
+        if (status.status !== 'succeeded') return;
+        try {
+          const persona = learningPersonaFromWorkflowStatus(status, userId);
+          setIdentified(persona.dimensions);
+          courseDispatch({ type: 'setPersona', persona });
+        } catch (error) {
+          setError({
+            code: 'WORKFLOW_OUTPUT_INVALID',
+            message: error instanceof Error ? error.message : '画像结果映射失败',
+          });
+        }
+      },
       onError(event) {
         if (event.code === 'sse_reconnecting') {
           setError({ code: event.code, message: event.message });
@@ -278,7 +296,7 @@ export function PersonaBuilder({ userId = mockPersona.userId }: PersonaBuilderPr
         setStreaming(false);
         setError({ code: event.code, message: event.message });
       },
-    });
+    }));
   };
 
   const finishChallenge = (answer: string) => {

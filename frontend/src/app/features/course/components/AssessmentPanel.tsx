@@ -6,22 +6,25 @@
 //   3) 弹 toast「正在更新能力维度 …」
 //   4) 1.5s 后跳转 /profile?tab=persona&highlight=<dim>，让雷达图脉冲
 //
-// 真后端没准备前由 replayAssessment() 兜底，mock 模式下整段闭环 4 秒内跑完。
+// 评估提交只观察 durable assessment_update_v1 root；本组件不会把失败
+// 降级为前端评分或 fixture completion。
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
-import { Activity, Award, CheckCircle2, Sparkles } from 'lucide-react';
+import { Activity, CheckCircle2, Sparkles } from 'lucide-react';
 import { toast } from 'sonner';
 import { Card } from '@/app/components/PageShell';
 import { ErrorState } from '@/app/components/StateView';
 import { CapabilityRadarCard } from '@/app/features/profile/components/CapabilityRadarCard';
 import { useSelectedCourse } from '@/app/features/course/catalog/useSelectedCourse';
 import { getMockQuizItemsForCourse } from '@/lib/mock/courses.mock';
+import { isMockMode } from '@/lib/mock';
 import { normalizePersonaDimension } from '@/lib/persona-dimension-map';
 import type { CapabilityDTO } from '@/lib/sse.types';
-import { runAssessment } from '../api';
+import { assessmentReportFromWorkflowStatus, startCourseTask } from '../api';
 import { useCourseDispatch, useCourseState } from '../store';
+import { createCourseTaskLifecycle } from '../workflow/courseTaskLifecycle';
 import { ImplicitAssessmentCard } from '../assessment/ImplicitAssessmentCard';
 import { WeaknessDiagnosisDrawer } from '../assessment/WeaknessDiagnosisDrawer';
 import { PeerComparisonCard } from '../assessment/PeerComparisonCard';
@@ -34,9 +37,6 @@ import {
 } from '@/lib/mock/assessment-product.mock';
 import { Stethoscope } from 'lucide-react';
 
-const userId = '00000000-0000-0000-0000-000000000001';
-const courseId = '00000000-0000-0000-0000-000000000101';
-
 type LoopEvent = {
   id: string;
   tone: 'event' | 'gate' | 'capability' | 'navigate';
@@ -45,7 +45,7 @@ type LoopEvent = {
 
 export function AssessmentPanel() {
   const navigate = useNavigate();
-  const { assessment, currentKpId } = useCourseState();
+  const { assessment, taskContext } = useCourseState();
   const dispatch = useCourseDispatch();
   const { course } = useSelectedCourse();
   const questions = useMemo(
@@ -64,18 +64,14 @@ export function AssessmentPanel() {
   const [error, setError] = useState('');
   const [events, setEvents] = useState<LoopEvent[]>([]);
   const [animatedScore, setAnimatedScore] = useState(0);
-  const [xpBurst, setXpBurst] = useState(false);
-  const [badgeReveal, setBadgeReveal] = useState(false);
   const [diagnosisOpen, setDiagnosisOpen] = useState(false);
-  const timersRef = useRef<number[]>([]);
+  const presenterMode = isMockMode();
 
   // 切换课程时清掉旧答题状态。
   useEffect(() => {
     setAnswers({});
     setEvents([]);
     setAnimatedScore(0);
-    setXpBurst(false);
-    setBadgeReveal(false);
   }, [course.id]);
 
   const selectedCapabilities = useMemo<CapabilityDTO[]>(
@@ -101,104 +97,64 @@ export function AssessmentPanel() {
     return () => window.cancelAnimationFrame(raf);
   }, [assessment]);
 
-  // 组件卸载时清理 setTimeout 链，避免离开页面后还在跳转。
-  useEffect(() => () => {
-    timersRef.current.forEach((timer) => window.clearTimeout(timer));
-  }, []);
-
   const pushEvent = (event: LoopEvent) => {
     setEvents((current) => [...current, event]);
   };
 
   const submit = async () => {
     if (loading) return;
-    timersRef.current.forEach((timer) => window.clearTimeout(timer));
-    timersRef.current = [];
     setLoading(true);
     setError('');
     setEvents([]);
     setAnimatedScore(0);
-    setXpBurst(false);
-    setBadgeReveal(false);
 
-    // 1. 评分前先把每题的判分事件流出去（更像「学习日志」）。
-    const correctCount = questions.reduce((sum, question) => {
-      const picked = answers[question.id];
-      const ok = picked && picked === question.correct;
-      return sum + (ok ? 1 : 0);
-    }, 0);
-
-    questions.forEach((question, index) => {
-      const picked = answers[question.id];
-      const ok = picked && picked === question.correct;
-      const text = ok
-        ? `✅ 第 ${index + 1} 题答对，知识点「${question.kp}」掌握度 +5%`
-        : `⚠️ 第 ${index + 1} 题未答对，知识点「${question.kp}」需要再过一遍`;
-      const timer = window.setTimeout(() => {
-        pushEvent({ id: `event-${question.id}`, tone: 'event', text });
-      }, 320 + index * 260);
-      timersRef.current.push(timer);
-    });
-
-    try {
-      const report = await runAssessment(
-        userId,
-        courseId,
-        Object.entries(answers).map(([quiz_item_id, answer]) => ({
+    startCourseTask({
+      intent: 'run_assessment',
+      context: taskContext,
+      payload: {
+        answers: Object.entries(answers).map(([quiz_item_id, answer]) => ({
           quiz_item_id,
           answer,
-          kp_id: currentKpId,
+          kp_id: taskContext.kpId,
         })),
-      );
-      dispatch({ type: 'setAssessment', assessment: report });
-
-      // 2. evidence_floor 通过 → 3. 触发 outcome_evaluator.UpdateCapability
-      const firstDim = normalizePersonaDimension(report.updatedCapabilities?.[0]?.dimension) ?? 'Web 安全';
-      const gateTimer = window.setTimeout(() => {
+      },
+    }, createCourseTaskLifecycle('run_assessment', dispatch, {
+      onProgress(progress) {
         pushEvent({
-          id: 'gate-evidence',
-          tone: 'gate',
-          text: `🛡 evidence_floor 通过：本次答题命中 ${correctCount} 题，触发 outcome_evaluator.QualityCheck`,
+          id: `progress-${Date.now()}-${progress.node_name}`,
+          tone: progress.node_name === 'quality_check' ? 'gate' : 'event',
+          text: `${progress.node_name}：${progress.status}`,
         });
-      }, 1100);
-      timersRef.current.push(gateTimer);
-
-      const capabilityTimer = window.setTimeout(() => {
-        pushEvent({
-          id: 'capability-update',
-          tone: 'capability',
-          text: `🔄 outcome_evaluator.UpdateCapability：正在更新能力维度「${firstDim}」`,
-        });
-        toast.success(`正在更新能力维度 ${firstDim}…`, { duration: 1800 });
-        toast.success('+50 XP · 学习效果评估', { duration: 1600 });
-        setXpBurst(true);
-        if (report.score >= 0.8) setBadgeReveal(true);
-      }, 1800);
-      timersRef.current.push(capabilityTimer);
-
-      const xpTimer = window.setTimeout(() => setXpBurst(false), 3000);
-      const badgeTimer = window.setTimeout(() => setBadgeReveal(false), 3300);
-      timersRef.current.push(xpTimer, badgeTimer);
-
-      // 4. 1.5s 后跳到 /profile?tab=persona&highlight=<dim>。
-      const navigateTimer = window.setTimeout(() => {
-        pushEvent({
-          id: 'navigate',
-          tone: 'navigate',
-          text: `📡 评估闭环完成，跳转到个人画像并高亮「${firstDim}」`,
-        });
-      }, 2600);
-      timersRef.current.push(navigateTimer);
-
-      const finalTimer = window.setTimeout(() => {
-        navigate(`/profile?tab=persona&highlight=${encodeURIComponent(firstDim)}`);
-      }, 3400);
-      timersRef.current.push(finalTimer);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : '评估提交失败');
-    } finally {
-      setLoading(false);
-    }
+      },
+      onWorkflowTerminal(status) {
+        if (status.status !== 'succeeded') {
+          setLoading(false);
+          setError(status.error?.message ?? `评估任务终态为 ${status.status}`);
+          return;
+        }
+        try {
+          const report = assessmentReportFromWorkflowStatus(status);
+          dispatch({ type: 'setAssessment', assessment: report });
+          const firstDim = normalizePersonaDimension(report.updatedCapabilities?.[0]?.dimension) ?? 'Web 安全';
+          pushEvent({
+            id: `capability-${status.run_id}`,
+            tone: 'capability',
+            text: `已持久化能力维度「${firstDim}」，课程进度将据此更新。`,
+          });
+          toast.success(`能力维度 ${firstDim} 已更新`);
+          navigate(`/profile?tab=persona&highlight=${encodeURIComponent(firstDim)}`);
+        } catch (err) {
+          setError(err instanceof Error ? err.message : '评估结果映射失败');
+        } finally {
+          setLoading(false);
+        }
+      },
+      onError(workflowError) {
+        if (workflowError.recoverable) return;
+        setLoading(false);
+        setError(workflowError.message);
+      },
+    }));
   };
 
   const hasSubmitted = Boolean(assessment);
@@ -301,7 +257,7 @@ export function AssessmentPanel() {
           </div>
         </Card>
         <CapabilityRadarCard capabilities={selectedCapabilities} />
-        {hasSubmitted && (
+        {presenterMode && hasSubmitted && (
           <button
             type="button"
             onClick={() => setDiagnosisOpen(true)}
@@ -313,7 +269,7 @@ export function AssessmentPanel() {
         )}
       </div>
       </div>
-      {hasSubmitted && (
+      {presenterMode && hasSubmitted && (
         <>
           <ImplicitAssessmentCard
             assessment={buildImplicitAssessment(assessment?.score ?? 0)}
@@ -325,66 +281,13 @@ export function AssessmentPanel() {
           </div>
         </>
       )}
-      <WeaknessDiagnosisDrawer
-        diagnosis={buildWeaknessDiagnosis()}
-        open={diagnosisOpen}
-        onClose={() => setDiagnosisOpen(false)}
-      />
-      <AnimatePresence>
-        {xpBurst && (
-          <motion.div
-            initial={{ opacity: 0, y: 18, scale: 0.94 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 12, scale: 0.96 }}
-            transition={{ duration: 0.28, ease: 'easeOut' }}
-            className="fixed bottom-8 right-8 z-50 rounded-2xl border border-amber-200 bg-white px-4 py-3 text-sm font-semibold text-amber-700 shadow-2xl"
-          >
-            <Sparkles className="mr-1.5 inline h-4 w-4" />
-            +50 XP
-          </motion.div>
-        )}
-      </AnimatePresence>
-      <AnimatePresence>
-        {badgeReveal && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-40 grid place-items-center bg-slate-950/35 backdrop-blur-sm"
-          >
-            <div className="pointer-events-none absolute inset-0 overflow-hidden">
-              {Array.from({ length: 18 }, (_, index) => (
-                <motion.span
-                  key={index}
-                  initial={{ opacity: 0, y: -20, x: 0, rotate: 0 }}
-                  animate={{
-                    opacity: [0, 1, 0],
-                    y: [0, 180 + (index % 5) * 18],
-                    x: (index - 9) * 22,
-                    rotate: 160 + index * 18,
-                  }}
-                  transition={{ duration: 1.7, delay: index * 0.025, ease: 'easeOut' }}
-                  className="absolute left-1/2 top-1/3 h-2.5 w-2.5 rounded-sm bg-amber-300"
-                />
-              ))}
-            </div>
-            <motion.div
-              initial={{ y: 18, scale: 0.9 }}
-              animate={{ y: 0, scale: 1 }}
-              exit={{ y: 12, scale: 0.95 }}
-              transition={{ duration: 0.3, ease: 'easeOut' }}
-              className="relative w-[320px] rounded-3xl border border-amber-100 bg-white p-6 text-center shadow-2xl"
-            >
-              <div className="mx-auto grid h-16 w-16 place-items-center rounded-2xl bg-amber-50 text-amber-600">
-                <Award className="h-8 w-8" />
-              </div>
-              <p className="mt-4 text-xs font-medium text-amber-600">徽章解锁</p>
-              <h3 className="mt-1 text-xl font-semibold text-slate-950">满分荣耀</h3>
-              <p className="mt-2 text-sm text-slate-500">评估表现优秀，能力画像已回流更新。</p>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+      {presenterMode && (
+        <WeaknessDiagnosisDrawer
+          diagnosis={buildWeaknessDiagnosis()}
+          open={diagnosisOpen}
+          onClose={() => setDiagnosisOpen(false)}
+        />
+      )}
     </>
   );
 }
