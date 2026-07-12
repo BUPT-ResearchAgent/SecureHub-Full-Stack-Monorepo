@@ -142,6 +142,26 @@ export class WorkflowRunClient {
     return this.control(runId, 'retry', payload);
   }
 
+  /** Start one lineage-linked retry for an owned generated artifact. */
+  async retryResource(
+    resourceId: string,
+    payload: Record<string, unknown> = {},
+    options: WorkflowRunStartOptions = {},
+  ): Promise<WorkflowRunStartResponse> {
+    const idempotencyKey = options.idempotencyKey ?? createIdempotencyKey();
+    return this.requestJson<WorkflowRunStartResponse>(
+      `/api/v1/resources/${encodeURIComponent(resourceId)}/retry`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Idempotency-Key': idempotencyKey,
+        },
+        body: JSON.stringify(payload),
+      },
+    );
+  }
+
   async decideApproval(
     runId: string,
     approvalId: string,

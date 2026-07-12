@@ -155,6 +155,11 @@ def client() -> TestClient:
             {"user_id": UNTRUSTED_USER_ID, "kp_id": KP_ID, "type": "doc"},
             "resource_generate_v1",
         ),
+        (
+            "/api/v1/courses/course-websec/resources/generate-bundle",
+            {"kp_id": KP_ID},
+            "course_learning_full_v2",
+        ),
     ],
 )
 def test_streaming_product_paths_create_one_durable_root(

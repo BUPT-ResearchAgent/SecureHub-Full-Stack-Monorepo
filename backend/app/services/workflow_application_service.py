@@ -57,11 +57,17 @@ class WorkflowApplicationError(RuntimeError):
 
 def build_default_workflow_registry() -> WorkflowRegistry:
     from app.runtime.workflows.course_learning_full_v1 import COURSE_LEARNING_FULL_V1
+    from app.runtime.workflows.course_learning_full_v2 import COURSE_LEARNING_FULL_V2
     from app.runtime.workflows.product_workflows import PRODUCT_WORKFLOWS
     from app.runtime.workflows.resource_generate_v1 import RESOURCE_GENERATE_V1
 
     registry = WorkflowRegistry()
-    for definition in (RESOURCE_GENERATE_V1, COURSE_LEARNING_FULL_V1, *PRODUCT_WORKFLOWS):
+    for definition in (
+        RESOURCE_GENERATE_V1,
+        COURSE_LEARNING_FULL_V1,
+        COURSE_LEARNING_FULL_V2,
+        *PRODUCT_WORKFLOWS,
+    ):
         registry.register(definition)
     return registry
 
@@ -540,7 +546,7 @@ class WorkflowApplicationService:
             payload.setdefault("question", payload.get("query", "Tutor question"))
         elif workflow_name == "assessment_update_v1":
             payload.setdefault("answers", [])
-        elif workflow_name == "course_learning_full_v1":
+        elif workflow_name in {"course_learning_full_v1", "course_learning_full_v2"}:
             payload.setdefault("query", "Generate a parallel course resource pack")
         return payload
 

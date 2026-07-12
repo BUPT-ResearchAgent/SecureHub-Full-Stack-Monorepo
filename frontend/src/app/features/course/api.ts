@@ -34,6 +34,7 @@ import type {
 } from './types';
 
 const workflowRunClient = new WorkflowRunClient();
+const UUID_PATTERN = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i;
 
 export const PRODUCT_WORKFLOWS = {
   build_persona: 'profile_build_v1',
@@ -44,6 +45,18 @@ export const PRODUCT_WORKFLOWS = {
 } as const;
 
 export type CourseTaskRunMode = 'real' | 'fixture';
+
+export type CourseResourcePackOptions = {
+  query?: string;
+  options?: Record<string, unknown>;
+  mode?: CourseTaskRunMode;
+};
+
+export type CourseResourceRetryOptions = {
+  query?: string;
+  options?: Record<string, unknown>;
+  mode?: CourseTaskRunMode;
+};
 
 export class UnsupportedCourseTaskIntentError extends Error {
   readonly code = 'UNSUPPORTED_TASK_INTENT';
@@ -165,12 +178,21 @@ function startWorkflowStream(
   handlers: WorkflowProductHandlers,
   mode: CourseTaskRunMode = 'real',
 ): () => void {
+  return startWorkflowSubscription(
+    () => workflowRunClient.start({ ...request, mode }),
+    handlers,
+  );
+}
+
+function startWorkflowSubscription(
+  startRoot: () => Promise<WorkflowRunStartResponse>,
+  handlers: WorkflowProductHandlers,
+): () => void {
   let disposed = false;
   let subscription: WorkflowSubscription | undefined;
   let terminalReported = false;
 
-  void workflowRunClient
-    .start({ ...request, mode })
+  void startRoot()
     .then((start) => {
       if (disposed) return;
       handlers.onWorkflowStart?.(start);
@@ -239,6 +261,49 @@ export function startCourseTask(
   const intent = (command as { intent?: unknown }).intent;
   if (!isSupportedTaskIntent(intent)) throw new UnsupportedCourseTaskIntentError(intent);
   return startWorkflowStream(createCourseTaskRequest(command), handlers, options.mode ?? 'real');
+}
+
+/** Starts the additive v2 six-resource bundle without changing the five task intents. */
+export function startCourseResourcePack(
+  context: CourseTaskContext,
+  handlers: WorkflowProductHandlers,
+  options: CourseResourcePackOptions = {},
+): () => void {
+  const courseId = assertUuid(context.courseId, 'courseId');
+  const kpId = assertUuid(context.kpId, 'kpId');
+  return startWorkflowStream(
+    {
+      workflow: 'course_learning_full_v2',
+      user_id: context.userId,
+      course_id: courseId,
+      input: {
+        kp_id: kpId,
+        query: options.query ?? 'Generate the complete course resource pack',
+        options: options.options ?? {},
+      },
+    },
+    handlers,
+    options.mode ?? 'real',
+  );
+}
+
+/** Starts a distinct resource-only root linked to its owned parent artifact. */
+export function retryCourseResource(
+  resourceId: string,
+  handlers: WorkflowProductHandlers,
+  options: CourseResourceRetryOptions = {},
+): () => void {
+  if (!UUID_PATTERN.test(resourceId)) {
+    throw new WorkflowRunClientError('resourceId 必须是后端契约中的 UUID', { code: 'INVALID_RESOURCE_ID' });
+  }
+  return startWorkflowSubscription(
+    () => workflowRunClient.retryResource(resourceId, {
+      query: options.query,
+      options: options.options ?? {},
+      mode: options.mode ?? 'real',
+    }),
+    handlers,
+  );
 }
 
 function handlersInitialState(start: WorkflowRunStartResponse): WorkflowRunViewState {

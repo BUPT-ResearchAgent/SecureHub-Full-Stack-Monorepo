@@ -163,11 +163,17 @@ class WorkflowActionService:
         context: ExecutionContext,
     ) -> dict[str, Any]:
         """Persist each quality-approved branch as a distinct typed ArtifactRef."""
+        # v1 contains four branches; v2 adds mindmap and video.  Persist only
+        # producer nodes present in the recorded state so old v1 roots retain
+        # their exact four-artifact behaviour.
         resource_types = {
             "resource_doc": "doc",
             "resource_ppt": "ppt",
+            "resource_mindmap": "mindmap",
             "resource_quiz": "quiz",
             "resource_lab": "lab",
+            "resource_video": "video",
+            "resource_readings": "readings",
         }
         resources: list[dict[str, Any]] = []
         quality = state.get("quality_check") or {}

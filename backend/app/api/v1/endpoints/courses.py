@@ -41,6 +41,14 @@ class CourseSummary(BaseModel):
     description: str | None = None
 
 
+class CourseResourceBundleRequest(BaseModel):
+    kp_id: UUID
+    options: dict[str, Any] | None = None
+    mode: Literal["fixture", "real"] = "real"
+    provider: str | None = None
+    model: str | None = None
+
+
 _DEMO_COURSES: list[CourseSummary] = [
     CourseSummary(
         id="course-websec",
@@ -186,6 +194,37 @@ async def generate_resource(
             "resource_type": resource_type,
             "kp_id": str(payload.kp_id),
             "query": _option_query(options, f"Generate {resource_type} resource for {course_id}"),
+            "options": options,
+            "domain": "course_websec",
+        },
+        mode=payload.mode,
+        provider=payload.provider,
+        model=payload.model,
+        idempotency_key=idempotency_key,
+    )
+    return durable_sse_response(service, start, actor_user_id=current_user_id)
+
+
+@router.post("/courses/{course_id}/resources/generate-bundle")
+async def generate_resource_bundle(
+    course_id: str,
+    payload: CourseResourceBundleRequest,
+    request: Request,
+    current_user_id: CurrentUserDep,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> StreamingResponse:
+    """Create one v2 root for the default six-resource course bundle."""
+    canonical_course_id = _contract_course_id(course_id)
+    options = dict(payload.options or {})
+    service = _service(request)
+    start = await start_product_workflow(
+        service,
+        workflow="course_learning_full_v2",
+        actor_user_id=current_user_id,
+        course_id=canonical_course_id,
+        input_payload={
+            "kp_id": str(payload.kp_id),
+            "query": _option_query(options, f"Generate the complete course resource pack for {course_id}"),
             "options": options,
             "domain": "course_websec",
         },

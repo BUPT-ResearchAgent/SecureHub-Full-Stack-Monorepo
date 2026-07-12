@@ -11,7 +11,7 @@ import { isWorkflowDraftReplacement } from '@/lib/workflow-run.types';
 import { useCourseDispatch, useCourseState } from '../store';
 import type { ResourceItem, ResourceType } from '../types';
 import { resourceTypeIcon, resourceTypeLabel } from '../utils';
-import { startCourseTask } from '../api';
+import { retryCourseResource, startCourseResourcePack, startCourseTask } from '../api';
 import { createCourseTaskLifecycle } from '../workflow/courseTaskLifecycle';
 import { DocResourceView } from './DocResourceView';
 import { LabResourceView } from './LabResourceView';
@@ -24,6 +24,7 @@ import { ResourceVariants } from '../resources/ResourceVariants';
 import { ResourceReplayDrawer } from '../resources/ResourceReplayDrawer';
 import { ResourceIterationCard } from '../resources/ResourceIterationCard';
 import { AgentDebatePanel } from '../resources/AgentDebatePanel';
+import { useRealResourceArtifact } from '../resources/realResourceArtifact';
 import {
   buildAgentDebate,
   buildReplayTimeline,
@@ -33,6 +34,7 @@ import {
 import type { ResourceVariantKind, ResourceVersion } from '@/lib/types/resource-variant.types';
 
 const resourceTypes: ResourceType[] = ['doc', 'ppt', 'mindmap', 'quiz', 'lab', 'video', 'readings'];
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function fallbackResource(type: ResourceType): ResourceItem {
   return {
@@ -107,8 +109,11 @@ export function ResourceTabs() {
   const [versionsByType, setVersionsByType] = useState<Partial<Record<ResourceType, ResourceVersion[]>>>({});
   const [activeVersionByType, setActiveVersionByType] = useState<Partial<Record<ResourceType, number>>>({});
   const [iterating, setIterating] = useState(false);
+  const [bundleGenerating, setBundleGenerating] = useState(false);
   const presenterMode = isMockMode();
   const resource = resources[active] ?? fallbackResource(active);
+  const artifactProjection = useRealResourceArtifact(resource);
+  const previewResource = artifactProjection.resource;
   const isGenerating = resource.status === 'generating';
   const isReconnecting = resource.errorCode === 'sse_reconnecting';
   const tokenBuffer = useRafTokenBuffer((type, content) => {
@@ -234,6 +239,144 @@ export function ResourceTabs() {
     }), { mode: presenterMode ? 'fixture' : 'real' });
   };
 
+  const startResourcePack = () => {
+    cancelRef.current?.();
+    tokenBuffer.cancel();
+    setBundleGenerating(true);
+    setProgressText('正在创建完整资源包');
+    setResources((current) => {
+      const next = { ...current };
+      resourceTypes.filter((type) => type !== 'readings').forEach((type) => {
+        const previous = next[type] ?? fallbackResource(type);
+        next[type] = {
+          ...previous,
+          status: 'generating',
+          content: '',
+          evidenceRefs: [],
+          errorCode: undefined,
+          errorMessage: undefined,
+        };
+      });
+      return next;
+    });
+
+    cancelRef.current = startCourseResourcePack(taskContext, createCourseTaskLifecycle('generate_resource', courseDispatch, {
+      onProgress(progress) {
+        setProgressText(`${progress.node_name} · ${progress.percentage ?? 0}%`);
+      },
+      onEvidence(chunk) {
+        evidence.pushEvidence([chunk]);
+      },
+      onToken(token) {
+        tokenBuffer.push(activeStreamTypeRef.current, token.content);
+      },
+      onArtifact(artifact) {
+        const artifactType = artifact.resource_type;
+        activeStreamTypeRef.current = artifactType;
+        updateResource(artifactType, (previous) => ({
+          ...previous,
+          id: artifact.resource_id,
+          type: artifactType,
+          title: artifact.title,
+          status: 'generating',
+        }));
+      },
+      onTrace(run) {
+        traceDispatch({ type: 'upsertRun', run });
+      },
+      onDone(done) {
+        tokenBuffer.flush();
+        setProgressText('');
+        setBundleGenerating(false);
+        setResources((current) => Object.fromEntries(
+          Object.entries(current).map(([type, item]) => [
+            type,
+            item?.status === 'generating'
+              ? { ...item, status: 'ready', qualityScore: done.quality_score }
+              : item,
+          ]),
+        ) as Partial<Record<ResourceType, ResourceItem>>);
+      },
+      onError(error) {
+        if (error.code === 'sse_reconnecting') {
+          setProgressText(error.message);
+          return;
+        }
+        tokenBuffer.flush();
+        setProgressText('');
+        setBundleGenerating(false);
+        setResources((current) => Object.fromEntries(
+          Object.entries(current).map(([type, item]) => [
+            type,
+            item?.status === 'generating'
+              ? { ...item, status: 'failed', errorCode: error.code, errorMessage: error.message }
+              : item,
+          ]),
+        ) as Partial<Record<ResourceType, ResourceItem>>);
+      },
+    }), { mode: presenterMode ? 'fixture' : 'real' });
+  };
+
+  const retryPersistedResource = () => {
+    if (!UUID_PATTERN.test(resource.id)) {
+      startGeneration(active);
+      return;
+    }
+    cancelRef.current?.();
+    tokenBuffer.cancel();
+    setProgressText(`正在重新生成${resourceTypeLabel(active)}`);
+    updateResource(active, (previous) => ({
+      ...previous,
+      status: 'generating',
+      content: '',
+      evidenceRefs: [],
+      errorCode: undefined,
+      errorMessage: undefined,
+    }));
+    cancelRef.current = retryCourseResource(resource.id, createCourseTaskLifecycle('generate_resource', courseDispatch, {
+      onProgress(progress) {
+        setProgressText(`${progress.node_name} · ${progress.percentage ?? 0}%`);
+      },
+      onEvidence(chunk) {
+        evidence.pushEvidence([chunk]);
+      },
+      onToken(token) {
+        tokenBuffer.push(active, token.content);
+      },
+      onArtifact(artifact) {
+        updateResource(artifact.resource_type, (previous) => ({
+          ...previous,
+          id: artifact.resource_id,
+          type: artifact.resource_type,
+          title: artifact.title,
+          status: 'generating',
+        }));
+      },
+      onTrace(run) {
+        traceDispatch({ type: 'upsertRun', run });
+      },
+      onDone(done) {
+        tokenBuffer.flush();
+        setProgressText('');
+        updateResource(active, (previous) => ({ ...previous, status: 'ready', qualityScore: done.quality_score }));
+      },
+      onError(error) {
+        if (error.code === 'sse_reconnecting') {
+          setProgressText(error.message);
+          return;
+        }
+        tokenBuffer.flush();
+        setProgressText('');
+        updateResource(active, (previous) => ({
+          ...previous,
+          status: 'failed',
+          errorCode: error.code,
+          errorMessage: error.message,
+        }));
+      },
+    }), { mode: presenterMode ? 'fixture' : 'real' });
+  };
+
   useEffect(() => {
     const handleDemoStage = (event: Event) => {
       const detail = (event as CustomEvent<{ tab?: string; resourceType?: ResourceType }>).detail;
@@ -248,13 +391,13 @@ export function ResourceTabs() {
   }, [presenterMode]);
 
   const renderResource = () => {
-    if (active === 'doc') return <DocResourceView resource={resource} />;
-    if (active === 'ppt') return <PptResourceView resource={resource} />;
-    if (active === 'mindmap') return <MindmapResourceView resource={resource} />;
-    if (active === 'quiz') return <QuizResourceView resource={resource} />;
-    if (active === 'lab') return <LabResourceView resource={resource} />;
-    if (active === 'video') return <VideoResourceView resource={resource} />;
-    return <ReadingsResourceView resource={resource} />;
+    if (active === 'doc') return <DocResourceView resource={previewResource} />;
+    if (active === 'ppt') return <PptResourceView resource={previewResource} />;
+    if (active === 'mindmap') return <MindmapResourceView resource={previewResource} />;
+    if (active === 'quiz') return <QuizResourceView resource={previewResource} />;
+    if (active === 'lab') return <LabResourceView resource={previewResource} />;
+    if (active === 'video') return <VideoResourceView resource={previewResource} />;
+    return <ReadingsResourceView resource={previewResource} />;
   };
 
   return (
@@ -312,18 +455,47 @@ export function ResourceTabs() {
         <button
           type="button"
           onClick={() => startGeneration()}
-          disabled={isGenerating}
+          disabled={isGenerating || bundleGenerating}
           className="inline-flex items-center gap-2 rounded-lg bg-brand-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
         >
           <PlayCircle className="h-4 w-4" />
           生成{resourceTypeLabel(active)}
         </button>
+        <button
+          type="button"
+          onClick={startResourcePack}
+          disabled={isGenerating || bundleGenerating}
+          className="inline-flex items-center gap-2 rounded-lg border border-brand-blue-200 bg-brand-blue-50 px-4 py-2 text-sm font-medium text-brand-blue-700 hover:bg-brand-blue-100 disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          <PlayCircle className="h-4 w-4" />
+          生成完整资源包
+        </button>
       </div>
 
       {isReconnecting && <LLMErrorState code={resource.errorCode} message={resource.errorMessage} />}
-      {isGenerating && !isReconnecting && <LoadingState text={progressText || '正在生成中…'} />}
+      {(isGenerating || bundleGenerating) && !isReconnecting && <LoadingState text={progressText || '正在生成中…'} />}
+      {resource.status === 'ready' && artifactProjection.isLoading && <LoadingState text="正在读取已持久化的资源产物…" />}
+      {resource.status === 'ready' && artifactProjection.error && (
+        <LLMErrorState
+          code="RESOURCE_ARTIFACT_UNAVAILABLE"
+          message={artifactProjection.error}
+          onRetry={artifactProjection.refresh}
+        />
+      )}
       {resource.status === 'failed' && (
         <LLMErrorState code={resource.errorCode} message={resource.errorMessage ?? '资源生成失败'} onRetry={() => startGeneration()} />
+      )}
+
+      {resource.status === 'ready' && UUID_PATTERN.test(resource.id) && (
+        <button
+          type="button"
+          onClick={retryPersistedResource}
+          disabled={bundleGenerating}
+          className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700 hover:border-brand-blue-200 hover:bg-brand-blue-50 hover:text-brand-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          <PlayCircle className="h-3.5 w-3.5" />
+          重新生成此资源
+        </button>
       )}
 
       {presenterMode && resource.status === 'ready' && !variantSelections[active] && (
