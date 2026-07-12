@@ -1,6 +1,6 @@
 import type { AgentRunDTO, ResourceType } from '@/lib/sse.types';
 import { mockEvidenceChunks } from '@/lib/mock/evidence.mock';
-import type { WorkflowEvent, WorkflowRunStartResponse } from '@/lib/workflow-run.types';
+import type { WorkflowEvent, WorkflowRunStartResponse, WorkflowRunStatus } from '@/lib/workflow-run.types';
 import type {
   EdgeStatus,
   NodeStatus,
@@ -15,6 +15,7 @@ export type WorkflowAction =
   | { type: 'reset'; workflow: WorkflowDefinition; phase?: WorkflowRunState['phase']; runId?: string }
   | { type: 'setPhase'; phase: WorkflowRunState['phase'] }
   | { type: 'applyWorkflowStart'; start: WorkflowRunStartResponse }
+  | { type: 'applyWorkflowControl'; status: WorkflowRunStatus }
   | { type: 'applyWorkflowEvent'; event: WorkflowEvent }
   | { type: 'patchNode'; nodeId: string; patch: Partial<WorkflowNodeRun> }
   | { type: 'setEdge'; edgeId: string; status: EdgeStatus }
@@ -58,7 +59,17 @@ export function workflowRunReducer(state: WorkflowRunState, action: WorkflowActi
       return {
         ...state,
         currentRunId: action.start.run_id,
+        durableRun: true,
+        rootStatus: action.start.status,
         phase: phaseFromRootStatus(action.start.status),
+      };
+    case 'applyWorkflowControl':
+      return {
+        ...state,
+        rootStatus: action.status,
+        phase: phaseFromRootStatus(action.status),
+        approvalId: action.status === 'waiting_approval' ? state.approvalId : undefined,
+        approvalKind: action.status === 'waiting_approval' ? state.approvalKind : undefined,
       };
     case 'applyWorkflowEvent':
       return applyWorkflowEventToState(state, action.event);
@@ -210,13 +221,33 @@ function applyWorkflowEventToState(state: WorkflowRunState, event: WorkflowEvent
     next = workflowRunReducer(next, { type: 'setPhase', phase: 'done' });
   }
 
+  const rootStatus = rootStatusFromEvent(event) ?? next.rootStatus;
+  const approvalId = event.event_type === 'progress' && event.payload.approval_id
+    ? event.payload.approval_id
+    : rootStatus === 'waiting_approval'
+      ? next.approvalId
+      : undefined;
+  const approvalKind = event.event_type === 'progress' && event.payload.approval_kind
+    ? event.payload.approval_kind
+    : rootStatus === 'waiting_approval'
+      ? next.approvalKind
+      : undefined;
   return {
     ...next,
     currentRunId: event.workflow_run_id,
-    phase: event.event_type === 'progress' && event.payload.root_status
-      ? phaseFromRootStatus(event.payload.root_status)
-      : next.phase,
+    durableRun: true,
+    rootStatus,
+    approvalId,
+    approvalKind,
+    phase: rootStatus ? phaseFromRootStatus(rootStatus) : next.phase,
   };
+}
+
+function rootStatusFromEvent(event: WorkflowEvent): WorkflowRunStatus | undefined {
+  if (event.event_type === 'progress') return event.payload.root_status;
+  if (event.event_type === 'done') return event.payload.status;
+  if (event.event_type === 'error') return event.payload.status;
+  return undefined;
 }
 
 function findWorkflowNodeId(

@@ -1,0 +1,33 @@
+{
+  "brandName": "Anshu Zhiti",
+  "canvasSize": 1024,
+  "primaryColor": "#0B1B2D",
+  "accentColor": "#174BFF",
+  "white": "#FFFFFF",
+  "black": "#000000",
+  "grayscale": {
+    "ink": "#263746",
+    "accent": "#8090A0"
+  },
+  "appIcon": {
+    "lightBackground": "#F7F9FC",
+    "darkBackground": "#0B1B2D",
+    "darkForeground": "#FFFFFF"
+  },
+  "sourceColorSampling": {
+    "primary": {
+      "sourceSampledColor": "#0E1B2B",
+      "normalizedBrandColor": "#0B1B2D",
+      "modificationReason": "The sampled near-black ink is within the same visual family as the approved brand ink. The normalized token gives a stable, repeatable value after removing PNG antialiasing and shadow variation."
+    },
+    "accent": {
+      "sourceSampledColor": "#003AFC",
+      "normalizedBrandColor": "#174BFF",
+      "modificationReason": "The source spark contains raster color variation. The approved blue remains visually close while providing a documented, accessible flat-color token for production SVG exports."
+    }
+  },
+  "minimumDisplaySize": {
+    "primarySymbolPx": 32,
+    "faviconPx": 16
+  }
+}

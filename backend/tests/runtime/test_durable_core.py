@@ -9,16 +9,21 @@ truth; the same conditional updates exercise fencing and outbox semantics.
 from __future__ import annotations
 
 from datetime import timedelta
+from types import SimpleNamespace
 from typing import Any
+from uuid import uuid4
 
 import pytest
-from sqlalchemy import update
+from sqlalchemy import select, update
 
+from app.db.models.resource.generated_resource import GeneratedResource
 from app.db.models.workflow_runtime import WorkflowEvent, WorkflowRun
+from app.runtime.actions import WorkflowActionService
 from app.runtime.artifacts import ArtifactCleanup, ArtifactRecovery, ArtifactSaga
-from app.runtime.contracts import RuntimeSemanticVersion
+from app.runtime.contracts import ExecutionMode, ProviderSelection, RuntimeSemanticVersion
 from app.runtime.execution.lease import Lease
 from app.runtime.execution.recovery import RecoveryService
+from app.runtime.harness.context import ExecutionContext
 from app.runtime.persistence import (
     CheckpointStore,
     EventOutboxPublisher,
@@ -212,6 +217,8 @@ async def test_artifact_saga_delays_event_until_active_and_recovers_orphan(sqlit
     assert activated.resource_id == staged.resource_id
     visible = await EventStore(sqlite_session).replay_events(claimed.id)
     assert [(event.event_type, event.sequence) for event in visible] == [("artifact", 1)]
+    envelope = await EventStore(sqlite_session).event_envelope(visible[0])
+    assert envelope.mode == "real"
 
     interrupted = await saga.stage(
         workflow_run_id=claimed.id,
@@ -231,6 +238,75 @@ async def test_artifact_saga_delays_event_until_active_and_recovers_orphan(sqlit
         older_than_seconds=0
     )
     assert cleanup["deleted"] == 1
+
+
+@pytest.mark.anyio
+async def test_action_reuses_active_artifact_after_step_recovery(sqlite_session) -> None:
+    store, claimed = await _claimed_run(sqlite_session)
+    step = await store.create_step_attempt(
+        workflow_run_id=claimed.id,
+        node_id="persist_artifact",
+        attempt=1,
+        lease_epoch=claimed.lease_epoch,
+    )
+    await sqlite_session.commit()
+
+    async def emit(_event_type: str, _payload: dict[str, Any]) -> None:
+        return None
+
+    context = ExecutionContext(
+        workflow_run_id=claimed.id,
+        step_attempt_id=step.id,
+        agent_run_id=uuid4(),
+        user_id=uuid4(),
+        mode=ExecutionMode.FIXTURE,
+        provider_selection=ProviderSelection(requested_provider="fixture", requested_model="fixture-v1"),
+        lease_epoch=claimed.lease_epoch,
+        emit=emit,
+    )
+    storage = _MemoryArtifactStorage()
+    actions = WorkflowActionService(sqlite_session, storage_service=SimpleNamespace(provider=storage))
+    root_input = {"resource_type": "doc", "query": "recovery-safe artifact"}
+    state = {
+        "producer": {
+            "output": {"content": "artifact body", "quality_score": 0.88},
+            "evidence_snapshot_ids": [],
+        },
+        "quality_check": {"output": {"quality_score": 0.91}},
+    }
+
+    first = await actions.persist_generated_resource(root_input, state, context)
+    recovery_step = await store.create_step_attempt(
+        workflow_run_id=claimed.id,
+        node_id="persist_artifact",
+        attempt=2,
+        lease_epoch=claimed.lease_epoch,
+    )
+    recovery_context = ExecutionContext(
+        workflow_run_id=context.workflow_run_id,
+        step_attempt_id=recovery_step.id,
+        agent_run_id=context.agent_run_id,
+        user_id=context.user_id,
+        mode=context.mode,
+        provider_selection=context.provider_selection,
+        lease_epoch=context.lease_epoch,
+        emit=context.emit,
+    )
+    second = await actions.persist_generated_resource(root_input, state, recovery_context)
+    rows = list(
+        (
+            await sqlite_session.execute(
+                select(GeneratedResource).where(
+                    GeneratedResource.workflow_run_id == claimed.id,
+                    GeneratedResource.step_attempt_id == step.id,
+                    GeneratedResource.resource_type == "doc",
+                )
+            )
+        ).scalars().all()
+    )
+
+    assert first["resource_id"] == second["resource_id"]
+    assert len(rows) == 1 and rows[0].status == "active"
 
 
 @pytest.mark.anyio

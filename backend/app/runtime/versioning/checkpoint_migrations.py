@@ -36,4 +36,40 @@ class CheckpointMigrationRegistry:
         return migration(dict(state))
 
 
-__all__ = ["CheckpointMigration", "CheckpointMigrationRegistry"]
+def build_runtime_checkpoint_migrations() -> CheckpointMigrationRegistry:
+    """Return the reviewed migrations shipped with this Runtime build.
+
+    ``v1`` checkpoints stored a flat node mapping.  ``typed-state-v1`` stores
+    exactly the same node data below ``node_outputs`` with explicit empty
+    decision/defect collections.  The function is deliberately narrow: new
+    schema pairs must be registered here rather than being guessed by resume.
+    """
+    registry = CheckpointMigrationRegistry()
+
+    def v1_to_typed_state(state: dict[str, Any]) -> dict[str, Any]:
+        if "node_outputs" in state:
+            node_outputs = state.get("node_outputs")
+            if not isinstance(node_outputs, dict):
+                raise ValueError("v1 checkpoint node_outputs must be an object")
+            return {
+                "workflow_schema_version": "typed-state-v1",
+                "node_outputs": dict(node_outputs),
+                "approved_decisions": dict(state.get("approved_decisions") or {}),
+                "defect_history": list(state.get("defect_history") or []),
+            }
+        return {
+            "workflow_schema_version": "typed-state-v1",
+            "node_outputs": dict(state),
+            "approved_decisions": {},
+            "defect_history": [],
+        }
+
+    registry.register("v1", "typed-state-v1", v1_to_typed_state)
+    return registry
+
+
+__all__ = [
+    "CheckpointMigration",
+    "CheckpointMigrationRegistry",
+    "build_runtime_checkpoint_migrations",
+]

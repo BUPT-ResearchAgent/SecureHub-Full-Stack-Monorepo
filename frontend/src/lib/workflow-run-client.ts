@@ -5,6 +5,7 @@ import {
   isWorkflowEventType,
   reduceWorkflowEvent,
   type WorkflowArtifactPayload,
+  type WorkflowApprovalResponse,
   type WorkflowDonePayload,
   type WorkflowErrorPayload,
   type WorkflowEvent,
@@ -13,6 +14,7 @@ import {
   type WorkflowEventPayloadByType,
   type WorkflowEventType,
   type WorkflowRunMode,
+  type WorkflowRunControlResponse,
   type WorkflowRunStartRequest,
   type WorkflowRunStartResponse,
   type WorkflowRunStatus,
@@ -38,13 +40,6 @@ export class WorkflowRunClientError extends Error {
     this.code = options.code;
   }
 }
-
-export type WorkflowRunControlResponse = {
-  run_id: string;
-  status: WorkflowRunStatus;
-  cancel_requested?: boolean;
-  compatibility?: Record<string, unknown>;
-};
 
 export type WorkflowRunClientOptions = {
   apiBaseUrl?: string;
@@ -145,6 +140,22 @@ export class WorkflowRunClient {
 
   async retry(runId: string, payload: Record<string, unknown> = {}): Promise<WorkflowRunControlResponse> {
     return this.control(runId, 'retry', payload);
+  }
+
+  async decideApproval(
+    runId: string,
+    approvalId: string,
+    approved: boolean,
+    decision: Record<string, unknown> = {},
+  ): Promise<WorkflowApprovalResponse> {
+    return this.requestJson<WorkflowApprovalResponse>(
+      `/api/v1/workflow-runs/${encodeURIComponent(runId)}/approvals/${encodeURIComponent(approvalId)}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ approved, decision }),
+      },
+    );
   }
 
   subscribe(runId: string, options: WorkflowSubscriptionOptions = {}): WorkflowSubscription {

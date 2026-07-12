@@ -21,6 +21,8 @@ from app.runtime.skill_catalog import assert_catalog_integrity, build_production
 from app.schemas.agent_control import (
     AgentManifestItem,
     AgentManifestResponse,
+    WorkflowApprovalDecisionRequest,
+    WorkflowApprovalResponse,
     WorkflowRunCancelResponse,
     WorkflowRunControlResponse,
     WorkflowRunResponse,
@@ -117,6 +119,14 @@ async def get_workflow_run(run_id: UUID, request: Request, current_user_id: Curr
         _raise_application_error(exc)
 
 
+@router.get("/workflow-runs/{run_id}/metrics")
+async def get_workflow_run_metrics(run_id: UUID, request: Request, current_user_id: CurrentUserDep) -> dict[str, object]:
+    try:
+        return await _service(request).metrics(run_id, actor_user_id=current_user_id)
+    except WorkflowApplicationError as exc:
+        _raise_application_error(exc)
+
+
 @router.get("/workflow-runs/{run_id}/events")
 async def stream_workflow_run_events(
     run_id: UUID,
@@ -173,6 +183,26 @@ async def resume_workflow_run(run_id: UUID, request: Request, current_user_id: C
 async def retry_workflow_run(run_id: UUID, request: Request, current_user_id: CurrentUserDep) -> WorkflowRunControlResponse:
     try:
         return await _service(request).retry(run_id, actor_user_id=current_user_id)
+    except WorkflowApplicationError as exc:
+        _raise_application_error(exc)
+
+
+@router.post("/workflow-runs/{run_id}/approvals/{approval_id}", response_model=WorkflowApprovalResponse)
+async def decide_workflow_approval(
+    run_id: UUID,
+    approval_id: UUID,
+    payload: WorkflowApprovalDecisionRequest,
+    request: Request,
+    current_user_id: CurrentUserDep,
+) -> WorkflowApprovalResponse:
+    try:
+        return await _service(request).decide_approval(
+            run_id,
+            approval_id,
+            approved=payload.approved,
+            decision=payload.decision,
+            actor_user_id=current_user_id,
+        )
     except WorkflowApplicationError as exc:
         _raise_application_error(exc)
 

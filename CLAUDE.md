@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - **文档目的**：作为"安枢智梯 SecureHub / CyberLadder"项目所有后续 Claude Code / Codex / Cursor 会话的默认上下文。任何在本仓库工作的 AI 助手（或新加入的工程师）应当**首先读完本文件**，再开始触碰代码。
 - **读者**：本项目团队成员；后续接入的 AI 编码助手；A3 赛题答辩评委（架构理解参考）。
-- **最后更新时间**：2026-07-11（SecureHub Agent Runtime v1.1 Wave 0-3 已实现并记录真实 DeepSeek/RAG/SSE 证据；COS runtime artifact 的真实远端 activation 受外部 451 账务状态阻塞，未伪造成功）。原始版本 2026-06-05（由 Claude Opus 4.7 基于 4 份外部文档 + 仓库代码生成）。
+- **最后更新时间**：2026-07-12（SecureHub Agent Runtime v1.1 Wave 0-6 已实现；真实 DeepSeek/RAG/PostgreSQL gate 已复核，Spark fallback 与 COS 仍按 fail-closed 记录，绝不以 fixture 冒充成功）。原始版本 2026-06-05（由 Claude Opus 4.7 基于 4 份外部文档 + 仓库代码生成）。
 - **本文件的权威性**：在仓库层面，本文件 > `README.md` / `docs/architecture.md` / `docs/backend-overview.md`。当本文件与代码现状冲突时，**以代码为准并立即更新本文件**；当本文件与外部 4 份文档冲突时，**以本文件 §19 的"差异说明"为准**。
 
 ### 阅读约定（什么时候回读外部文档？）
@@ -18,7 +18,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | 日常判断当前阶段 / 三人分工 / 主瓶颈 / LLM、Embedding、Storage 决策 | **权威规划凝练索引**（默认替代 Layer B 长规划源文件） | `D:/Nnutural/Desktop/BUPT大全/BUPT竞赛/26软件杯/Plan/2026-07-10_SecureHub_权威规划凝练索引.md` |
 | 日常判断近期交付事实 / Prompt / Workout / 6-C / 7-COS 轨迹 | **执行轨迹凝练索引**（默认替代 Layer C 执行档全量读取） | `D:/Nnutural/Desktop/BUPT大全/BUPT竞赛/26软件杯/Plan/2026-07-10_SecureHub_执行轨迹凝练索引.md` |
 | 任务涉及 workflow-runs / fixed multi-agent workflow / SSE replay / agent_runs / cancel | **Agent Run API 真实闭环凝练索引**（只在该专项任务时读，替代 Agent-Run 原始 Plan / Prompt / Workout） | `D:/Nnutural/Desktop/BUPT大全/BUPT竞赛/26软件杯/Plan/2026-07-10_Agent_Run_API_真实闭环凝练索引.md` |
-| 任务涉及 RuntimeEngine / Durable Run / SkillExecutor / Outbox / Worker / SSE replay 或五条产品 adapter | **Agent Runtime v1.1 契约与 Wave 0-3 交付报告** | `docs/api/workflow-run-contract.md`；`Workout/Agent-Runtime-Wave-0-3.md`；必要时回读 `D:/Nnutural/Desktop/BUPT大全/BUPT竞赛/26软件杯/Plan/2026-07-11_SecureHub_多智能体底层完整架构实施方案.md` |
+| 任务涉及 RuntimeEngine / Durable Run / SkillExecutor / Outbox / Worker / SSE replay 或五条产品 adapter | **Agent Runtime v1.1 契约与 Wave 0-6 交付报告** | `docs/api/workflow-run-contract.md`；`Workout/Agent-Runtime-Wave-4-6.md`；必要时回读 `D:/Nnutural/Desktop/BUPT大全/BUPT竞赛/26软件杯/Plan/2026-07-11_SecureHub_多智能体底层完整架构实施方案.md` |
 | 不确定"做什么、优先级、新增到哪里" | **A3 赛题规划**（最权威开发指导） | `D:/Nnutural/Desktop/BUPT大全/BUPT竞赛/26软件杯/CompetitionTheme/A3赛题规划.md` |
 | 不确定 A3 硬性需求边界 | **A3 赛题原文** | `D:/Nnutural/Desktop/BUPT大全/BUPT竞赛/26软件杯/CompetitionTheme/A3赛题.md` |
 | 不确定项目整体愿景 / 商业逻辑 / 市场叙事 | **项目计划书**（挑战杯） | `D:/Nnutural/Desktop/BUPT大全/BUPT竞赛/26软件杯/Legacy/鸿雁杯/MinerU_markdown_项目计划书_2054945124833226752.md` |
@@ -68,16 +68,16 @@ Scrapling、MediaCrawler、MindSpider 都是外部工具 / 数据采集参考，
 
 不要引入：Milvus、Neo4j、MongoDB、Doris、Elasticsearch、MUI、Redux。
 
-### 0.1.3 当前阶段与统一语言规范（2026-07-11）
+### 0.1.3 当前阶段与统一语言规范（2026-07-12）
 
 > 本节用于修正 2026-07-08 前后文档中的阶段漂移。后续回答、任务提示词、PR 描述均按本节措辞执行。
 
 | 维度 | 统一口径 |
 |---|---|
-| 当前阶段 | **Runtime v1.1 Wave 0-3 已完成并验收**；Wave 4-6（并行协作扩展、HITL/运营、安全深化与 legacy removal）尚未因本交付而完成 |
+| 当前阶段 | **Runtime v1.1 Wave 0-6 代码、契约与本地验收已完成**；2026-07-12 已复核真实 DeepSeek、Qwen RAG、PostgreSQL/Redis 与五条产品路径。Spark primary/DeepSeek fallback 与 COS 仍须在有效外部条件恢复后单独重跑，不能误报 |
 | Runtime 核心 | `RuntimeEngine`、`SecureHubStateMachine`、framework-neutral `WorkflowDefinition`、唯一 `SkillExecutor`、PostgreSQL durable store/outbox、Worker/lease/fencing/recovery 均已落地 |
 | 产品路径 | `/profile/chat`、`/courses/{id}/plan`、`/courses/{id}/resources/generate`、`/tutor/ask`、`/assessment/run` 都是 `WorkflowApplicationService` adapter，复用唯一可查询 root UUID |
-| 真实联调证据 | Golden Slice 与五条产品路径均以 `real / deepseek / deepseek-v4-pro` 成功；root、child、evidence、provider call、artifact 和 event FK 链已核对，详情见 `Workout/Agent-Runtime-Wave-0-3.md` |
+| 真实联调证据 | Golden Slice 与五条产品路径均以 `real / deepseek / deepseek-v4-pro` 成功；2026-07-12 复核了新的五条产品 root、RAG evidence、`agent_runs`、provider calls 与 SSE replay，详情见 `Workout/Agent-Runtime-Wave-0-3.md` 和 `Workout/Agent-Runtime-Wave-4-6.md` |
 | 前端与 SSE | `WorkflowRunClient` 使用 typed reducer、Last-Event-ID、durable gap replay、duplicate dedupe 与 provider stream replacement；对外事件固定七类 |
 | 不可倒退语义 | real 失败不得进入 fixture；QualityCheck 不得内嵌/放宽；Redis 不是任务、lease、state 或 event 真相；Provider unknown 不假装 exactly-once |
 | COS 运行时外部阻塞 | 腾讯 COS runtime `put_object` 返回 `451 UnavailableForLegalReasons`（报告为账号欠费）；本次未重复调用、未伪造 COS success、未用 fixture 替代。显式 local artifact provider 的 Saga 已验证 |
@@ -1582,6 +1582,16 @@ forbidden: LLM 自由生成内容
 - **耐久证据**：`workflow_events` 使用原子 sequence + transactional outbox；PostgreSQL queued scan 保障 Redis 丢失/重复通知；stale worker 被 `lease_epoch` fenced；SSE 支持 Last-Event-ID replay/live gap recovery；Provider `started/completed/unknown` 和 Artifact Saga recovery 有故障注入覆盖。迁移在一次性 SQLite 库完成 `upgrade head -> downgrade 20260611_0960 -> upgrade head`，head 为 `20260711_1020`。
 - **外部阻塞**：真实 COS runtime `put_object` 返回 `451 UnavailableForLegalReasons`（账号账务状态）。这不被写成成功，也不触发 fixture fallback；local Artifact Saga 已通过。恢复 COS 账务后应只重跑该外部 gate。
 - **边界**：本节只标记 v1.1 Wave 0-3；Wave 4-6 的并行协作扩展、HITL/运营、安全深化和 legacy removal 仍待后续任务。完整 IDs、SSE 计数、测试命令与故障结果见 `Workout/Agent-Runtime-Wave-0-3.md`。
+
+### 19.12 Agent Runtime v1.1 Wave 4-6 签收（2026-07-11）
+
+本节覆盖并优先于本文所有仍将 Wave 4-6 标为待办的历史表述。
+
+- **协作与质量**：`course_learning_full_v1` 使用声明式最小 state projection、`ArtifactRef` / `EvidenceRef` lineage、PostgreSQL branch session fan-out、defect taxonomy 和一次有界 deterministic rework；不得把 agent free-chat 作为工作流介质。
+- **Provider**：真实主链为讯飞星火，DeepSeek 仅为透明显式 real fallback。每个 fallback 新建 provider call/stream attempt 并发出 draft replacement trace；不得拼接两个 Provider 的文本，fixture 绝不接管 real 根。
+- **控制平面**：pause/resume/retry/approval、兼容性检查和显式 checkpoint migration、root/node/provider budget、PolicyEngine、审计、metrics/evals 均由唯一 RuntimeEngine/StateMachine/PostgreSQL 控制面实现。
+- **收敛**：旧 `BaseSkill.run`/`planned_skill.py`/RunRegistry/legacy Harness/graphs/direct skill execution/duplicate SSE serializer 均不再是生产权威；LangGraph 只能是 topology adapter。
+- **证据边界**：本地 fixture 根、两轮完整回归、迁移回滚、浏览器与故障注入结果见 `Workout/Agent-Runtime-Wave-4-6.md`。2026-07-12 已真实复核 DeepSeek、DashScope/Qwen RAG、PostgreSQL 与五条产品路径；Spark bearer key 仍缺失，Spark primary/real fallback/cancel 未运行，COS 仍保留 `451 UnavailableForLegalReasons` 外部阻塞。不得把 local storage 或 fixture 改写成 COS、Spark 或 fallback 成功。
 
 ---
 

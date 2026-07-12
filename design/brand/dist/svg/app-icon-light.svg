@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" preserveAspectRatio="xMidYMid meet">
+  <rect id="background" width="1024" height="1024" fill="#F7F9FC" />
+  <path id="ring" d="M 306.89 678.68 A 276 276 0 1 1 574.09 762.93" fill="none" stroke="#0B1B2D" stroke-width="26" stroke-linecap="round" />
+  <circle id="node" cx="342" cy="720" r="32" fill="#0B1B2D" />
+  <path id="stair" d="M 410 586 V 558 H 476 V 516 H 542 V 474 H 608 V 432" fill="none" stroke="#0B1B2D" stroke-width="26" stroke-linecap="round" stroke-linejoin="round" />
+  <path id="book-upper" d="M 400 618 C 450.4 618 485.12 629.8 512 677 C 538.88 629.8 573.6 618 624 618" fill="none" stroke="#0B1B2D" stroke-width="26" stroke-linecap="round" stroke-linejoin="round" />
+  <path id="book-lower" d="M 390 672 C 444.9 672 481.5 682.5 512 714 C 542.5 682.5 579.1 672 634 672" fill="none" stroke="#0B1B2D" stroke-width="26" stroke-linecap="round" stroke-linejoin="round" />
+  <path id="spark" d="M 613 329 C 618.67 349.8 633.24 362.6 657 369 C 633.24 375.4 618.67 388.2 613 409 C 607.33 388.2 592.76 375.4 569 369 C 592.76 362.6 607.33 349.8 613 329 Z" fill="#174BFF" />
+</svg>

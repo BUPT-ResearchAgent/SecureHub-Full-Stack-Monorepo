@@ -22,8 +22,9 @@ from app.rag.retriever import retrieve
 from app.runtime.context_builder import ContextBuilder
 from app.runtime.contracts import ErrorCode, ExecutionMode, EvidenceRef
 from app.runtime.harness.contracts import CandidateOutput, SkillDefinition
-from app.runtime.harness.execution_context import ExecutionCancelled, ExecutionContext
+from app.runtime.harness.context import ExecutionCancelled, ExecutionContext
 from app.runtime.harness.fixtures import default_evidence_fixtures
+from app.runtime.provider_policy import ProviderPolicy, ProviderPolicyError
 from app.runtime.guardrails.input_filter import review_input
 from app.runtime.guardrails.output_filter import safety_review
 from app.runtime.guardrails.prompt_injection_check import detect_prompt_injection
@@ -36,11 +37,20 @@ class SkillExecutionError(RuntimeError):
         super().__init__(message)
 
 
+class ProviderStreamUnavailable(SkillExecutionError):
+    """An observed provider failure that is eligible for real fallback."""
+
+    def __init__(self, message: str, *, visible_tokens: int = 0) -> None:
+        self.visible_tokens = visible_tokens
+        super().__init__(ErrorCode.PROVIDER_UNAVAILABLE, message, recoverable=True)
+
+
 class RetrieverPort(Protocol):
     async def retrieve(self, query: str, *, domain: str, top_k: int, filters: dict[str, Any] | None = None) -> list[Any]: ...
 
 
 ProviderResolver = Callable[[ExecutionContext], BaseLLMProvider]
+FallbackProviderResolver = Callable[[str, ExecutionContext], BaseLLMProvider]
 
 
 class SkillExecutor:
@@ -52,12 +62,16 @@ class SkillExecutor:
         evidence_snapshot_store: Any | None = None,
         provider_call_store: Any | None = None,
         context_builder: ContextBuilder | None = None,
+        provider_policy: ProviderPolicy | None = None,
+        fallback_provider_resolver: FallbackProviderResolver | None = None,
     ) -> None:
         self._retriever = retriever
         self._provider_resolver = provider_resolver or self._default_provider
         self._evidence_snapshot_store = evidence_snapshot_store
         self._provider_call_store = provider_call_store
         self._context_builder = context_builder or ContextBuilder()
+        self._provider_policy = provider_policy or ProviderPolicy()
+        self._fallback_provider_resolver = fallback_provider_resolver or self._default_fallback_provider
 
     async def execute(
         self,
@@ -120,49 +134,15 @@ class SkillExecutor:
             output_model=definition.output_model,
         )
         request_digest = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
-        provider = self._provider_resolver(context)
-        if context.mode == ExecutionMode.REAL and getattr(provider, "provider_name", "fixture") == "fixture":
-            raise SkillExecutionError(ErrorCode.PROVIDER_UNAVAILABLE, "real mode cannot use fixture provider")
-
-        provider_call_id = await self._start_provider_call(
-            definition=definition,
-            context=context,
-            provider=provider,
-            request_digest=request_digest,
-        )
         try:
-            raw_text, usage = await self._call_provider(provider, prompt, definition, context, provider_call_id)
-        except ExecutionCancelled:
-            await self._complete_provider_call(
-                provider_call_id,
-                outcome="cancelled",
-                usage={},
-                lease_epoch=context.lease_epoch,
+            raw_text, usage, provider_call_id, actual_provider, stream_attempt = await self._call_with_fallback(
+                definition=definition,
+                context=context,
+                prompt=prompt,
+                request_digest=request_digest,
             )
-            raise
-        except SkillExecutionError as exc:
-            # A completed but empty stream is an observed provider failure,
-            # not an opaque crash window. Preserve that distinction so only
-            # genuinely unknown external outcomes require approval/retry.
-            await self._complete_provider_call(
-                provider_call_id,
-                outcome="unavailable",
-                usage={},
-                lease_epoch=context.lease_epoch,
-                response_ref={"failure_code": str(exc.code)},
-            )
-            raise
-        except Exception as exc:  # the upstream could have accepted a request before failure
-            await self._unknown_provider_call(
-                provider_call_id,
-                message=str(exc),
-                lease_epoch=context.lease_epoch,
-            )
-            raise SkillExecutionError(
-                ErrorCode.PROVIDER_UNKNOWN_OUTCOME,
-                "provider outcome is unknown; explicit retry or approval is required",
-                recoverable=True,
-            ) from exc
+        except ProviderPolicyError as exc:
+            raise SkillExecutionError(ErrorCode.PROVIDER_UNAVAILABLE, "provider policy rejected this real call") from exc
 
         try:
             payload = json.loads(raw_text)
@@ -227,11 +207,169 @@ class SkillExecutor:
             output=output,
             evidence=tuple(evidence_refs),
             provider_call_id=str(provider_call_id),
-            actual_provider=getattr(provider, "provider_name", None),
-            actual_model=getattr(provider, "model_name", None),
+            actual_provider=getattr(actual_provider, "provider_name", None),
+            actual_model=getattr(actual_provider, "model_name", None),
             usage=usage,
-            stream_attempt=1,
+            stream_attempt=stream_attempt,
         )
+
+    async def _call_with_fallback(
+        self,
+        *,
+        definition: SkillDefinition,
+        context: ExecutionContext,
+        prompt: str,
+        request_digest: str,
+    ) -> tuple[str, dict[str, int], str, BaseLLMProvider, int]:
+        """Call one real provider, then transparently switch to another real one.
+
+        The replacement starts a fresh journal row and stream attempt.  When a
+        user has already seen primary tokens, the trace and first replacement
+        token tell the reducer to discard the old draft rather than append it.
+        """
+        route = self._provider_policy.route_for(
+            mode=context.mode,
+            requested_provider=context.provider_selection.requested_provider,
+        )
+        provider = self._provider_resolver(context)
+        provider_name = str(getattr(provider, "provider_name", "unknown"))
+        if context.mode == ExecutionMode.REAL and provider_name == "fixture":
+            raise SkillExecutionError(ErrorCode.PROVIDER_UNAVAILABLE, "real mode cannot use fixture provider")
+        stream_attempt = 1
+        call_id = await self._start_provider_call(
+            definition=definition,
+            context=context,
+            provider=provider,
+            request_digest=request_digest,
+            stream_attempt=stream_attempt,
+        )
+        try:
+            self._assert_provider_available(provider_name)
+            raw, usage = await self._call_provider(
+                provider,
+                prompt,
+                definition,
+                context,
+                call_id,
+                stream_attempt=stream_attempt,
+            )
+            self._provider_policy.record_success(provider_name)
+            return raw, usage, call_id, provider, stream_attempt
+        except ExecutionCancelled:
+            await self._complete_provider_call(call_id, outcome="cancelled", usage={}, lease_epoch=context.lease_epoch)
+            raise
+        except ProviderStreamUnavailable as exc:
+            await self._complete_provider_call(
+                call_id,
+                outcome="unavailable",
+                usage={},
+                lease_epoch=context.lease_epoch,
+                response_ref={"failure_code": str(exc.code)},
+            )
+            self._provider_policy.record_failure(provider_name)
+            if context.mode != ExecutionMode.REAL or definition.fallback_policy != "explicit-real-provider-only":
+                raise
+            fallback_name = route.fallback
+            if not fallback_name or fallback_name == provider_name:
+                raise
+            fallback = self._fallback_provider_resolver(fallback_name, context)
+            actual_fallback = str(getattr(fallback, "provider_name", "unknown"))
+            if actual_fallback in {"fixture", "unknown"}:
+                raise SkillExecutionError(ErrorCode.PROVIDER_UNAVAILABLE, "fallback provider is not a declared real provider")
+            self._assert_provider_available(actual_fallback)
+            replacement = exc.visible_tokens > 0
+            if replacement:
+                await self._emit(
+                    context,
+                    "trace",
+                    {
+                        "provider_call_id": call_id,
+                        "stream_attempt": stream_attempt,
+                        "actual_provider": provider_name,
+                        "actual_model": getattr(provider, "model_name", None),
+                        "provider_switch": {
+                            "from_provider": provider_name,
+                            "from_model": getattr(provider, "model_name", None),
+                            "to_provider": actual_fallback,
+                            "to_model": getattr(fallback, "model_name", None),
+                            "reason": ErrorCode.PROVIDER_UNAVAILABLE.value,
+                            "replace_draft": True,
+                        },
+                        "replace_draft": True,
+                    },
+                )
+            stream_attempt = 2
+            fallback_call_id = await self._start_provider_call(
+                definition=definition,
+                context=context,
+                provider=fallback,
+                request_digest=request_digest,
+                stream_attempt=stream_attempt,
+            )
+            try:
+                raw, usage = await self._call_provider(
+                    fallback,
+                    prompt,
+                    definition,
+                    context,
+                    fallback_call_id,
+                    stream_attempt=stream_attempt,
+                    replace_draft=replacement,
+                    replaces_stream_attempt=1 if replacement else None,
+                )
+                self._provider_policy.record_success(actual_fallback)
+                return raw, usage, fallback_call_id, fallback, stream_attempt
+            except ExecutionCancelled:
+                await self._complete_provider_call(
+                    fallback_call_id,
+                    outcome="cancelled",
+                    usage={},
+                    lease_epoch=context.lease_epoch,
+                )
+                raise
+            except ProviderStreamUnavailable as fallback_error:
+                await self._complete_provider_call(
+                    fallback_call_id,
+                    outcome="unavailable",
+                    usage={},
+                    lease_epoch=context.lease_epoch,
+                    response_ref={"failure_code": str(fallback_error.code)},
+                )
+                self._provider_policy.record_failure(actual_fallback)
+                raise fallback_error
+            except Exception as fallback_error:  # an opaque fallback boundary remains unknown
+                await self._unknown_provider_call(
+                    fallback_call_id,
+                    message=str(fallback_error),
+                    lease_epoch=context.lease_epoch,
+                )
+                raise SkillExecutionError(
+                    ErrorCode.PROVIDER_UNKNOWN_OUTCOME,
+                    "fallback provider outcome is unknown; explicit retry or approval is required",
+                    recoverable=True,
+                ) from fallback_error
+        except SkillExecutionError:
+            await self._complete_provider_call(
+                call_id,
+                outcome="unavailable",
+                usage={},
+                lease_epoch=context.lease_epoch,
+            )
+            raise
+        except Exception as exc:  # an opaque upstream boundary is not safe to retry automatically
+            await self._unknown_provider_call(call_id, message=str(exc), lease_epoch=context.lease_epoch)
+            raise SkillExecutionError(
+                ErrorCode.PROVIDER_UNKNOWN_OUTCOME,
+                "provider outcome is unknown; explicit retry or approval is required",
+                recoverable=True,
+            ) from exc
+
+    def _assert_provider_available(self, provider_name: str) -> None:
+        decision = self._provider_policy.can_call(provider_name)
+        if decision == "RATE_LIMITED":
+            raise ProviderStreamUnavailable("provider rate limit is active")
+        if decision == "CIRCUIT_OPEN":
+            raise ProviderStreamUnavailable("provider circuit breaker is open")
 
     async def _retrieve(
         self,
@@ -407,6 +545,7 @@ class SkillExecutor:
         context: ExecutionContext,
         provider: BaseLLMProvider,
         request_digest: str,
+        stream_attempt: int = 1,
     ) -> str:
         payload = {
             "workflow_run_id": context.workflow_run_id,
@@ -416,7 +555,7 @@ class SkillExecutor:
             # authorised provider attempt. It must never reuse the journal
             # identity of a previous unknown external call.
             "attempt": int(context.extras.get("provider_attempt", 1)),
-            "stream_attempt": 1,
+            "stream_attempt": stream_attempt,
             "provider": getattr(provider, "provider_name", "unknown"),
             "model": getattr(provider, "model_name", "unknown"),
             "provider_policy_version": context.provider_selection.policy_version,
@@ -499,6 +638,10 @@ class SkillExecutor:
         definition: SkillDefinition,
         context: ExecutionContext,
         provider_call_id: str,
+        *,
+        stream_attempt: int = 1,
+        replace_draft: bool = False,
+        replaces_stream_attempt: int | None = None,
     ) -> tuple[str, dict[str, int]]:
         messages = [
             LLMMessage(
@@ -521,26 +664,38 @@ class SkillExecutor:
                 messages,
                 max_tokens=int(context.extras.get("max_tokens", 800)),
             )
-            async for chunk in stream:
-                await context.require_not_cancelled()
-                if chunk.content:
-                    parts.append(chunk.content)
-                    await self._record_visible_tokens(
-                        provider_call_id,
-                        lease_epoch=context.lease_epoch,
-                    )
-                    await self._emit(
-                        context,
-                        "token",
-                        {
-                            "content": chunk.content,
-                            "provider_call_id": provider_call_id,
-                            "stream_attempt": 1,
-                            "token_index": chunk.index,
-                        },
-                    )
-                if chunk.finish_reason:
-                    finish_reason = chunk.finish_reason
+            try:
+                async for chunk in stream:
+                    await context.require_not_cancelled()
+                    if chunk.content:
+                        parts.append(chunk.content)
+                        await self._record_visible_tokens(
+                            provider_call_id,
+                            lease_epoch=context.lease_epoch,
+                        )
+                        await self._emit(
+                            context,
+                            "token",
+                            {
+                                "content": chunk.content,
+                                "provider_call_id": provider_call_id,
+                                "stream_attempt": stream_attempt,
+                                "token_index": chunk.index,
+                                "actual_provider": getattr(provider, "provider_name", None),
+                                "actual_model": getattr(provider, "model_name", None),
+                                "replace_draft": replace_draft and len(parts) == 1,
+                                "replaces_stream_attempt": replaces_stream_attempt,
+                            },
+                        )
+                    if chunk.finish_reason:
+                        finish_reason = chunk.finish_reason
+            except ExecutionCancelled:
+                raise
+            except Exception as exc:
+                raise ProviderStreamUnavailable(
+                    "provider stream interrupted",
+                    visible_tokens=len(parts),
+                ) from exc
             raw = "".join(parts)
             usage = {
                 "prompt_tokens": provider.estimate_tokens(prompt),
@@ -548,13 +703,21 @@ class SkillExecutor:
                 "total_tokens": provider.estimate_tokens(prompt) + provider.estimate_tokens(raw),
             }
             if not raw:
-                raise SkillExecutionError(ErrorCode.PROVIDER_UNAVAILABLE, f"provider stream ended without final content ({finish_reason or 'unknown'})")
+                raise ProviderStreamUnavailable(
+                    f"provider stream ended without final content ({finish_reason or 'unknown'})",
+                    visible_tokens=0,
+                )
             return raw, usage
-        response = await self._provider_generate(
-            provider,
-            messages,
-            max_tokens=int(context.extras.get("max_tokens", 800)),
-        )
+        try:
+            response = await self._provider_generate(
+                provider,
+                messages,
+                max_tokens=int(context.extras.get("max_tokens", 800)),
+            )
+        except ExecutionCancelled:
+            raise
+        except Exception as exc:
+            raise ProviderStreamUnavailable("provider request failed", visible_tokens=0) from exc
         return response.content, {
             "prompt_tokens": int(response.usage.prompt_tokens or 0),
             "completion_tokens": int(response.usage.completion_tokens or 0),
@@ -565,6 +728,10 @@ class SkillExecutor:
     def _default_provider(context: ExecutionContext) -> BaseLLMProvider:
         requested = context.provider_selection.requested_provider
         return get_llm_provider(requested)
+
+    @staticmethod
+    def _default_fallback_provider(provider_name: str, _context: ExecutionContext) -> BaseLLMProvider:
+        return get_llm_provider(provider_name)
 
     @staticmethod
     def _provider_stream(

@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.runtime.actions import WorkflowActionService
 from app.runtime.engine import RuntimeEngine
@@ -19,7 +19,12 @@ from app.runtime.skill_catalog import build_production_skill_catalog
 from app.services.workflow_application_service import build_default_workflow_registry
 
 
-def build_runtime_engine(session: AsyncSession, *, runtime_build_sha: str = "dev") -> RuntimeEngine:
+def build_runtime_engine(
+    session: AsyncSession,
+    *,
+    runtime_build_sha: str = "dev",
+    parallel_sessionmaker: async_sessionmaker[AsyncSession] | None = None,
+) -> RuntimeEngine:
     events = EventStore(session)
     provider_calls = ProviderCallStore(session)
     return RuntimeEngine(
@@ -37,6 +42,7 @@ def build_runtime_engine(session: AsyncSession, *, runtime_build_sha: str = "dev
         checkpoint_store=CheckpointStore(session),
         provider_call_store=provider_calls,
         runtime_build_sha=runtime_build_sha,
+        parallel_sessionmaker=parallel_sessionmaker,
     )
 
 

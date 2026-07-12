@@ -24,7 +24,13 @@ from app.db.models.knowledge.course import Course
 from app.db.models.knowledge.document import Document
 from app.db.models.knowledge.knowledge_edge import KnowledgeEdge
 from app.db.models.knowledge.knowledge_node import KnowledgeNode
-from app.db.seeds._constants import DEMO_USER_PASSWORD
+from app.db.seeds._constants import (
+    AGENTS as CATALOG_AGENTS,
+    CORE_SKILLS,
+    DEMO_USER_PASSWORD,
+    agent_id as catalog_agent_id,
+    skill_id as catalog_skill_id,
+)
 from app.db.seeds.seed_demo_user import run as seed_demo_user
 
 USER_DEMO_ID = UUID("00000000-0000-0000-0000-000000000001")
@@ -40,18 +46,6 @@ NODE_IDS = {
     "XSS 基础": UUID("00000000-0000-0000-0000-000000000202"),
     "CSRF 基础": UUID("00000000-0000-0000-0000-000000000203"),
 }
-
-AGENTS: list[tuple[str, str, str, str]] = [
-    ("policy_interpreter", "Policy and compliance interpretation agent.", "medium", "InterpretPolicy"),
-    ("hot_analyst", "Security event and reading recommendation agent.", "high", "RecommendReadings"),
-    ("job_analyst", "Job market and skill gap analysis agent.", "low", "AnalyzeJobSkillGap"),
-    ("competition_advisor", "Competition and quiz generation agent.", "medium", "GenerateQuiz"),
-    ("career_planner", "Learning persona and resource recommendation agent.", "high", "BuildLearningPersona"),
-    ("topic_explorer", "Research topic and hands-on lab agent.", "medium", "GenerateHandsOnLab"),
-    ("doc_archivist", "Course document, PPT, mindmap, and video agent.", "low", "GenerateCourseDoc"),
-    ("task_orchestrator", "Learning path and task planning agent.", "low", "GenerateLearningPath"),
-    ("outcome_evaluator", "Assessment, capability update, and quality gate agent.", "high", "QualityCheck"),
-]
 
 CAPABILITIES: list[tuple[str, float, float]] = [
     ("web_security", 0.35, 0.60),
@@ -300,7 +294,7 @@ async def _seed_agent_row(
     if existing is not None:
         return existing.id, False
 
-    agent_id = stable_id(f"agent:{name}")
+    agent_id = catalog_agent_id(name)
     payload: dict[str, Any] = {
         "id": str(agent_id),
         "name": name,
@@ -350,7 +344,7 @@ async def _seed_skill_row(
     if existing.first() is not None:
         return False
 
-    skill_id = stable_id(f"skill:{agent_name}:{skill_name}:1")
+    skill_id = catalog_skill_id(agent_name, skill_name)
     payload: dict[str, Any] = {
         "id": str(skill_id),
         "aid": str(agent_id),
@@ -388,16 +382,17 @@ async def _seed_agents_and_skills(session: AsyncSession) -> None:
     dialect = await _dialect_name(session)
     agent_stats = TableStats()
     skill_stats = TableStats()
-    for name, description, risk, skill_name in AGENTS:
+    for name, description, risk in CATALOG_AGENTS:
         agent_id, inserted = await _seed_agent_row(session, dialect, name, description, risk)
         if inserted:
             agent_stats.inserted += 1
         else:
             agent_stats.skipped += 1
-        if await _seed_skill_row(session, dialect, agent_id, name, skill_name):
-            skill_stats.inserted += 1
-        else:
-            skill_stats.skipped += 1
+        for skill_name in CORE_SKILLS[name]:
+            if await _seed_skill_row(session, dialect, agent_id, name, skill_name):
+                skill_stats.inserted += 1
+            else:
+                skill_stats.skipped += 1
     _print_stats("agents", agent_stats)
     _print_stats("agent_skills", skill_stats)
 

@@ -8,10 +8,13 @@ unbounded agent roster, or eighth external SSE type can leak back into code.
 
 from __future__ import annotations
 
-import pytest
-from pydantic import BaseModel
+from types import SimpleNamespace
 
-from app.runtime.contracts import EventEnvelope, EventType, RunStatus, SSE_EVENT_TYPES
+import pytest
+from pydantic import BaseModel, ValidationError
+
+from app.agents.outcome_evaluator.skills.quality_check import QualityCheckOutput
+from app.runtime.contracts import EventEnvelope, EventType, ExecutionMode, RunStatus, SSE_EVENT_TYPES
 from app.runtime.skill_catalog import (
     CatalogIntegrityError,
     EXPECTED_PRODUCTION_SKILL_COUNT,
@@ -23,6 +26,14 @@ from app.runtime.skill_catalog import (
 from app.db.seeds._constants import agent_id, skill_id
 from app.runtime.state_machine import InvalidStateTransition, SecureHubStateMachine
 from app.runtime.workflow_definition import EdgeDefinition, NodeDefinition, WorkflowDefinition
+from app.runtime.workflows.product_workflows import (
+    ASSESSMENT_UPDATE_V1,
+    COURSE_PLAN_V1,
+    PROFILE_BUILD_V1,
+    TUTOR_ROUTING_V1,
+)
+from app.services import workflow_application_service
+from app.services.workflow_application_service import WorkflowApplicationService
 
 
 class _Input(BaseModel):
@@ -87,6 +98,62 @@ def test_public_sse_contract_has_exactly_seven_event_types() -> None:
             event_type=EventType.TRACE,
             payload={"prompt": "must never leave the runtime"},
         )
+
+
+def test_real_roots_default_to_the_configured_provider_token_ceiling(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        workflow_application_service,
+        "get_settings",
+        lambda: SimpleNamespace(AGENT_RUN_REAL_MAX_TOKENS=4096),
+    )
+
+    budget = WorkflowApplicationService._initial_budget({}, mode=ExecutionMode.REAL)
+    explicit = WorkflowApplicationService._initial_budget(
+        {"limits": {"max_tokens": 900}},
+        mode=ExecutionMode.REAL,
+    )
+
+    assert budget == {"limits": {"max_provider_tokens": 4096}, "requested": {}}
+    assert explicit["limits"] == {"max_tokens": 900}
+
+
+def test_quality_check_output_requires_the_frozen_defect_taxonomy() -> None:
+    accepted = QualityCheckOutput(accept=True, defects=[])
+    rejected = QualityCheckOutput(
+        accept=False,
+        defects=[{"code": "instructional_mismatch", "message": "learning objective is incomplete"}],
+    )
+
+    assert accepted.accept is True
+    assert rejected.defects[0].code == "instructional_mismatch"
+    with pytest.raises(ValidationError):
+        QualityCheckOutput(accept=False, defects=[{"type": "issue", "detail": "not a taxonomy defect"}])
+    with pytest.raises(ValidationError):
+        QualityCheckOutput(accept=False, defects=[])
+    with pytest.raises(ValidationError):
+        QualityCheckOutput(
+            accept=True,
+            defects=[{"code": "fact_conflict", "message": "accepted output cannot retain a defect"}],
+        )
+
+
+@pytest.mark.parametrize(
+    ("definition", "producer_node"),
+    (
+        (PROFILE_BUILD_V1, "build_persona"),
+        (COURSE_PLAN_V1, "generate_path"),
+        (TUTOR_ROUTING_V1, "answer"),
+        (ASSESSMENT_UPDATE_V1, "run_assessment"),
+    ),
+)
+def test_product_workflows_rework_each_recoverable_quality_defect(
+    definition: WorkflowDefinition,
+    producer_node: str,
+) -> None:
+    targets = definition.rework_targets("quality_check", [{"code": "instructional_mismatch"}])
+
+    assert definition.max_rework_attempts == 1
+    assert [target.node_id for target in targets] == [producer_node]
 
 
 def test_state_machine_rejects_terminal_and_illegal_transitions() -> None:

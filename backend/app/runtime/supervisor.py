@@ -12,6 +12,7 @@ from typing import Any
 from app.core.config import get_settings
 from app.db.session import get_sessionmaker
 from app.runtime.contracts import RuntimeSemanticVersion
+from app.runtime.artifacts.recovery import ArtifactRecovery
 from app.runtime.execution.lease import Lease
 from app.runtime.execution.recovery import RecoveryService
 from app.runtime.execution.worker import RuntimeWorker
@@ -22,6 +23,8 @@ from app.runtime.persistence.provider_call_store import ProviderCallStore
 from app.runtime.persistence.run_store import RunStore
 from app.runtime.redis_notify import RedisRuntimeNotifier
 from app.runtime.versioning.compatibility import CompatibilityPolicy
+from app.runtime.versioning.checkpoint_migrations import build_runtime_checkpoint_migrations
+from app.services.storage import StorageService
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +58,17 @@ class RuntimeSupervisor:
             asyncio.create_task(self._publisher_loop(), name="securehub-runtime-outbox"),
             asyncio.create_task(self._redis_run_listener(), name="securehub-runtime-redis-wakeup"),
         ]
+        # SQLite is a deterministic CI/local compatibility backend with one
+        # writer. Its concurrent scanner can race a just-staged local artifact
+        # and create an artificial lock failure. PostgreSQL is the production
+        # authority and runs this independent recovery loop continuously.
+        if not get_settings().DATABASE_URL.startswith("sqlite"):
+            self._tasks.append(
+                asyncio.create_task(
+                    self._artifact_recovery_loop(),
+                    name="securehub-runtime-artifact-recovery",
+                )
+            )
 
     async def stop(self) -> None:
         self._stopped = True
@@ -73,13 +87,23 @@ class RuntimeSupervisor:
         await self.notifier.notify_run(run_id)
 
     async def _execute_claim(self, run: Any, lease: Lease, session: Any) -> None:
-        engine = build_runtime_engine(session)
+        # Unit-level recovery tests construct a minimal supervisor without
+        # the factory-owned sessionmaker. Production supervisors always
+        # receive it and can therefore execute independent fan-out branches.
+        parallel_sessionmaker = getattr(self, "sessionmaker", None)
+        if parallel_sessionmaker is None:
+            engine = build_runtime_engine(session)
+        else:
+            engine = build_runtime_engine(
+                session,
+                parallel_sessionmaker=parallel_sessionmaker,
+            )
         if run.status != "queued":
             recovery = RecoveryService(
                 RunStore(session),
                 CheckpointStore(session),
                 ProviderCallStore(session),
-                compatibility_policy=CompatibilityPolicy(),
+                compatibility_policy=CompatibilityPolicy(build_runtime_checkpoint_migrations()),
             )
             decision = await recovery.prepare_resume(
                 run,
@@ -163,6 +187,23 @@ class RuntimeSupervisor:
                 raise
             except Exception as exc:  # publisher retries from durable outbox
                 logger.warning("runtime outbox loop recovered from error: %s", exc)
+                await asyncio.sleep(1.0)
+
+    async def _artifact_recovery_loop(self) -> None:
+        """Activate durable staging artifacts after a worker/process loss."""
+        while not self._stopped:
+            try:
+                async with self.sessionmaker() as session:
+                    result = await ArtifactRecovery(
+                        session,
+                        StorageService(session),
+                    ).recover_staging()
+                    await session.commit()
+                await asyncio.sleep(0.25 if result["scanned"] else 2.0)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # an unavailable object store cannot stop RuntimeEngine
+                logger.warning("runtime artifact recovery loop recovered from error: %s", exc)
                 await asyncio.sleep(1.0)
 
 

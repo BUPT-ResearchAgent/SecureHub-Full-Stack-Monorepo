@@ -473,9 +473,14 @@ docker compose config
 
 ### 已验证基线
 
-- 固定 9 Agent manifest 与 `course_learning_minimal` 五节点 workflow 已完成专项真实闭环。
-- 真 DeepSeek、真 Qwen RAG、严格结构化输出、QualityCheck、5 条 child `agent_runs`、SSE replay 与 token 后取消已有验收记录。
-- 课程知识数据、Evidence Contract v1.2、Qwen 向量化及 COS 私有同步样本已有对应工程基础。
+- 固定 9 Agent / 28 Skill catalog、唯一 RuntimeEngine/StateMachine、PostgreSQL
+  durable run/outbox/SSE 以及五条产品路径已收敛。
+- Wave 4-6 已实现 typed Artifact/Evidence state、资源 fan-out、QualityCheck
+  taxonomy/rework、Spark-primary real fallback policy、HITL/budget/policy/metrics
+  与 legacy authority removal。
+- 两轮完整后端回归、可逆迁移、fixture E2E、客户端 reducer 和浏览器检查的
+  证据见 `Workout/Agent-Runtime-Wave-4-6.md`。真实外部 gate 与本地 fixture
+  证据严格分开。
 
 ### 正在收敛的边界
 
@@ -532,6 +537,8 @@ docker compose config
 | [工程约束与阶段口径](./AGENTS.md) | 所有贡献者 | 固定 9 Agent、证据门槛、数据边界和当前联调状态 |
 | [项目上下文](./CLAUDE.md) | 新成员与 AI 辅助开发工具 | 技术栈、架构铁律、历史决策与阅读路径 |
 | [多智能体架构 TODO](./TODO.md) | 架构与运行时负责人 | 统一 Runtime 的工作包、依赖、验收和收尾顺序 |
+| [Wave 4-6 交付记录](./Workout/Agent-Runtime-Wave-4-6.md) | 验收与维护负责人 | 实际范围、测试、根运行、外部阻塞与提交列表 |
+| [Runtime 运维与恢复](./docs/operations/agent-runtime-wave-4-6.md) | 部署与值班负责人 | 部署前置、迁移、恢复、指标和真实 gate 口径 |
 | [课程主路径 API 契约](./docs/api/course-contract.md) | 前后端协作者 | 课程、画像、RAG、资源生成、辅导与评估接口 |
 | [证据契约](./docs/api/evidence-contract.md) | RAG、前端与合规协作者 | Evidence DTO、来源字段、版权边界与对齐要求 |
 | [演示 Checklist](./docs/demo/seven-minute-demo-checklist.md) | 演示与验收负责人 | 7 分钟演示分镜、素材、smoke 与门禁 |

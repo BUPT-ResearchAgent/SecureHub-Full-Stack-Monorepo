@@ -61,9 +61,9 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
         reason="set ENABLE_EMBEDDING_LIVE_TESTS=true and run pytest -m embedding_live"
     )
     for item in items:
-        if "llm_live" in item.keywords and not llm_live_enabled:
+        if item.get_closest_marker("llm_live") is not None and not llm_live_enabled:
             item.add_marker(skip_llm_live)
-        if "embedding_live" in item.keywords and not embedding_live_enabled:
+        if item.get_closest_marker("embedding_live") is not None and not embedding_live_enabled:
             item.add_marker(skip_embedding_live)
 
 

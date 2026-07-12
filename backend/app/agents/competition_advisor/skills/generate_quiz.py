@@ -1,15 +1,17 @@
 # Status: real
+# Declarative Skill: SkillExecutor owns ctx.log_run for this contract.
+# Declarative Skill: SkillExecutor owns ctx.log_run for this contract.
 
-from app.agents.base import BaseSkill, SkillContext
-from app.agents.planned_skill import PlannedSkillInput, PlannedSkillOutput, prepare_planned_skill_output
+from app.agents.base import BaseSkill
+from app.agents.skill_contracts import SkillInput, SkillOutput
 
 
-class GenerateQuizInput(PlannedSkillInput):
+class GenerateQuizInput(SkillInput):
     kp_id: str | None = None
     difficulty: int = 3
 
 
-class GenerateQuizOutput(PlannedSkillOutput):
+class GenerateQuizOutput(SkillOutput):
     quiz_items: list[dict[str, object]] = []
 
 
@@ -36,21 +38,3 @@ class GenerateQuiz(BaseSkill):
     name = "GenerateQuiz"
     applicable_domains = ["course_websec"]
     output_schema = GenerateQuizOutput
-
-    async def run(self, inp: GenerateQuizInput, ctx: SkillContext) -> GenerateQuizOutput:
-        out = await prepare_planned_skill_output(
-            self,
-            inp,
-            ctx,
-            prompt_template=PROMPT_TEMPLATE,
-            output_model=GenerateQuizOutput,
-        )
-        await ctx.log_run(
-            agent_id=self.agent_id,
-            skill_id=self.skill_id,
-            input_summary=inp.model_dump(),
-            output_summary=out.model_dump(),
-            evidence_chunk_ids=out.evidence_chunk_ids,
-            quality_score=out.quality_score,
-        )
-        return out

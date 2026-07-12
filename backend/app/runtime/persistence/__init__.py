@@ -3,6 +3,7 @@
 """PostgreSQL-backed persistence adapters for the durable Agent Runtime."""
 
 from app.runtime.persistence.checkpoint_store import CheckpointStore
+from app.runtime.persistence.approval_store import ApprovalNotFoundError, ApprovalStore
 from app.runtime.persistence.common import (
     EventValidationError,
     LeaseFencedError,
@@ -17,6 +18,8 @@ from app.runtime.persistence.run_store import RunStore
 
 __all__ = [
     "CheckpointStore",
+    "ApprovalNotFoundError",
+    "ApprovalStore",
     "EventStore",
     "EventOutboxPublisher",
     "EventValidationError",

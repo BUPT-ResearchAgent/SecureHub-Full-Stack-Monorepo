@@ -1,6 +1,6 @@
 # SecureHub Workflow Run Contract v1.1
 
-> Status: frozen for Wave 0. This contract supersedes the event-envelope and
+> Status: implemented and frozen through Wave 6. This contract supersedes the event-envelope and
 > durable-run portions of the legacy Agent Run v0.4 contract. It does not
 > authorize a second runtime, event store, or fixture fallback path.
 
@@ -37,8 +37,8 @@ same owner and request returns the existing root instead of creating another.
     "kp_id": "00000000-0000-0000-0000-000000000201"
   },
   "mode": "real",
-  "provider": "deepseek",
-  "model": "deepseek-v4-pro",
+    "provider": "xfyun",
+    "model": "spark",
   "stream": true
 }
 ```
@@ -55,10 +55,10 @@ without rewriting the request identity.
   "events_url": "/api/v1/workflow-runs/00000000-0000-0000-0000-000000000301/events",
   "cancel_url": "/api/v1/workflow-runs/00000000-0000-0000-0000-000000000301/cancel",
   "mode": "real",
-  "requested_provider": "deepseek",
-  "requested_model": "deepseek-v4-pro",
-  "actual_provider": "deepseek",
-  "actual_model": "deepseek-v4-pro"
+  "requested_provider": "xfyun",
+  "requested_model": "spark",
+  "actual_provider": "xfyun",
+  "actual_model": "spark"
 }
 ```
 
@@ -74,6 +74,9 @@ New clients send product input under `input`.
 - `POST /api/v1/workflow-runs/{run_id}/pause`
 - `POST /api/v1/workflow-runs/{run_id}/resume`
 - `POST /api/v1/workflow-runs/{run_id}/retry`
+- `POST /api/v1/workflow-runs/{run_id}/approvals/{approval_id}` with
+  `{ "approved": true|false, "decision": { ... } }`
+- `GET /api/v1/workflow-runs/{run_id}/metrics`
 
 All controls enforce root ownership. `cancel` is explicitly requested control;
 an SSE disconnect, browser refresh, or subscription disposal never cancels a
@@ -83,6 +86,16 @@ Root statuses are `queued`, `running`, `reworking`, `pausing`, `paused`,
 `waiting_approval`, `cancelling`, `cancelled`, `succeeded`, `failed`, and
 `blocked`. Node statuses are `pending`, `ready`, `running`, `succeeded`,
 `failed`, `blocked`, `cancelled`, and `skipped`.
+
+`pause` is cooperative: a worker converges `pausing -> paused` at a durable
+boundary. `resume` requires a compatible checkpoint and moves `paused ->
+queued`; an explicit registered checkpoint migration may make a root
+`migratable`, while an unregistered mismatch is rejected. `retry` is reserved
+for a root waiting on an unknown provider outcome and creates a later provider
+attempt rather than replaying the opaque request. A high-risk action uses the
+approval endpoint; rejection terminally blocks the root. Start may include a
+`budget` object; exhausted root/node/provider limits block work before a new
+provider/action side effect.
 
 ## Event Stream and Replay
 
@@ -154,8 +167,8 @@ such as:
 {
   "step_attempt_id": "00000000-0000-0000-0000-000000000302",
   "provider_switch": {
-    "from_provider": "deepseek",
-    "to_provider": "spark",
+    "from_provider": "xfyun",
+    "to_provider": "deepseek",
     "reason": "PROVIDER_UNAVAILABLE",
     "replace_draft": true
   }
@@ -200,3 +213,18 @@ explicit cancel rather than treating the adapter connection as the run itself.
   is visibly segregated from real roots.
 - During migration, clients tolerate legacy flat `event` / `event_id` frames
   only to replay retained history. New server emission uses this envelope.
+
+## Wave 4-6 Additions
+
+The existing seven event names remain exhaustive. New semantics are carried in
+their typed payloads: `trace.provider_switch` and replacement token attempts,
+QualityCheck defects/rework lineage, approval IDs, budget/policy errors,
+typed `evidence_refs`, and typed `artifact_refs`. `artifact` remains visible
+only after activation. Envelope mode and requested provider are root facts;
+actual provider/model is an attempt fact and is never silently rewritten to a
+fixture provider.
+
+The client reducer stores cursors per root, deduplicates sequence tuples,
+repairs live gaps with durable replay and replaces a displayed draft only when
+the replacement trace/token flag is present. It must not concatenate draft text
+across provider calls.

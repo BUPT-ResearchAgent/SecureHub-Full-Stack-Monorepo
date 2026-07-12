@@ -1,10 +1,10 @@
 # Status: real
 
-from abc import ABC, abstractmethod
+from abc import ABC
 from typing import Any, ClassVar
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel
 
 
 class InsufficientEvidence(RuntimeError):
@@ -45,43 +45,19 @@ class AgentCapability(BaseModel):
         return base + [0.0] * (64 - len(base))
 
 
-class SkillContext(BaseModel):
-    model_config = ConfigDict(arbitrary_types_allowed=True)
+class BaseSkill:
+    """Static metadata for one of the fixed production skills.
 
-    user_id: str | None = None
-    workflow_name: str = "course_learning"
-    persona_summary: str = ""
-    stream: bool = False
-    config: Any = Field(default=None)
+    A skill class is deliberately not executable.  ``SkillDefinition`` derives
+    its typed input/output metadata from this class and ``SkillExecutor`` owns
+    validation, retrieval, provider calls, evidence snapshots and recording.
+    """
 
-    async def log_run(
-        self,
-        *,
-        agent_id: UUID | str | None = None,
-        skill_id: UUID | str | None = None,
-        input_summary: dict[str, Any],
-        output_summary: dict[str, Any],
-        evidence_chunk_ids: list[UUID | str],
-        quality_score: float | None = None,
-        status: str = "success",
-        duration_ms: int | None = None,
-        token_usage: dict[str, Any] | None = None,
-    ) -> None:
-        # 由于 harness 已经在内部记录了一次 agent_runs，这里二次调用变为 noop，
-        # 避免旧 skill 文件的兼容写法造成双写。需要直写时请直接调用 runtime.logger.log_agent_run。
-        return None
-
-
-class BaseSkill(ABC):
     name: ClassVar[str]
     applicable_domains: ClassVar[list[str]] = []
     output_schema: ClassVar[type[BaseModel] | None] = None
     agent_id: UUID | str | None = None
     skill_id: UUID | str | None = None
-
-    @abstractmethod
-    async def run(self, inp: BaseModel, ctx: SkillContext) -> BaseModel:
-        raise NotImplementedError("TODO: implement skill execution")
 
 
 class BaseAgent(ABC):

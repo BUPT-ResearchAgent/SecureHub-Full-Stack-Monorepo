@@ -80,6 +80,7 @@ RESOURCE_GENERATE_V1 = WorkflowDefinition(
             input_mapper=producer_input,
             quality_policy="workflow_node",
             retry_limit=0,
+            input_sources=(),
         ),
         NodeDefinition(
             node_id="quality_check",
@@ -89,12 +90,14 @@ RESOURCE_GENERATE_V1 = WorkflowDefinition(
             input_mapper=quality_input,
             quality_policy="none",
             retry_limit=0,
+            input_sources=("producer",),
         ),
         NodeDefinition(
             node_id="persist_artifact",
             kind="action",
             action_name="PersistGeneratedResource",
             quality_policy="none",
+            input_sources=("producer", "quality_check"),
         ),
     ),
     edges=(

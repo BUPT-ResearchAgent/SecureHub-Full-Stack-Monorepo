@@ -1,16 +1,17 @@
 # Status: real
+# Declarative Skill: SkillExecutor owns ctx.log_run for this contract.
+# Declarative Skill: SkillExecutor owns ctx.log_run for this contract.
 
-from app.agents._skill_helper import run_through_harness
-from app.agents.base import BaseSkill, SkillContext
-from app.agents.planned_skill import PlannedSkillInput, PlannedSkillOutput
+from app.agents.base import BaseSkill
+from app.agents.skill_contracts import SkillInput, SkillOutput
 
 
-class AnalyzeJobMarketInput(PlannedSkillInput):
+class AnalyzeJobMarketInput(SkillInput):
     target_role: str | None = None
     region: str | None = None
 
 
-class AnalyzeJobMarketOutput(PlannedSkillOutput):
+class AnalyzeJobMarketOutput(SkillOutput):
     trend: str = ""
     top_skills: list[str] = []
 
@@ -36,15 +37,3 @@ class AnalyzeJobMarket(BaseSkill):
     name = "AnalyzeJobMarket"
     applicable_domains = ["job"]
     output_schema = AnalyzeJobMarketOutput
-
-    async def run(self, inp: AnalyzeJobMarketInput, ctx: SkillContext) -> AnalyzeJobMarketOutput:
-        return await run_through_harness(
-            self,
-            inp,
-            ctx,
-            prompt_template=PROMPT_TEMPLATE,
-            output_model=AnalyzeJobMarketOutput,
-            agent_name="job_analyst",
-            capability_dim="job",
-            evidence_floor=1,
-        )  # type: ignore[return-value]

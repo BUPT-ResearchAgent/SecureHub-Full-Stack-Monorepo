@@ -67,7 +67,11 @@ class WorkflowSSEGateway:
                     continue
                 status = await self.service.get(workflow_run_id, actor_user_id=actor_user_id)
                 if status.status in {"succeeded", "failed", "blocked", "cancelled"}:
-                    return
+                    # Run state can commit immediately before its terminal
+                    # event becomes visible. Do not end an SSE stream without
+                    # the durable done/error envelope the client relies on.
+                    await self._wait_for_live_hint_or_poll(redis_wakeup)
+                    continue
                 if until_sequence is not None and cursor >= until_sequence:
                     return
                 await self._wait_for_live_hint_or_poll(redis_wakeup)

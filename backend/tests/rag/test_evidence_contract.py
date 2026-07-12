@@ -16,11 +16,12 @@ Run with: ``uv run pytest backend/tests/rag/test_evidence_contract.py -q``
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
 from app.db.seeds.seed_course_websec import run as seed_course_websec
 from app.runtime.harness.fixtures import default_evidence_fixtures
-from app.runtime.harness.types import EvidenceCard
 from app.schemas.evidence import CollectionMode, EvidenceChunkDTO, evidence_card_to_dto
 from app.services.knowledge.retrieval_service import RetrievalService
 
@@ -38,9 +39,9 @@ async def test_retrieval_projects_to_contract_dto(sqlite_session) -> None:
     assert len(hits) >= 3, "seed should yield enough chunks for the demo query"
 
     for hit in hits:
-        # ChunkHit -> EvidenceCard-shaped object via attribute access; the
-        # projection helper accepts anything that exposes the right attrs.
-        card = EvidenceCard(
+        # The projection accepts durable retrieval records via attribute
+        # access; it does not require a second harness evidence type.
+        card = SimpleNamespace(
             chunk_id=str(hit.chunk_id),
             document_id=str(hit.document_id),
             domain="course_websec",
@@ -78,7 +79,7 @@ async def test_retrieval_projects_to_contract_dto(sqlite_session) -> None:
 
 @pytest.mark.anyio
 async def test_offline_fixtures_satisfy_contract() -> None:
-    """Harness fallback fixtures must round-trip through the DTO."""
+    """Explicit fixture records must round-trip through the DTO."""
     for hit in default_evidence_fixtures("course_websec"):
         dto = evidence_card_to_dto(hit)
         assert isinstance(dto, EvidenceChunkDTO)

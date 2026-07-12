@@ -1,10 +1,8 @@
-# Status: real
+"""Opt-in HTTP smoke for durable SecureHub workflow roots.
 
-"""Reproducible, opt-in HTTP smoke for the Agent Run real workflow.
-
-The script intentionally keeps the paid boundary explicit: without
-``--confirm-live`` it performs no network or database work.  It reports only
-identifiers, counts, statuses, and error codes; model content is never printed.
+The script never sends a request without ``--confirm-live``.  Its output is
+limited to IDs, statuses, counts and sanitised error codes so it can be kept as
+an operational record without exposing prompts, generated content or secrets.
 """
 
 from __future__ import annotations
@@ -18,95 +16,82 @@ from pathlib import Path
 import sys
 from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.request import Request, ProxyHandler, build_opener
-from uuid import UUID
+from urllib.request import ProxyHandler, Request, build_opener
+from uuid import UUID, uuid4
 
-# Make the documented ``python scripts/<file>.py`` invocation resolve the
-# backend package; module execution already has the correct import root.
+
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from app.db.models.agent.agent_run import AgentRun
-from app.db.seeds._constants import COURSE_WEBSEC_ID, DEMO_USER_ID
-from app.db.session import get_sessionmaker
-from app.runtime.workflows.course_learning_minimal import WORKFLOW_NAME
-from sqlalchemy import select
-
 
 API_PREFIX = "/api/v1"
-EXPECTED_MODEL = "deepseek-v4-pro"
-EXPECTED_PROVIDER = "deepseek"
-EXPECTED_MODE = "real"
-EXPECTED_AGENTS = (
-    "career_planner",
-    "task_orchestrator",
-    "doc_archivist",
-    "competition_advisor",
-    "outcome_evaluator",
+DEFAULT_PROVIDER = "xfyun"
+DEFAULT_MODE = "real"
+PRODUCT_WORKFLOWS = (
+    "profile_build_v1",
+    "course_plan_v1",
+    "tutor_routing_v1",
+    "assessment_update_v1",
+    "resource_generate_v1",
 )
-ALLOWED_EVENTS = frozenset(
-    {"progress", "evidence", "token", "artifact", "trace", "done", "error"}
-)
+ALLOWED_EVENTS = frozenset({"progress", "evidence", "token", "artifact", "trace", "done", "error"})
+DEMO_USER_ID = "00000000-0000-0000-0000-000000000001"
+DEMO_COURSE_ID = "00000000-0000-0000-0000-000000000101"
+DEMO_KP_ID = "00000000-0000-0000-0000-000000000201"
+DEMO_EMAIL = "demo-student@securehub.local"
+DEMO_PASSWORD = "SecureHub@2026"
 _URL_OPENER = build_opener(ProxyHandler({}))
 
 
 class SmokeFailure(RuntimeError):
-    """An actionable, safe-to-print smoke failure."""
+    """An actionable failure whose message is safe to print."""
 
     def __init__(self, code: str, message: str, *, root_run_id: str | None = None) -> None:
-        super().__init__(message)
         self.code = code
         self.message = message
         self.root_run_id = root_run_id
-
-
-def _open_url(request: Request, *, timeout: float):
-    """Use direct local HTTP so machine proxy settings cannot turn localhost into 502."""
-    return _URL_OPENER.open(request, timeout=timeout)
+        super().__init__(message)
 
 
 def validate_confirmation(confirm_live: bool) -> None:
     if not confirm_live:
         raise SmokeFailure(
             "LIVE_CONFIRMATION_REQUIRED",
-            "pass --confirm-live to enable real HTTP smoke; no request was sent",
+            "pass --confirm-live before this script sends any HTTP request",
         )
 
 
-def _as_string(value: Any) -> str:
-    return str(value) if value is not None else ""
+def _open_url(request: Request, *, timeout: float):
+    return _URL_OPENER.open(request, timeout=timeout)
+
+
+def _base_url(value: str) -> str:
+    return value.rstrip("/")
 
 
 def _finish_sse_event(
-    *,
-    event_name: str | None,
-    event_id: int | None,
-    data_lines: list[str],
+    *, event_name: str | None, event_id: int | None, data_lines: list[str]
 ) -> dict[str, Any] | None:
     if event_name is None:
         return None
     if event_name not in ALLOWED_EVENTS:
-        raise SmokeFailure("SSE_EVENT_INVALID", f"unsupported SSE event type: {event_name}")
+        raise SmokeFailure("SSE_EVENT_INVALID", f"unsupported event type: {event_name}")
     try:
         payload = json.loads("\n".join(data_lines) or "{}")
     except json.JSONDecodeError as exc:
-        raise SmokeFailure("SSE_PAYLOAD_INVALID", "SSE data is not valid JSON") from exc
-    if not isinstance(payload, dict):
-        raise SmokeFailure("SSE_PAYLOAD_INVALID", "SSE data must be a JSON object")
-    payload_event_id = payload.get("event_id")
-    if event_id is not None and payload_event_id is not None:
-        if int(payload_event_id) != event_id:
-            raise SmokeFailure("SSE_CURSOR_MISMATCH", "SSE id and payload event_id differ")
-    resolved_event_id = event_id if event_id is not None else payload_event_id
-    if resolved_event_id is None or int(resolved_event_id) < 1:
-        raise SmokeFailure("SSE_CURSOR_MISSING", "SSE event has no positive event_id")
+        raise SmokeFailure("SSE_PAYLOAD_INVALID", "SSE payload was not JSON") from exc
+    if not isinstance(payload, dict) or event_id is None or event_id < 1:
+        raise SmokeFailure("SSE_CURSOR_INVALID", "SSE event lacked a positive id")
+    sequence = payload.get("sequence")
+    if sequence is not None and int(sequence) != event_id:
+        raise SmokeFailure("SSE_CURSOR_MISMATCH", "SSE id did not match envelope sequence")
     payload["event"] = event_name
-    payload["event_id"] = int(resolved_event_id)
+    payload["sequence"] = event_id
     return payload
 
 
 def parse_sse_text(text: str) -> list[dict[str, Any]]:
-    """Parse a complete SSE response without performing I/O."""
+    """Parse a complete SSE response without network I/O."""
     events: list[dict[str, Any]] = []
     event_name: str | None = None
     event_id: int | None = None
@@ -114,16 +99,10 @@ def parse_sse_text(text: str) -> list[dict[str, Any]]:
     for raw_line in text.splitlines() + [""]:
         line = raw_line.rstrip("\r")
         if not line:
-            event = _finish_sse_event(
-                event_name=event_name,
-                event_id=event_id,
-                data_lines=data_lines,
-            )
+            event = _finish_sse_event(event_name=event_name, event_id=event_id, data_lines=data_lines)
             if event is not None:
                 events.append(event)
-            event_name = None
-            event_id = None
-            data_lines = []
+            event_name, event_id, data_lines = None, None, []
         elif line.startswith(":"):
             continue
         elif line.startswith("event:"):
@@ -132,7 +111,7 @@ def parse_sse_text(text: str) -> list[dict[str, Any]]:
             try:
                 event_id = int(line[3:].strip())
             except ValueError as exc:
-                raise SmokeFailure("SSE_CURSOR_INVALID", "SSE id is not an integer") from exc
+                raise SmokeFailure("SSE_CURSOR_INVALID", "SSE id was not an integer") from exc
         elif line.startswith("data:"):
             data_lines.append(line[5:].lstrip())
     return events
@@ -144,17 +123,15 @@ class _SSEDecoder:
         self.event_id: int | None = None
         self.data_lines: list[str] = []
 
-    def feed(self, line: str) -> dict[str, Any] | None:
-        line = line.rstrip("\r\n")
+    def feed(self, raw_line: str) -> dict[str, Any] | None:
+        line = raw_line.rstrip("\r\n")
         if not line:
             event = _finish_sse_event(
                 event_name=self.event_name,
                 event_id=self.event_id,
                 data_lines=self.data_lines,
             )
-            self.event_name = None
-            self.event_id = None
-            self.data_lines = []
+            self.event_name, self.event_id, self.data_lines = None, None, []
             return event
         if line.startswith(":"):
             return None
@@ -164,113 +141,10 @@ class _SSEDecoder:
             try:
                 self.event_id = int(line[3:].strip())
             except ValueError as exc:
-                raise SmokeFailure("SSE_CURSOR_INVALID", "SSE id is not an integer") from exc
+                raise SmokeFailure("SSE_CURSOR_INVALID", "SSE id was not an integer") from exc
         elif line.startswith("data:"):
             self.data_lines.append(line[5:].lstrip())
         return None
-
-
-def validate_real_start(body: dict[str, Any]) -> None:
-    if (
-        body.get("mode") != EXPECTED_MODE
-        or body.get("provider") != EXPECTED_PROVIDER
-        or body.get("model") != EXPECTED_MODEL
-        or body.get("workflow") != WORKFLOW_NAME
-    ):
-        raise SmokeFailure(
-            "REAL_START_IDENTITY_INVALID",
-            "start response did not identify real/deepseek/deepseek-v4-pro",
-        )
-
-
-def _event_ids(events: list[dict[str, Any]]) -> list[int]:
-    ids = [int(event["event_id"]) for event in events]
-    if ids != sorted(ids) or len(set(ids)) != len(ids):
-        raise SmokeFailure("SSE_CURSOR_NOT_MONOTONIC", "SSE event_id is not strictly monotonic")
-    return ids
-
-
-def validate_success_events(
-    events: list[dict[str, Any]],
-    status: dict[str, Any],
-    *,
-    expected_mode: str = EXPECTED_MODE,
-) -> set[str]:
-    """Validate the success contract and return evidence IDs from SSE."""
-    _event_ids(events)
-    terminal_errors = [event for event in events if event["event"] == "error"]
-    if terminal_errors:
-        code = str(terminal_errors[-1].get("code") or "WORKFLOW_FAILED")
-        raise SmokeFailure(
-            f"REAL_WORKFLOW_{code}",
-            "real workflow emitted a terminal error before success",
-        )
-    event_types = {event["event"] for event in events}
-    required = {"progress", "evidence", "token", "trace", "done"}
-    if not required.issubset(event_types):
-        raise SmokeFailure(
-            "SSE_REQUIRED_EVENTS_MISSING",
-            f"SSE is missing required event types: {sorted(required - event_types)}",
-        )
-    done = [event for event in events if event["event"] == "done"]
-    if len(done) != 1 or done[0].get("status") != "succeeded":
-        raise SmokeFailure("SUCCESS_TERMINAL_INVALID", "success smoke did not end with done/succeeded")
-    if status.get("status") != "succeeded" or status.get("mode") != expected_mode:
-        raise SmokeFailure("STATUS_NOT_SUCCEEDED", "status API did not report real succeeded")
-    if status.get("child_run_count") != 5 or len(status.get("child_runs", [])) != 5:
-        raise SmokeFailure("CHILD_COUNT_INVALID", "status API did not report five child runs")
-    children = status["child_runs"]
-    if any(
-        child.get("persistence") != "agent_runs" or child.get("status") != "succeeded"
-        for child in children
-    ):
-        raise SmokeFailure("CHILD_PERSISTENCE_INVALID", "a real child was not persisted as agent_runs")
-    traces = [event for event in events if event["event"] == "trace"]
-    if len(traces) != 5 or [event.get("agent_name") for event in traces] != list(EXPECTED_AGENTS):
-        raise SmokeFailure("TRACE_CHAIN_INVALID", "trace chain does not match the fixed five-agent order")
-    trace_ids = {str(event.get("agent_run_id")) for event in traces}
-    child_ids = {str(child.get("agent_run_id")) for child in children}
-    if "None" in trace_ids or trace_ids != child_ids:
-        raise SmokeFailure("TRACE_UUID_MISMATCH", "API child UUIDs and SSE trace UUIDs differ")
-    if any(event.get("mode") != expected_mode for event in events):
-        raise SmokeFailure("EVENT_MODE_INVALID", "success SSE contains a non-real event label")
-    evidence_ids = {
-        str(chunk["chunk_id"])
-        for event in events
-        if event["event"] == "evidence"
-        for chunk in event.get("chunks", [])
-        if isinstance(chunk, dict) and chunk.get("chunk_id")
-    }
-    if len(evidence_ids) < 3:
-        raise SmokeFailure("EVIDENCE_IDS_MISSING", "success SSE exposed fewer than three evidence IDs")
-    if any(event["event"] == "artifact" for event in events):
-        raise SmokeFailure("UNEXPECTED_ARTIFACT", "artifact was emitted without generated_resources persistence")
-    return evidence_ids
-
-
-def validate_cancel_events(
-    events: list[dict[str, Any]],
-    status: dict[str, Any],
-    *,
-    cancel_cursor: int,
-) -> None:
-    _event_ids(events)
-    if status.get("status") != "cancelled":
-        raise SmokeFailure("CANCEL_TERMINAL_INVALID", "cancel smoke did not converge to cancelled")
-    if not any(event["event"] == "token" for event in events):
-        raise SmokeFailure("CANCEL_TOKEN_NOT_OBSERVED", "cancel smoke did not observe a token before cancel")
-    done = [event for event in events if event["event"] == "done"]
-    if len(done) != 1 or done[0].get("status") != "cancelled":
-        raise SmokeFailure("CANCEL_DONE_INVALID", "cancel smoke did not emit done/cancelled")
-    if any(
-        int(event["event_id"]) > cancel_cursor and event["event"] in {"token", "artifact"}
-        for event in events
-    ):
-        raise SmokeFailure("CANCEL_STREAM_LEAK", "token or artifact appeared after cancel cursor")
-
-
-def _base_url(value: str) -> str:
-    return value.rstrip("/")
 
 
 def _request_json(
@@ -278,49 +152,40 @@ def _request_json(
     method: str,
     path: str,
     *,
-    payload: dict[str, Any] | None = None,
-    headers: dict[str, str] | None = None,
     timeout: float,
     expected_status: int,
+    payload: dict[str, Any] | None = None,
+    headers: dict[str, str] | None = None,
 ) -> dict[str, Any]:
-    data = None if payload is None else json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    data = json.dumps(payload, ensure_ascii=False).encode("utf-8") if payload is not None else None
     request_headers = {"Accept": "application/json", **(headers or {})}
     if data is not None:
         request_headers["Content-Type"] = "application/json"
-    request = Request(
-        f"{_base_url(base_url)}{path}",
-        data=data,
-        headers=request_headers,
-        method=method,
-    )
+    request = Request(f"{_base_url(base_url)}{path}", data=data, headers=request_headers, method=method)
     try:
         with _open_url(request, timeout=timeout) as response:
-            status = response.status
+            status_code = response.status
             raw = response.read()
     except HTTPError as exc:
         code = "HTTP_ERROR"
         try:
-            body = json.loads(exc.read().decode("utf-8"))
-            detail = body.get("detail", {}) if isinstance(body, dict) else {}
+            detail = json.loads(exc.read().decode("utf-8")).get("detail", {})
             if isinstance(detail, dict):
                 code = str(detail.get("code") or code)
-        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError, AttributeError):
             pass
         raise SmokeFailure(f"HTTP_{exc.code}_{code}", "HTTP request failed") from exc
     except (OSError, URLError) as exc:
-        raise SmokeFailure("HTTP_UNAVAILABLE", "HTTP request could not reach the local backend") from exc
-    if status != expected_status:
-        raise SmokeFailure(
-            f"HTTP_STATUS_{status}",
-            f"expected HTTP {expected_status}, received {status}",
-        )
+        raise SmokeFailure("HTTP_UNAVAILABLE", "backend HTTP endpoint was unavailable") from exc
+    if status_code != expected_status:
+        raise SmokeFailure("HTTP_STATUS_UNEXPECTED", f"expected {expected_status}, got {status_code}")
     try:
-        body = json.loads(raw.decode("utf-8"))
+        result = json.loads(raw.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise SmokeFailure("HTTP_JSON_INVALID", "HTTP response was not valid JSON") from exc
-    if not isinstance(body, dict):
-        raise SmokeFailure("HTTP_JSON_INVALID", "HTTP response was not a JSON object")
-    return body
+        raise SmokeFailure("HTTP_JSON_INVALID", "HTTP response was not JSON") from exc
+    if not isinstance(result, dict):
+        raise SmokeFailure("HTTP_JSON_INVALID", "HTTP response was not an object")
+    return result
 
 
 def _request_sse(
@@ -336,14 +201,11 @@ def _request_sse(
         headers={"Accept": "text/event-stream", **(headers or {})},
         method="GET",
     )
-    events: list[dict[str, Any]] = []
     decoder = _SSEDecoder()
+    events: list[dict[str, Any]] = []
     try:
         with _open_url(request, timeout=timeout) as response:
-            while True:
-                raw_line = response.readline()
-                if not raw_line:
-                    break
+            while raw_line := response.readline():
                 event = decoder.feed(raw_line.decode("utf-8"))
                 if event is None:
                     continue
@@ -353,208 +215,247 @@ def _request_sse(
                 if event["event"] in {"done", "error"}:
                     break
     except HTTPError as exc:
-        raise SmokeFailure(f"HTTP_{exc.code}_SSE_ERROR", "SSE request failed") from exc
+        raise SmokeFailure(f"HTTP_{exc.code}_SSE", "SSE endpoint rejected the request") from exc
     except (OSError, UnicodeDecodeError, URLError) as exc:
         raise SmokeFailure("SSE_UNAVAILABLE", "SSE stream could not be read") from exc
-    if not events:
-        raise SmokeFailure("SSE_EMPTY", "SSE stream returned no events")
-    if events[-1]["event"] not in {"done", "error"}:
-        raise SmokeFailure("SSE_TERMINAL_MISSING", "SSE stream ended without a terminal event")
+    if not events or events[-1]["event"] not in {"done", "error"}:
+        raise SmokeFailure("SSE_TERMINAL_MISSING", "SSE stream ended before a terminal envelope")
     return events
 
 
-def _start_payload() -> dict[str, Any]:
+def authenticate_demo(base_url: str, *, timeout: float) -> dict[str, str]:
+    """Get the seeded demo user's token without ever printing its value."""
+    response = _request_json(
+        base_url,
+        "POST",
+        f"{API_PREFIX}/auth/login",
+        timeout=timeout,
+        expected_status=200,
+        payload={"email": DEMO_EMAIL, "password": DEMO_PASSWORD},
+    )
+    token = response.get("access_token")
+    if not isinstance(token, str) or not token:
+        raise SmokeFailure("AUTH_TOKEN_MISSING", "demo login did not return an access token")
+    return {"Authorization": f"Bearer {token}"}
+
+
+def _workflow_input(workflow: str) -> tuple[str | None, dict[str, Any]]:
+    if workflow == "profile_build_v1":
+        return None, {"message": "Build a web-security learning persona", "domain": "course_websec"}
+    if workflow == "course_plan_v1":
+        return DEMO_COURSE_ID, {"query": "Build a SQL injection learning path", "domain": "course_websec"}
+    if workflow == "tutor_routing_v1":
+        return DEMO_COURSE_ID, {"question": "Why are parameterized queries safer?", "domain": "course_websec"}
+    if workflow == "assessment_update_v1":
+        return DEMO_COURSE_ID, {"answers": [], "domain": "course_websec"}
+    if workflow == "resource_generate_v1":
+        return DEMO_COURSE_ID, {
+            "resource_type": "doc",
+            "kp_id": DEMO_KP_ID,
+            "query": "Generate a concise SQL injection learning document",
+            "domain": "course_websec",
+        }
+    if workflow == "course_learning_full_v1":
+        return DEMO_COURSE_ID, {
+            "kp_id": DEMO_KP_ID,
+            "query": "Generate a parallel SQL injection resource pack",
+            "domain": "course_websec",
+        }
+    raise SmokeFailure("WORKFLOW_INVALID", f"unsupported smoke workflow: {workflow}")
+
+
+def _start_payload(workflow: str, *, mode: str, provider: str, model: str | None) -> dict[str, Any]:
+    course_id, input_payload = _workflow_input(workflow)
     return {
-        "workflow": WORKFLOW_NAME,
-        "user_id": str(DEMO_USER_ID),
-        "course_id": str(COURSE_WEBSEC_ID),
-        "topic": "SQL 注入",
-        "goal": "生成证据驱动学习闭环",
-        "mode": EXPECTED_MODE,
-        "provider": EXPECTED_PROVIDER,
+        "workflow": workflow,
+        "user_id": DEMO_USER_ID,
+        "course_id": course_id,
+        "input": input_payload,
+        "mode": mode,
+        "provider": "fixture" if mode == "fixture" else provider,
+        "model": "fixture-v1" if mode == "fixture" else model,
         "stream": True,
     }
 
 
-def _manifest(base_url: str, timeout: float) -> dict[str, Any]:
-    body = _request_json(
-        base_url,
-        "GET",
-        f"{API_PREFIX}/agents/manifest",
-        timeout=timeout,
-        expected_status=200,
-    )
-    if body.get("total") != 9 or len(body.get("agents", [])) != 9:
-        raise SmokeFailure("MANIFEST_COUNT_INVALID", "manifest did not return exactly nine agents")
-    return body
+def _validate_events(
+    events: list[dict[str, Any]], status: dict[str, Any], *, mode: str, expect_cancel: bool
+) -> None:
+    sequences = [int(event["sequence"]) for event in events]
+    if sequences != sorted(sequences) or len(sequences) != len(set(sequences)):
+        raise SmokeFailure("SSE_SEQUENCE_INVALID", "SSE sequence was not strictly monotonic")
+    if any(event.get("mode") != mode for event in events):
+        raise SmokeFailure("SSE_MODE_INVALID", "SSE envelope mode drifted from the requested mode")
+    terminal = events[-1]
+    if expect_cancel:
+        if terminal["event"] != "done" or terminal.get("payload", {}).get("status") != "cancelled":
+            raise SmokeFailure("CANCEL_TERMINAL_INVALID", "cancelled root did not emit done/cancelled")
+        if status.get("status") != "cancelled":
+            raise SmokeFailure("CANCEL_STATUS_INVALID", "status API did not converge to cancelled")
+        return
+    if terminal["event"] == "error":
+        code = terminal.get("payload", {}).get("code") or "WORKFLOW_FAILED"
+        raise SmokeFailure(f"WORKFLOW_{code}", "workflow emitted a terminal error")
+    if terminal.get("payload", {}).get("status") != "succeeded" or status.get("status") != "succeeded":
+        raise SmokeFailure("SUCCESS_TERMINAL_INVALID", "workflow did not converge to succeeded")
+    required = {"progress", "evidence", "trace", "done"}
+    observed = {event["event"] for event in events}
+    if not required.issubset(observed):
+        raise SmokeFailure("SSE_EVENTS_MISSING", f"missing events: {sorted(required - observed)}")
 
 
-def _start(base_url: str, timeout: float) -> dict[str, Any]:
-    body = _request_json(
+async def _verify_db_alignment(run_id: str) -> dict[str, Any]:
+    """Optional local DB verification for an API process using the same DB URL."""
+    from sqlalchemy import select
+
+    from app.db.models.agent.agent_run import AgentRun
+    from app.db.models.workflow_runtime import WorkflowProviderCall, WorkflowRun
+    from app.db.session import get_sessionmaker
+
+    root_id = UUID(run_id)
+    async with get_sessionmaker()() as session:
+        root = await session.get(WorkflowRun, root_id)
+        children = list(
+            (await session.execute(select(AgentRun).where(AgentRun.workflow_run_id == root_id))).scalars().all()
+        )
+        calls = list(
+            (await session.execute(select(WorkflowProviderCall).where(WorkflowProviderCall.workflow_run_id == root_id))).scalars().all()
+        )
+    if root is None:
+        raise SmokeFailure("DB_ROOT_MISSING", "workflow root was not visible in the configured database", root_run_id=run_id)
+    if not children or not calls:
+        raise SmokeFailure("DB_CORRELATION_MISSING", "agent runs or provider calls were missing", root_run_id=run_id)
+    return {
+        "agent_run_ids": sorted(str(row.id) for row in children),
+        "provider_call_ids": sorted(str(row.id) for row in calls),
+        "provider_calls": len(calls),
+        "workflow_status": str(root.status),
+    }
+
+
+async def _verify_db_alignments(run_ids: list[str]) -> dict[str, dict[str, Any]]:
+    """Verify all roots on one event loop before disposing the local engine."""
+    from app.db.session import get_engine
+
+    try:
+        return {run_id: await _verify_db_alignment(run_id) for run_id in run_ids}
+    finally:
+        await get_engine().dispose()
+
+
+def run_workflow(
+    base_url: str,
+    *,
+    auth_headers: dict[str, str],
+    workflow: str,
+    mode: str,
+    provider: str,
+    model: str | None,
+    timeout: float,
+    cancel_after_first_token: bool,
+    expect_fallback: bool,
+) -> dict[str, Any]:
+    start = _request_json(
         base_url,
         "POST",
         f"{API_PREFIX}/workflow-runs",
-        payload=_start_payload(),
         timeout=timeout,
         expected_status=202,
+        payload=_start_payload(workflow, mode=mode, provider=provider, model=model),
+        headers={**auth_headers, "Idempotency-Key": f"wave456-smoke-{uuid4()}"},
     )
-    validate_real_start(body)
-    return body
+    run_id = str(start.get("run_id") or "")
+    if not run_id:
+        raise SmokeFailure("ROOT_ID_MISSING", "start response omitted durable root id")
 
+    cancel_sent = False
 
-def _status(base_url: str, run_id: str, timeout: float) -> dict[str, Any]:
-    return _request_json(
-        base_url,
-        "GET",
-        f"{API_PREFIX}/workflow-runs/{run_id}",
-        timeout=timeout,
-        expected_status=200,
-    )
-
-
-async def _query_agent_runs(run_id: str) -> dict[str, Any]:
-    try:
-        root_uuid = UUID(run_id)
-    except ValueError as exc:
-        raise SmokeFailure("RUN_ID_INVALID", "workflow run id is not a UUID") from exc
-    async with get_sessionmaker()() as session:
-        stmt = (
-            select(AgentRun)
-            .where(AgentRun.input_summary["workflow_run_id"].as_string() == str(root_uuid))
-            .order_by(AgentRun.created_at, AgentRun.id)
+    def cancel_on_token(event: dict[str, Any]) -> None:
+        nonlocal cancel_sent
+        if not cancel_after_first_token or cancel_sent or event["event"] != "token":
+            return
+        _request_json(
+            base_url,
+            "POST",
+            f"{API_PREFIX}/workflow-runs/{run_id}/cancel",
+            timeout=timeout,
+            expected_status=200,
+            headers=auth_headers,
         )
-        rows = list((await session.execute(stmt)).scalars().all())
-    if len(rows) != 5:
-        raise SmokeFailure("AGENT_RUN_COUNT_INVALID", "PostgreSQL did not return five child agent_runs")
-    if any(row.user_id is None or row.agent_id is None or row.skill_id is None for row in rows):
-        raise SmokeFailure("AGENT_RUN_FOREIGN_KEYS_INVALID", "a child agent_runs row has a missing foreign key")
-    if any(row.status != "success" for row in rows):
-        raise SmokeFailure("AGENT_RUN_STATUS_INVALID", "a success smoke child agent_runs row is not success")
-    evidence_ids = {
-        str(chunk_id)
-        for row in rows
-        for chunk_id in (row.evidence_chunk_ids or [])
-    }
-    return {
-        "count": len(rows),
-        "run_ids": [str(row.id) for row in rows],
-        "agent_ids": [str(row.agent_id) for row in rows],
-        "skill_ids": [str(row.skill_id) for row in rows],
-        "user_ids": [str(row.user_id) for row in rows],
-        "evidence_ids": sorted(evidence_ids),
-        "statuses": Counter(str(row.status) for row in rows),
-    }
+        cancel_sent = True
 
-
-def run_success(base_url: str, timeout: float) -> dict[str, Any]:
-    start = _start(base_url, timeout)
-    run_id = str(start["run_id"])
     try:
         events = _request_sse(
             base_url,
             f"{API_PREFIX}/workflow-runs/{run_id}/events",
             timeout=timeout,
+            headers=auth_headers,
+            on_event=cancel_on_token,
         )
-        status = _status(base_url, run_id, timeout)
-        evidence_ids = validate_success_events(events, status)
-        db = asyncio.run(_query_agent_runs(run_id))
-        if set(db["run_ids"]) != {
-            str(child["agent_run_id"])
-            for child in status["child_runs"]
-        }:
-            raise SmokeFailure("DB_TRACE_UUID_MISMATCH", "PostgreSQL child UUIDs differ from status API")
-        if set(db["evidence_ids"]) != evidence_ids:
-            raise SmokeFailure("DB_EVIDENCE_MISMATCH", "PostgreSQL evidence IDs differ from SSE evidence IDs")
+        status = _request_json(
+            base_url,
+            "GET",
+            f"{API_PREFIX}/workflow-runs/{run_id}",
+            timeout=timeout,
+            expected_status=200,
+            headers=auth_headers,
+        )
+        _validate_events(events, status, mode=mode, expect_cancel=cancel_after_first_token)
         replay = _request_sse(
             base_url,
             f"{API_PREFIX}/workflow-runs/{run_id}/events",
             timeout=timeout,
-            headers={"Last-Event-ID": "0"},
+            headers={**auth_headers, "Last-Event-ID": "0"},
         )
-        if [int(event["event_id"]) for event in replay] != [int(event["event_id"]) for event in events]:
-            raise SmokeFailure("SSE_REPLAY_MISMATCH", "Last-Event-ID replay did not reproduce the event history")
-        return {
-            "mode": EXPECTED_MODE,
-            "provider": EXPECTED_PROVIDER,
-            "model": start["model"],
+        if [event["sequence"] for event in events] != [event["sequence"] for event in replay]:
+            raise SmokeFailure("SSE_REPLAY_MISMATCH", "PostgreSQL replay did not reproduce the ordered stream")
+        switches = [
+            event
+            for event in events
+            if event["event"] == "trace" and isinstance(event.get("payload", {}).get("provider_switch"), dict)
+        ]
+        if expect_fallback and not switches:
+            raise SmokeFailure("FALLBACK_NOT_OBSERVED", "expected a transparent provider replacement trace")
+        actual_providers = sorted(
+            {
+                str(event.get("actual_provider"))
+                for event in events
+                if event.get("actual_provider") is not None
+            }
+        )
+        if mode == "real" and "fixture" in actual_providers:
+            raise SmokeFailure("REAL_FIXTURE_LEAK", "real root exposed a fixture provider")
+        result: dict[str, Any] = {
             "root_run_id": run_id,
-            "status": status["status"],
+            "workflow": workflow,
+            "status": status.get("status"),
+            "mode": mode,
+            "requested_provider": start.get("requested_provider"),
+            "actual_provider": status.get("actual_provider"),
             "event_counts": dict(Counter(event["event"] for event in events)),
             "event_count": len(events),
             "replay_event_count": len(replay),
-            "agent_run_count": db["count"],
-            "agent_run_ids": db["run_ids"],
-            "evidence_ids": sorted(evidence_ids),
+            "child_run_count": status.get("child_run_count"),
+            "provider_switches": len(switches),
         }
-    except SmokeFailure as exc:
-        raise SmokeFailure(exc.code, exc.message, root_run_id=run_id) from exc
-
-
-def run_cancel(base_url: str, timeout: float) -> dict[str, Any]:
-    start = _start(base_url, timeout)
-    run_id = str(start["run_id"])
-    try:
-        cancel_cursor: int | None = None
-        cancel_response: dict[str, Any] | None = None
-
-        def cancel_after_token(event: dict[str, Any]) -> None:
-            nonlocal cancel_cursor, cancel_response
-            if event["event"] == "token" and cancel_cursor is None:
-                cancel_cursor = int(event["event_id"])
-                cancel_response = _request_json(
-                    base_url,
-                    "POST",
-                    f"{API_PREFIX}/workflow-runs/{run_id}/cancel",
-                    timeout=timeout,
-                    expected_status=200,
-                )
-
-        events = _request_sse(
-            base_url,
-            f"{API_PREFIX}/workflow-runs/{run_id}/events",
-            timeout=timeout,
-            on_event=cancel_after_token,
-        )
-        if cancel_cursor is None or cancel_response is None:
-            terminal_errors = [event for event in events if event["event"] == "error"]
-            if terminal_errors:
-                code = str(terminal_errors[-1].get("code") or "WORKFLOW_FAILED")
-                raise SmokeFailure(
-                    f"CANCEL_BEFORE_TOKEN_{code}",
-                    "cancel workflow ended before a token, so cancel was not sent",
-                )
-            raise SmokeFailure("CANCEL_NOT_SENT", "cancel endpoint was not called after a token")
-        status = _status(base_url, run_id, timeout)
-        validate_cancel_events(events, status, cancel_cursor=cancel_cursor)
-        return {
-            "mode": EXPECTED_MODE,
-            "provider": EXPECTED_PROVIDER,
-            "model": start["model"],
-            "root_run_id": run_id,
-            "status": status["status"],
-            "cancel_cursor": cancel_cursor,
-            "cancel_response_status": cancel_response.get("status"),
-            "event_counts": dict(Counter(event["event"] for event in events)),
-            "event_count": len(events),
-        }
+        return result
     except SmokeFailure as exc:
         raise SmokeFailure(exc.code, exc.message, root_run_id=run_id) from exc
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Opt-in Agent Run real HTTP smoke")
+    parser = argparse.ArgumentParser(description="Opt-in durable workflow smoke")
     parser.add_argument("--base-url", default="http://127.0.0.1:8000")
     parser.add_argument("--timeout-seconds", type=float, default=180.0)
-    parser.add_argument(
-        "--mode",
-        choices=("success", "cancel-after-first-token", "both"),
-        default="success",
-    )
-    parser.add_argument(
-        "--confirm-live",
-        action="store_true",
-        help="required acknowledgement before any real HTTP request",
-    )
+    parser.add_argument("--workflow", default="course_learning_full_v1")
+    parser.add_argument("--all-product-paths", action="store_true")
+    parser.add_argument("--mode", choices=("real", "fixture"), default=DEFAULT_MODE)
+    parser.add_argument("--provider", default=DEFAULT_PROVIDER)
+    parser.add_argument("--model", default=None)
+    parser.add_argument("--cancel-after-first-token", action="store_true")
+    parser.add_argument("--expect-fallback", action="store_true")
+    parser.add_argument("--verify-db", action="store_true")
+    parser.add_argument("--confirm-live", action="store_true")
     return parser.parse_args(argv)
 
 
@@ -563,28 +464,41 @@ def main(argv: list[str] | None = None) -> int:
     try:
         validate_confirmation(args.confirm_live)
         if args.timeout_seconds <= 0:
-            raise SmokeFailure("TIMEOUT_INVALID", "--timeout-seconds must be positive")
-        _manifest(args.base_url, args.timeout_seconds)
-        if args.mode == "success":
-            result: Any = run_success(args.base_url, args.timeout_seconds)
-        elif args.mode == "cancel-after-first-token":
-            result = run_cancel(args.base_url, args.timeout_seconds)
-        else:
-            result = {
-                "cancel": run_cancel(args.base_url, args.timeout_seconds),
-                "success": run_success(args.base_url, args.timeout_seconds),
-            }
-        print(json.dumps({"ok": True, "result": result}, ensure_ascii=False, sort_keys=True))
+            raise SmokeFailure("TIMEOUT_INVALID", "timeout must be positive")
+        auth_headers = authenticate_demo(args.base_url, timeout=args.timeout_seconds)
+        workflows = PRODUCT_WORKFLOWS if args.all_product_paths else (args.workflow,)
+        if args.all_product_paths and args.cancel_after_first_token:
+            raise SmokeFailure("ARGUMENT_CONFLICT", "cancel smoke supports one workflow per invocation")
+        results = [
+            run_workflow(
+                args.base_url,
+                auth_headers=auth_headers,
+                workflow=workflow,
+                mode=args.mode,
+                provider=args.provider,
+                model=args.model,
+                timeout=args.timeout_seconds,
+                cancel_after_first_token=args.cancel_after_first_token,
+                expect_fallback=args.expect_fallback,
+            )
+            for workflow in workflows
+        ]
+        if args.verify_db:
+            alignments = asyncio.run(
+                _verify_db_alignments([str(result["root_run_id"]) for result in results])
+            )
+            for result in results:
+                run_id = str(result["root_run_id"])
+                if run_id not in alignments:
+                    raise SmokeFailure("DB_ALIGNMENT_MISSING", "database alignment result was missing")
+                result["database"] = alignments[run_id]
+        print(json.dumps({"ok": True, "results": results}, ensure_ascii=False, sort_keys=True))
         return 0
     except SmokeFailure as exc:
-        failure: dict[str, Any] = {
-            "ok": False,
-            "error_code": exc.code,
-            "message": exc.message,
-        }
-        if exc.root_run_id is not None:
-            failure["root_run_id"] = exc.root_run_id
-        print(json.dumps(failure, ensure_ascii=False))
+        result: dict[str, Any] = {"ok": False, "error_code": exc.code, "message": exc.message}
+        if exc.root_run_id:
+            result["root_run_id"] = exc.root_run_id
+        print(json.dumps(result, ensure_ascii=False, sort_keys=True))
         return 1
 
 
