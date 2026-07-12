@@ -333,6 +333,16 @@ async def _verify_db_alignment(run_id: str) -> dict[str, Any]:
     }
 
 
+async def _verify_db_alignments(run_ids: list[str]) -> dict[str, dict[str, Any]]:
+    """Verify all roots on one event loop before disposing the local engine."""
+    from app.db.session import get_engine
+
+    try:
+        return {run_id: await _verify_db_alignment(run_id) for run_id in run_ids}
+    finally:
+        await get_engine().dispose()
+
+
 def run_workflow(
     base_url: str,
     *,
@@ -344,7 +354,6 @@ def run_workflow(
     timeout: float,
     cancel_after_first_token: bool,
     expect_fallback: bool,
-    verify_db: bool,
 ) -> dict[str, Any]:
     start = _request_json(
         base_url,
@@ -429,8 +438,6 @@ def run_workflow(
             "child_run_count": status.get("child_run_count"),
             "provider_switches": len(switches),
         }
-        if verify_db:
-            result["database"] = asyncio.run(_verify_db_alignment(run_id))
         return result
     except SmokeFailure as exc:
         raise SmokeFailure(exc.code, exc.message, root_run_id=run_id) from exc
@@ -473,10 +480,18 @@ def main(argv: list[str] | None = None) -> int:
                 timeout=args.timeout_seconds,
                 cancel_after_first_token=args.cancel_after_first_token,
                 expect_fallback=args.expect_fallback,
-                verify_db=args.verify_db,
             )
             for workflow in workflows
         ]
+        if args.verify_db:
+            alignments = asyncio.run(
+                _verify_db_alignments([str(result["root_run_id"]) for result in results])
+            )
+            for result in results:
+                run_id = str(result["root_run_id"])
+                if run_id not in alignments:
+                    raise SmokeFailure("DB_ALIGNMENT_MISSING", "database alignment result was missing")
+                result["database"] = alignments[run_id]
         print(json.dumps({"ok": True, "results": results}, ensure_ascii=False, sort_keys=True))
         return 0
     except SmokeFailure as exc:

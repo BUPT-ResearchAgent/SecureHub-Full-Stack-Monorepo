@@ -6,6 +6,7 @@ import json
 
 import pytest
 
+import scripts.smoke_agent_run_real as live_smoke
 from scripts.smoke_agent_run_real import (
     SmokeFailure,
     _start_payload,
@@ -69,3 +70,29 @@ def test_demo_authentication_returns_header_without_exposing_token(monkeypatch: 
         "email": "demo-student@securehub.local",
         "password": "SecureHub@2026",
     }
+
+
+def test_main_batches_database_alignment_in_one_event_loop(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(live_smoke, "PRODUCT_WORKFLOWS", ("profile_build_v1", "course_plan_v1"))
+    monkeypatch.setattr(live_smoke, "authenticate_demo", lambda *_args, **_kwargs: {})
+
+    def fake_run_workflow(_base_url: str, *, workflow: str, **_kwargs: object) -> dict[str, object]:
+        return {"root_run_id": f"root-{workflow}", "workflow": workflow, "status": "succeeded"}
+
+    calls: list[tuple[str, ...]] = []
+
+    async def fake_verify(run_ids: list[str]) -> dict[str, dict[str, object]]:
+        calls.append(tuple(run_ids))
+        return {run_id: {"workflow_status": "succeeded"} for run_id in run_ids}
+
+    monkeypatch.setattr(live_smoke, "run_workflow", fake_run_workflow)
+    monkeypatch.setattr(live_smoke, "_verify_db_alignments", fake_verify)
+
+    assert main(["--confirm-live", "--all-product-paths", "--verify-db"]) == 0
+    result = json.loads(capsys.readouterr().out)
+
+    assert calls == [("root-profile_build_v1", "root-course_plan_v1")]
+    assert all(item["database"]["workflow_status"] == "succeeded" for item in result["results"])

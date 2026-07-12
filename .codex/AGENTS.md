@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - **文档目的**：作为"安枢智梯 SecureHub / CyberLadder"项目所有后续 Claude Code / Codex / Cursor 会话的默认上下文。任何在本仓库工作的 AI 助手（或新加入的工程师）应当**首先读完本文件**，再开始触碰代码。
 - **读者**：本项目团队成员；后续接入的 AI 编码助手；A3 赛题答辩评委（架构理解参考）。
-- **最后更新时间**：2026-07-11（SecureHub Agent Runtime v1.1 Wave 0-6 已实现；真实外部 Provider/RAG/COS gate 仍按 fail-closed 记录，绝不以 fixture 冒充成功）。
+- **最后更新时间**：2026-07-12（SecureHub Agent Runtime v1.1 Wave 0-6 已实现；真实 DeepSeek/RAG/PostgreSQL gate 已复核，Spark fallback 与 COS 仍按 fail-closed 记录，绝不以 fixture 冒充成功）。
 - **本文件的权威性**：在仓库层面，本文件 > `README.md` / `docs/architecture.md` / `docs/backend-overview.md`。当本文件与代码现状冲突时，**以代码为准并立即更新本文件**；当本文件与外部 4 份文档冲突时，**以本文件 §19 的"差异说明"为准**。
 
 ### 阅读约定（什么时候回读外部文档？）
@@ -31,16 +31,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ---
 
-## 0A. 当前阶段与统一语言规范（2026-07-11）
+## 0A. 当前阶段与统一语言规范（2026-07-12）
 
 > 本节用于修正 2026-07-08 前后文档中的阶段漂移。后续回答、任务提示词、PR 描述均按本节措辞执行。
 
 | 维度 | 统一口径 |
 |---|---|
-| 当前阶段 | **Runtime v1.1 Wave 0-6 代码、契约与本地验收已完成**；真实 Spark/DeepSeek fallback、RAG、PostgreSQL 与 COS 仍须在有效外部凭据恢复后单独重跑，不能误报 |
+| 当前阶段 | **Runtime v1.1 Wave 0-6 代码、契约与本地验收已完成**；2026-07-12 已复核真实 DeepSeek、Qwen RAG、PostgreSQL/Redis 与五条产品路径。Spark primary/DeepSeek fallback 与 COS 仍须在有效外部条件恢复后单独重跑，不能误报 |
 | Runtime 核心 | `RuntimeEngine`、`SecureHubStateMachine`、framework-neutral `WorkflowDefinition`、唯一 `SkillExecutor`、PostgreSQL durable store/outbox、Worker/lease/fencing/recovery 均已落地 |
 | 产品路径 | `/profile/chat`、`/courses/{id}/plan`、`/courses/{id}/resources/generate`、`/tutor/ask`、`/assessment/run` 都是 `WorkflowApplicationService` adapter，复用唯一可查询 root UUID |
-| 真实联调证据 | Golden Slice 与五条产品路径均以 `real / deepseek / deepseek-v4-pro` 成功；root、child、evidence、provider call、artifact 和 event FK 链已核对，详情见 `Workout/Agent-Runtime-Wave-0-3.md` |
+| 真实联调证据 | Golden Slice 与五条产品路径均以 `real / deepseek / deepseek-v4-pro` 成功；2026-07-12 复核了新的五条产品 root、RAG evidence、`agent_runs`、provider calls 与 SSE replay，详情见 `Workout/Agent-Runtime-Wave-0-3.md` 和 `Workout/Agent-Runtime-Wave-4-6.md` |
 | 前端与 SSE | `WorkflowRunClient` 使用 typed reducer、Last-Event-ID、durable gap replay、duplicate dedupe 与 provider stream replacement；对外事件固定七类 |
 | 不可倒退语义 | real 失败不得进入 fixture；QualityCheck 不得内嵌/放宽；Redis 不是任务、lease、state 或 event 真相；Provider unknown 不假装 exactly-once |
 | COS 运行时外部阻塞 | 腾讯 COS runtime `put_object` 返回 `451 UnavailableForLegalReasons`（报告为账号欠费）；本次未重复调用、未伪造 COS success、未用 fixture 替代。显式 local artifact provider 的 Saga 已验证 |
@@ -2164,7 +2164,7 @@ forbidden: LLM 自由生成内容
 - **Provider**：真实主链为讯飞星火，DeepSeek 仅为透明显式 real fallback。每个 fallback 新建 provider call/stream attempt 并发出 draft replacement trace；不得拼接两个 Provider 的文本，fixture 绝不接管 real 根。
 - **控制平面**：pause/resume/retry/approval、兼容性检查和显式 checkpoint migration、root/node/provider budget、PolicyEngine、审计、metrics/evals 均由唯一 RuntimeEngine/StateMachine/PostgreSQL 控制面实现。
 - **收敛**：旧 `BaseSkill.run`/`planned_skill.py`/RunRegistry/legacy Harness/graphs/direct skill execution/duplicate SSE serializer 均不再是生产权威；LangGraph 只能是 topology adapter。
-- **证据边界**：本地 fixture 根、两轮完整回归、迁移回滚、浏览器与故障注入结果见 `Workout/Agent-Runtime-Wave-4-6.md`。当前缺失 Spark、DeepSeek、DashScope、COS 有效凭据，且本地 PostgreSQL 密码无效；真实 gate 只能报告脱敏 fail-closed 结果，不能宣称成功。
+- **证据边界**：本地 fixture 根、两轮完整回归、迁移回滚、浏览器与故障注入结果见 `Workout/Agent-Runtime-Wave-4-6.md`。2026-07-12 已真实复核 DeepSeek、DashScope/Qwen RAG、PostgreSQL 与五条产品路径；Spark bearer key 仍缺失，Spark primary/real fallback/cancel 未运行，COS 仍保留 `451 UnavailableForLegalReasons` 外部阻塞。不得把 local storage 或 fixture 改写成 COS、Spark 或 fallback 成功。
 
 ---
 

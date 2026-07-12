@@ -521,6 +521,37 @@ class _DuplicateHintNotifier:
             await asyncio.sleep(0.001)
 
 
+class _TerminalEventRaceService:
+    def __init__(self, run_id: UUID) -> None:
+        from app.runtime.contracts import EventEnvelope
+
+        self.run_id = run_id
+        self.replay_calls = 0
+        self.progress = EventEnvelope(
+            workflow_run_id=run_id,
+            sequence=1,
+            event_type="progress",
+            payload={"status": "running"},
+        )
+        self.error = EventEnvelope(
+            workflow_run_id=run_id,
+            sequence=2,
+            event_type="error",
+            payload={"status": "failed", "terminal": True},
+        )
+
+    async def replay(self, _run_id, *, after_sequence: int, **_kwargs):
+        self.replay_calls += 1
+        if after_sequence == 0:
+            return [self.progress]
+        if self.replay_calls < 3:
+            return []
+        return [self.error]
+
+    async def get(self, _run_id, **_kwargs):
+        return SimpleNamespace(status="failed")
+
+
 @pytest.mark.anyio
 async def test_sse_gateway_replays_postgres_after_lost_or_duplicate_redis_hints() -> None:
     run_id = uuid4()
@@ -538,6 +569,18 @@ async def test_sse_gateway_replays_postgres_after_lost_or_duplicate_redis_hints(
     no_hint_gateway = WorkflowSSEGateway(no_hint_service, poll_interval_seconds=0.001)
     polled = [event async for event in no_hint_gateway.stream(no_hint_service.run_id)]
     assert [event.sequence for event in polled] == [1, 2, 3]
+
+
+@pytest.mark.anyio
+async def test_sse_gateway_waits_for_a_terminal_event_after_terminal_status() -> None:
+    service = _TerminalEventRaceService(uuid4())
+    gateway = WorkflowSSEGateway(service, poll_interval_seconds=0.001)
+
+    streamed = [event async for event in gateway.stream(service.run_id)]
+
+    assert [event.sequence for event in streamed] == [1, 2]
+    assert streamed[-1].terminal
+    assert service.replay_calls >= 3
 
 
 class _FakePubSub:

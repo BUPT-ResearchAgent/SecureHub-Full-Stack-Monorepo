@@ -1,7 +1,7 @@
 # SecureHub Agent Runtime TODO
 
-> Version: v2.2
-> Updated: 2026-07-11
+> Version: v2.3
+> Updated: 2026-07-12
 > Authority: `Plan/2026-07-11_SecureHub_多智能体底层完整架构实施方案.md` v1.1
 > Delivery evidence: `Workout/Agent-Runtime-Wave-0-3.md` and
 > `Workout/Agent-Runtime-Wave-4-6.md`
@@ -31,10 +31,13 @@ The fixed nine business Agents remain:
 - `backend/data/runtime_wave_storage/` is regenerated local Artifact Saga
   output and is ignored precisely. Existing local evidence files are retained,
   not deleted or committed.
-- The currently available local PostgreSQL volume remains at
-  `20260611_0960`, before the durable-runtime migrations, so it cannot
-  independently re-query the six historical real roots. It was not migrated
-  for verification and no external database was queried without authority.
+- The prior 2026-07-11 local PostgreSQL volume remained at `20260611_0960`,
+  before the durable-runtime migrations. That historical constraint no longer
+  describes the verified 2026-07-12 host state below.
+- 2026-07-12 host verification restored healthy PostgreSQL/Redis and migrated
+  the local database to `20260712_1040`. Real DeepSeek, Qwen RAG and all five
+  product paths passed with durable root/agent-run/provider/SSE replay checks;
+  details and IDs are recorded in `Workout/Agent-Runtime-Wave-4-6.md`.
 
 ## Wave 0: Contract Freeze
 
@@ -131,10 +134,12 @@ The fixed nine business Agents remain:
 
 ## External Gate
 
-- [ ] Supply valid PostgreSQL, Spark, DeepSeek, DashScope/RAG and COS
-  credentials, then re-run the real provider primary/fallback, RAG and COS
-  gates. Current local configuration has real execution disabled; real requests
-  return sanitised `503` failures and never fixture fallback.
+- [x] Re-run PostgreSQL, real DeepSeek, Qwen RAG and the five product workflow
+  paths with real `agent_runs`, provider calls and SSE replay. The 2026-07-12
+  result used explicit local artifact storage and did not claim COS success.
+- [ ] Supply the Spark bearer key, then run the real Spark primary chain, a
+  controlled Spark stream interruption with real DeepSeek replacement, and a
+  real-token cancel. `--expect-fallback` alone does not manufacture a failure.
 - [ ] Re-run the Tencent COS runtime artifact smoke only after account billing
   is restored. The last real `put_object` returned
   `451 UnavailableForLegalReasons`; it is an external blocker, not a success,

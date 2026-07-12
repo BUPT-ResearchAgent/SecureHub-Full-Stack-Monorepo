@@ -22,7 +22,8 @@ Date: 2026-07-11
 
 ## Migration And Tests
 
-Migration head: `20260711_1030`.
+Historical Wave 4-6 migration head: `20260711_1030`. Current handoff head:
+`20260712_1040`.
 
 | Gate | Result |
 | --- | --- |
@@ -57,30 +58,55 @@ run completed previously as `f0b624b2-fb47-4b7b-9cfd-856ea795755c`; focused
 tests cover pause/resume/retry/approval and the final browser run covers the
 control presentation.
 
-## External Gates And Boundaries
+## 2026-07-12 Host Handoff Verification
 
-- Real smoke against the local service returned sanitised
-  `HTTP_503_REAL_MODE_DISABLED`; no fixture provider was injected.
-- Real RAG returned `503 RAG_UNAVAILABLE` with the generic message
-  `real RAG embedding dependency is unavailable`, not a DashScope credential
-  detail or fixture evidence.
-- Local configuration had no valid Spark/DeepSeek/DashScope/COS credentials,
-  `AGENT_RUN_REAL_ENABLED` was disabled, and the configured PostgreSQL
-  connection did not authenticate. COS activation remains blocked by the
-  recorded HTTP 451 billing state.
-- Docker is unavailable in the local execution environment, so a disposable
-  PostgreSQL/Redis compose gate could not be started locally. The CI workflow
-  still provisions those services; this report does not claim that remote CI
-  has completed before its push-triggered run is observed.
-- A deliberately concurrent SQLite-only control probe encountered a SQLite
-  write lock. SQLite is not an accepted multi-worker deployment backend; no
-  PostgreSQL live gate was claimed from this result. The durable fault suite
-  remains green and production fan-out is PostgreSQL-only.
+The current workstation has healthy compose `postgres` and `redis` containers;
+PostgreSQL is reachable at `127.0.0.1:15432`. The real gate was explicitly
+enabled with a `4096` token ceiling and used `STORAGE_PROVIDER=local` to isolate
+the already-recorded COS billing block. No secret values, prompts, reasoning or
+generated content are recorded here.
 
-Therefore no real Spark primary, DeepSeek fallback/draft replacement, real RAG,
-PostgreSQL production-root or COS success is claimed by this report. The code
-and isolated fake-provider tests verify the real-to-real replacement semantics;
-the external gate remains pending until credentials and services are available.
+| Gate | Result |
+| --- | --- |
+| PostgreSQL migration and seed | `alembic upgrade head` / `current` reached `20260712_1040`; `seed_smoke.py` was idempotent with 9 agents and 28 skills |
+| Disposable SQLite migration | `upgrade head -> downgrade 20260611_0960 -> upgrade head` passed at `20260712_1040` |
+| `/api/v1/llm/health` | real `deepseek / deepseek-v4-pro` returned `available`; the endpoint now delegates to `get_llm_health()` rather than a fixture response |
+| DeepSeek protocol | opt-in streaming JSON probe passed with `finish_reason=stop` and a valid JSON object |
+| Qwen embedding and RAG | live embedding test passed; provenance audit found 3,549 ready same-profile chunks and 8/8 sourced hits for `SQL 注入` |
+| Full backend regression | `230 passed, 3 skipped` |
+
+The first real product-path attempt exposed two code defects without a fixture
+fallback: `QualityCheck` accepted an untyped `type/detail` defect shape, and
+the smoke script created a new asyncio loop for every `--verify-db` root.
+`QualityCheck` now requires the frozen taxonomy and consistent decision shape;
+the four product definitions have one bounded deterministic rework route for
+recoverable defects; the smoke script batches all DB checks on one event loop.
+
+| Workflow | Root ID | Terminal | Live / replay SSE | DB agent runs / provider calls |
+| --- | --- | --- | ---: | ---: |
+| `profile_build_v1` | `0645b4c8-7ef4-4e49-ba93-254fc6ac929e` | succeeded | 613 / 613 | 2 / 2 |
+| `course_plan_v1` | `9a9f7a1e-6cbe-4ff1-a036-d8d6292ab9f2` | succeeded | 2913 / 2913 | 4 / 4 |
+| `tutor_routing_v1` | `a844064f-af33-437a-beab-0d04dd0fdeef` | succeeded | 422 / 422 | 3 / 3 |
+| `assessment_update_v1` | `1ff55bbf-a678-4900-a485-5ad5ececd47b` | succeeded | 537 / 537 | 4 / 4 |
+| `resource_generate_v1` | `95b4b716-0a95-46ec-8b55-0ab05ac13900` | succeeded | 1030 / 1030 | 4 / 4 |
+
+All five roots were `mode=real` with requested and actual
+`deepseek / deepseek-v4-pro`; no root exposed a fixture provider. The resource
+root emitted one durable artifact event. `provider_switches=0` is expected for
+these direct-DeepSeek probes and is not a Spark-to-DeepSeek fallback claim.
+
+## Remaining External Gates
+
+- Spark primary, controlled Spark stream interruption, real DeepSeek fallback
+  replacement, and a real-token cancel on the Spark path remain unverified:
+  the resolved `XFYUN_API_KEY` is empty. No Spark request was sent.
+- COS remains unverified in this handoff. Runtime verification used the explicit
+  local storage provider; the historical real COS `put_object`
+  `451 UnavailableForLegalReasons` billing block remains an external blocker,
+  not a successful COS result or fixture fallback.
+- The earlier 2026-07-11 host record with disabled real execution, unavailable
+  RAG and unauthenticated PostgreSQL was superseded by this dated verification;
+  its fail-closed behavior remains relevant only as historical evidence.
 
 ## Legacy Search Result
 

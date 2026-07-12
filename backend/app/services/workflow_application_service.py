@@ -125,7 +125,7 @@ class WorkflowApplicationService:
                     requested_provider=provider,
                     requested_model=model,
                     input_payload=validated_input,
-                    budget=self._initial_budget(request.budget),
+                    budget=self._initial_budget(request.budget, mode=request.mode),
                     idempotency_key=key,
                     return_created=True,
                 )
@@ -545,11 +545,22 @@ class WorkflowApplicationService:
         return payload
 
     @staticmethod
-    def _initial_budget(value: dict[str, Any] | None) -> dict[str, Any]:
+    def _initial_budget(
+        value: dict[str, Any] | None,
+        *,
+        mode: ExecutionMode,
+    ) -> dict[str, Any]:
         requested = dict(value or {})
-        limits = requested.get("limits")
+        supplied_limits = requested.get("limits")
+        limits = dict(supplied_limits) if isinstance(supplied_limits, dict) else dict(requested)
+        if (
+            mode == ExecutionMode.REAL
+            and "max_provider_tokens" not in limits
+            and "max_tokens" not in limits
+        ):
+            limits["max_provider_tokens"] = get_settings().AGENT_RUN_REAL_MAX_TOKENS
         return {
-            "limits": dict(limits) if isinstance(limits, dict) else requested,
+            "limits": limits,
             "requested": requested,
         }
 

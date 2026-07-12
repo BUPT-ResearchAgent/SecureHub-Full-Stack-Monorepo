@@ -1,11 +1,12 @@
 # Agent Runtime Wave 4-6 Operations
 
-Status: real control-plane implementation; live external gates are credential
-dependent.
+Status: real control-plane implementation. The 2026-07-12 local DeepSeek/RAG/
+PostgreSQL gate passed; Spark primary/fallback and COS remain credential or
+account dependent.
 
 ## Deployment Preconditions
 
-- Run PostgreSQL at Alembic head `20260711_1030`; Redis is a wake-up/fan-out
+- Run PostgreSQL at Alembic head `20260712_1040`; Redis is a wake-up/fan-out
   projection, not a replacement for PostgreSQL scans, leases or events.
 - Set real execution explicitly and inject Spark, DeepSeek, RAG embedding and
   storage credentials through the deployment secret store. Do not put them in
@@ -19,7 +20,7 @@ dependent.
 ## Rollout And Migration
 
 1. Drain or fence old workers, then run `alembic upgrade head`.
-2. Confirm head `20260711_1030`, catalog `9 agents / 28 skills`, one
+2. Confirm head `20260712_1040`, catalog `9 agents / 28 skills`, one
    `RuntimeEngine`, and one public `workflow_events` serializer.
 3. Start worker, outbox publisher and artifact recovery loop. PostgreSQL scans
    recover queued/expired roots even if Redis is empty or duplicated.
@@ -73,8 +74,33 @@ EvidenceRef/ArtifactRef IDs and sanitised errors. A fallback must emit a trace
 replacement and a new stream attempt; client text from two providers must never
 be concatenated.
 
-The local 2026-07-11 environment had real execution disabled, missing provider
-and embedding credentials, an unauthenticated PostgreSQL configuration and a
-blocked COS account. Those conditions are external gates, not fixture fallback
-permission. See `Workout/Agent-Runtime-Wave-4-6.md` for exact validation
-evidence and pending gates.
+## 2026-07-12 Local Live Verification
+
+The host ran healthy compose PostgreSQL/Redis, migrated PostgreSQL to
+`20260712_1040`, and seeded the frozen `9 agents / 28 skills` catalog. With
+explicit real mode, real DeepSeek and Qwen RAG, and explicit local artifact
+storage, the opt-in HTTP smoke completed the five product paths below. Each
+root had real provider calls, durable `agent_runs`, ordered PostgreSQL SSE
+replay equal to the live stream, and no fixture provider.
+
+| Workflow | Root ID | SSE live / replay | Provider calls |
+| --- | --- | ---: | ---: |
+| `profile_build_v1` | `0645b4c8-7ef4-4e49-ba93-254fc6ac929e` | 613 / 613 | 2 |
+| `course_plan_v1` | `9a9f7a1e-6cbe-4ff1-a036-d8d6292ab9f2` | 2913 / 2913 | 4 |
+| `tutor_routing_v1` | `a844064f-af33-437a-beab-0d04dd0fdeef` | 422 / 422 | 3 |
+| `assessment_update_v1` | `1ff55bbf-a678-4900-a485-5ad5ececd47b` | 537 / 537 | 4 |
+| `resource_generate_v1` | `95b4b716-0a95-46ec-8b55-0ab05ac13900` | 1030 / 1030 | 4 |
+
+`GET /api/v1/llm/health` also returned real
+`deepseek / deepseek-v4-pro / available`; the endpoint delegates to the health
+service and sanitises provider failures. The live embedding test and a
+provenance audit passed with 3,549 ready Qwen-profile chunks and eight sourced
+retrieval hits. This is a direct-DeepSeek verification, not a provider fallback
+test: all roots had `provider_switches=0`.
+
+Spark primary/fallback and COS are still open gates. The resolved Spark bearer
+key is empty, so no Spark request or controlled fallback/cancel was attempted.
+COS was deliberately held at the local provider for this run; the recorded
+`451 UnavailableForLegalReasons` billing state remains an external blocker.
+See `Workout/Agent-Runtime-Wave-4-6.md` for the exact commands, IDs and
+sanitised evidence.

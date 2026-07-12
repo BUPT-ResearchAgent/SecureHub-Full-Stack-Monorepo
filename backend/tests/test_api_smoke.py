@@ -4,8 +4,11 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from fastapi.testclient import TestClient
 
+from app.llm.provider import HealthStatus
 from app.main import app
 
 USER_ID = "00000000-0000-0000-0000-000000000001"
@@ -104,16 +107,101 @@ def test_courses_list():
     assert any(c["code"] == "WEB-SEC-101" for c in body)
 
 
-def test_llm_health_endpoint_fixture_mode():
+def test_llm_health_endpoint_uses_health_service(monkeypatch):
+    from app.api.v1.endpoints import llm as llm_endpoint
+
+    async def available_health() -> HealthStatus:
+        return HealthStatus(
+            provider="deepseek",
+            model="deepseek-v4-pro",
+            mode="real",
+            live_enabled=True,
+            status="available",
+            rate_limit_state={"used": 2, "limit": 10},
+        )
+
+    monkeypatch.setattr(llm_endpoint, "get_llm_health", available_health)
+    monkeypatch.setattr(
+        llm_endpoint,
+        "get_settings",
+        lambda: SimpleNamespace(
+            AGENT_RUN_REAL_ENABLED=True,
+            LLM_PROVIDER="deepseek",
+            DEEPSEEK_MODEL="deepseek-v4-pro",
+            XFYUN_MODEL="spark-v4",
+        ),
+    )
+
     client = TestClient(app)
     response = client.get("/api/v1/llm/health")
     assert response.status_code == 200
     assert response.json() == {
-        "provider": "fixture",
-        "model": "fixture-canned",
-        "mode": "fixture",
-        "live_enabled": False,
+        "provider": "deepseek",
+        "model": "deepseek-v4-pro",
+        "mode": "real",
+        "live_enabled": True,
         "status": "available",
         "last_error": None,
+        "rate_limit_state": {"used": 2, "limit": 10},
+    }
+
+
+def test_llm_health_endpoint_does_not_probe_when_real_execution_is_disabled(monkeypatch):
+    from app.api.v1.endpoints import llm as llm_endpoint
+
+    async def unexpected_probe() -> HealthStatus:
+        raise AssertionError("disabled health endpoint must not probe a provider")
+
+    monkeypatch.setattr(llm_endpoint, "get_llm_health", unexpected_probe)
+    monkeypatch.setattr(
+        llm_endpoint,
+        "get_settings",
+        lambda: SimpleNamespace(
+            AGENT_RUN_REAL_ENABLED=False,
+            LLM_PROVIDER="xfyun",
+            DEEPSEEK_MODEL="deepseek-v4-pro",
+            XFYUN_MODEL="spark-v4",
+        ),
+    )
+
+    response = TestClient(app).get("/api/v1/llm/health")
+    assert response.status_code == 200
+    assert response.json() == {
+        "provider": "xfyun",
+        "model": "spark-v4",
+        "mode": "real",
+        "live_enabled": False,
+        "status": "unknown",
+        "last_error": "real execution is disabled",
         "rate_limit_state": {"used": 0, "limit": 0},
     }
+
+
+def test_llm_health_endpoint_sanitizes_provider_error(monkeypatch):
+    from app.api.v1.endpoints import llm as llm_endpoint
+
+    async def unavailable_health() -> HealthStatus:
+        return HealthStatus(
+            provider="deepseek",
+            model="deepseek-v4-pro",
+            mode="real",
+            live_enabled=True,
+            status="error",
+            last_error="upstream error with implementation details",
+        )
+
+    monkeypatch.setattr(llm_endpoint, "get_llm_health", unavailable_health)
+    monkeypatch.setattr(
+        llm_endpoint,
+        "get_settings",
+        lambda: SimpleNamespace(
+            AGENT_RUN_REAL_ENABLED=True,
+            LLM_PROVIDER="deepseek",
+            DEEPSEEK_MODEL="deepseek-v4-pro",
+            XFYUN_MODEL="spark-v4",
+        ),
+    )
+
+    response = TestClient(app).get("/api/v1/llm/health")
+    assert response.status_code == 200
+    assert response.json()["last_error"] == "provider health check failed"

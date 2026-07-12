@@ -49,6 +49,24 @@ class GenericWorkflowOutput(BaseModel):
     output: dict[str, Any] = Field(default_factory=dict)
 
 
+_REWORKABLE_QUALITY_CODES = (
+    "evidence_missing",
+    "fact_conflict",
+    "schema_invalid",
+    "instructional_mismatch",
+    "citation_mismatch",
+)
+
+
+def _quality_rework_metadata(target_node: str) -> dict[str, dict[str, tuple[str, ...]]]:
+    return {
+        "defect_routes": {
+            code: (target_node,)
+            for code in _REWORKABLE_QUALITY_CODES
+        }
+    }
+
+
 def _basic_input(root: dict[str, Any], _state: dict[str, Any]) -> dict[str, Any]:
     return {
         "user_id": root["user_id"],
@@ -93,8 +111,14 @@ PROFILE_BUILD_V1 = WorkflowDefinition(
         NodeDefinition("quality_check", "skill", "outcome_evaluator", "QualityCheck", input_mapper=_quality_input, input_sources=("build_persona",)),
         NodeDefinition("persist_profile", "action", action_name="PersistProfile", input_sources=("build_persona", "quality_check")),
     ),
-    edges=(EdgeDefinition("build_persona", "quality_check"), EdgeDefinition("quality_check", "persist_profile", "accept")),
+    edges=(
+        EdgeDefinition("build_persona", "quality_check"),
+        EdgeDefinition("quality_check", "persist_profile", "accept"),
+        EdgeDefinition("quality_check", "build_persona", "defect"),
+    ),
     catalog_version="production-catalog-v1",
+    max_rework_attempts=1,
+    metadata=_quality_rework_metadata("build_persona"),
 )
 
 COURSE_PLAN_V1 = WorkflowDefinition(
@@ -107,8 +131,14 @@ COURSE_PLAN_V1 = WorkflowDefinition(
         NodeDefinition("quality_check", "skill", "outcome_evaluator", "QualityCheck", input_mapper=_quality_input, input_sources=("generate_path",)),
         NodeDefinition("persist_learning_path", "action", action_name="PersistLearningPath", input_sources=("generate_path", "quality_check")),
     ),
-    edges=(EdgeDefinition("generate_path", "quality_check"), EdgeDefinition("quality_check", "persist_learning_path", "accept")),
+    edges=(
+        EdgeDefinition("generate_path", "quality_check"),
+        EdgeDefinition("quality_check", "persist_learning_path", "accept"),
+        EdgeDefinition("quality_check", "generate_path", "defect"),
+    ),
     catalog_version="production-catalog-v1",
+    max_rework_attempts=1,
+    metadata=_quality_rework_metadata("generate_path"),
 )
 
 TUTOR_ROUTING_V1 = WorkflowDefinition(
@@ -121,8 +151,14 @@ TUTOR_ROUTING_V1 = WorkflowDefinition(
         NodeDefinition("answer", "skill", "career_planner", "RecommendResources", input_mapper=_basic_input, quality_policy="workflow_node", input_sources=("route_question",)),
         NodeDefinition("quality_check", "skill", "outcome_evaluator", "QualityCheck", input_mapper=_quality_input, input_sources=("answer",)),
     ),
-    edges=(EdgeDefinition("route_question", "answer"), EdgeDefinition("answer", "quality_check")),
+    edges=(
+        EdgeDefinition("route_question", "answer"),
+        EdgeDefinition("answer", "quality_check"),
+        EdgeDefinition("quality_check", "answer", "defect"),
+    ),
     catalog_version="production-catalog-v1",
+    max_rework_attempts=1,
+    metadata=_quality_rework_metadata("answer"),
 )
 
 ASSESSMENT_UPDATE_V1 = WorkflowDefinition(
@@ -147,8 +183,11 @@ ASSESSMENT_UPDATE_V1 = WorkflowDefinition(
         EdgeDefinition("update_capability", "persist_capability"),
         EdgeDefinition("persist_capability", "update_persona"),
         EdgeDefinition("update_persona", "persist_profile"),
+        EdgeDefinition("quality_check", "run_assessment", "defect"),
     ),
     catalog_version="production-catalog-v1",
+    max_rework_attempts=1,
+    metadata=_quality_rework_metadata("run_assessment"),
 )
 
 
