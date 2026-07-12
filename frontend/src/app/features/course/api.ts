@@ -6,6 +6,7 @@
 // `startCourseTask`; real workflow errors stay real.
 
 import type { AssessmentRunResponse, CoursePlanResponse } from '@/lib/api-types';
+import { apiGet, apiPost } from '@/lib/api';
 import type { SSEHandlers } from '@/lib/sse';
 import {
   WorkflowRunClient,
@@ -57,6 +58,74 @@ export type CourseResourceRetryOptions = {
   options?: Record<string, unknown>;
   mode?: CourseTaskRunMode;
 };
+
+export type CourseGraphApiNode = {
+  id: string;
+  name: string;
+  resource_count: number;
+  evidence_count: number;
+};
+
+export type CourseGraphApiResponse = {
+  course_id: string;
+  nodes: CourseGraphApiNode[];
+  edges: Array<{ source_id: string; target_id: string; edge_type: 'prerequisite'; weight: number }>;
+};
+
+export type CoursePathApiResponse = {
+  course_id: string;
+  strategy: 'foundation_first' | 'accelerated_prerequisite_route';
+  explanation: string;
+  nodes: Array<{
+    knowledge_point_id: string;
+    title: string;
+    status: 'locked' | 'ready' | 'in_progress' | 'done';
+    prerequisites: string[];
+    rationale: string;
+  }>;
+};
+
+export type CourseProgressApiResponse = {
+  course_id: string;
+  progress_percent: number;
+  completed_knowledge_point_ids: string[];
+  current_knowledge_point_id?: string | null;
+  next_knowledge_point_id?: string | null;
+  next_recommendation?: string | null;
+};
+
+export type CourseProgressActivity = {
+  knowledge_point_id: string;
+  activity_type: 'resource' | 'assessment';
+  activity_id: string;
+  workflow_run_id?: string;
+};
+
+export function fetchCourseGraph(courseId: string): Promise<CourseGraphApiResponse> {
+  return apiGet<CourseGraphApiResponse>(`/api/v1/courses/${encodeURIComponent(courseId)}/graph`);
+}
+
+export function fetchCoursePath(courseId: string): Promise<CoursePathApiResponse> {
+  return apiGet<CoursePathApiResponse>(`/api/v1/courses/${encodeURIComponent(courseId)}/path`);
+}
+
+export function fetchCourseProgress(courseId: string): Promise<CourseProgressApiResponse> {
+  return apiGet<CourseProgressApiResponse>(`/api/v1/courses/${encodeURIComponent(courseId)}/progress`);
+}
+
+/** Records only a completed durable resource/assessment root; no local progress is fabricated. */
+export function recordCourseProgress(
+  courseId: string,
+  activity: CourseProgressActivity,
+): Promise<CourseProgressApiResponse> {
+  return apiPost<CourseProgressApiResponse, CourseProgressActivity>(
+    `/api/v1/courses/${encodeURIComponent(courseId)}/progress`,
+    activity,
+  ).then((progress) => {
+    window.dispatchEvent(new CustomEvent('securehub:course-progress', { detail: { courseId } }));
+    return progress;
+  });
+}
 
 export class UnsupportedCourseTaskIntentError extends Error {
   readonly code = 'UNSUPPORTED_TASK_INTENT';

@@ -42,10 +42,12 @@ import {
 import { setMockMode } from '@/lib/mock';
 
 function EntryTab() {
+  const { course } = useSelectedCourse();
+  if (!course) return null;
   return (
     <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_420px]">
       <div className="space-y-4">
-        <CourseEntryCard courseId="00000000-0000-0000-0000-000000000101" />
+        <CourseEntryCard course={course} />
         <PersonaBuilder userId="00000000-0000-0000-0000-000000000001" />
       </div>
       <AgentTracePanel workflow="course_learning" userId="00000000-0000-0000-0000-000000000001" />
@@ -198,7 +200,14 @@ function CourseStudyInner() {
   const [params, setParams] = useSearchParams();
   const dispatch = useCourseDispatch();
   const courseState = useCourseState();
-  const { course, fellBackToDefault, selectCourse } = useSelectedCourse();
+  const {
+    course,
+    courses,
+    catalogStatus,
+    catalogError,
+    fellBackToDefault,
+    selectCourse,
+  } = useSelectedCourse();
   const [initialView] = useState<CourseView>(() => readStoredCourseView());
   const rawView = params.get('view');
   const presenterMode = import.meta.env.DEV && params.get('presenter') === '1';
@@ -213,6 +222,7 @@ function CourseStudyInner() {
   }, [presenterMode]);
 
   useEffect(() => {
+    if (!course) return;
     const currentPathNodeIds = courseState.path?.nodes
       .filter((node) => node.status === 'active' || node.status === 'done')
       .map((node) => node.id) ?? [];
@@ -220,11 +230,12 @@ function CourseStudyInner() {
       type: 'setTaskContext',
       context: {
         ...DEFAULT_COURSE_TASK_CONTEXT,
+        courseId: course.id,
         kpId: courseState.currentKpId || DEFAULT_COURSE_TASK_CONTEXT.kpId,
         currentPathNodeIds,
       },
     });
-  }, [course.id, courseState.currentKpId, courseState.path, dispatch]);
+  }, [course, courseState.currentKpId, courseState.path, dispatch]);
 
   useEffect(() => {
     window.localStorage.setItem(courseViewStorageKey, activeView);
@@ -257,6 +268,16 @@ function CourseStudyInner() {
   const activeRoot = courseState.activeWorkflowRootId
     ? courseState.workflowRoots[courseState.activeWorkflowRootId]
     : undefined;
+
+  if (!course) {
+    return (
+      <div className="flex min-h-52 items-center justify-center rounded-lg border border-slate-200 bg-white px-5 text-sm text-slate-500">
+        {catalogStatus === 'error'
+          ? `课程目录加载失败：${catalogError?.message ?? '请检查后端课程服务。'}`
+          : '正在加载真实课程目录...'}
+      </div>
+    );
+  }
 
   const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
@@ -300,7 +321,7 @@ function CourseStudyInner() {
               <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
               DeepSeek 真实链路
             </button>
-            <CourseSwitcher course={course} onSelect={(id) => selectCourse(id)} />
+            <CourseSwitcher course={course} courses={courses} onSelect={(id) => selectCourse(id)} />
             <Popover>
               <PopoverTrigger asChild>
                 <button

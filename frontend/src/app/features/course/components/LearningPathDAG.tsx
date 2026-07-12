@@ -1,7 +1,8 @@
 // Status: real
 
-import { Network, Route } from 'lucide-react';
+import { Network, Route, ShieldCheck } from 'lucide-react';
 import { Card, Tag } from '@/app/components/PageShell';
+import { useCourseProductPath } from '../path/useCourseProductPath';
 import { useCourseDispatch, useCourseState } from '../store';
 
 export interface LearningPathDAGProps {
@@ -11,41 +12,63 @@ export interface LearningPathDAGProps {
 const statusTone = {
   locked: 'amber',
   ready: 'blue',
-  active: 'green',
+  in_progress: 'green',
   done: 'green',
 } as const;
 
-/** Displays only the durable course_plan_v1 projection stored for this course. */
+/** Renders only the backend graph/path/progress projection, never local mock nodes. */
 export function LearningPathDAG({ courseId }: LearningPathDAGProps) {
-  const { path, taskContext } = useCourseState();
+  const { taskContext } = useCourseState();
   const dispatch = useCourseDispatch();
+  const effectiveCourseId = courseId ?? taskContext.courseId;
+  const productPath = useCourseProductPath(effectiveCourseId);
 
-  if (!path) {
+  if (productPath.status === 'loading') {
     return (
-      <Card title="学习路径图谱" subtitle={`当前课程：${courseId ?? taskContext.courseId}`}>
-        <div className="flex min-h-52 flex-col items-center justify-center gap-3 rounded-lg border border-dashed border-slate-200 bg-slate-50 px-4 text-center text-sm text-slate-500">
-          <Network className="h-6 w-6 text-slate-400" />
-          <p>尚未生成可恢复的学习路径。</p>
-          <p className="text-xs">请在课程入口创建路径任务；完成后会从 durable root 投影到这里。</p>
+      <Card title="学习路径图谱" subtitle={`当前课程：${effectiveCourseId}`}>
+        <div className="flex min-h-52 items-center justify-center gap-2 text-sm text-slate-500">
+          <Network className="h-5 w-5 animate-pulse text-brand-blue-600" />
+          正在读取真实知识图谱、能力画像与持久化进度...
         </div>
       </Card>
     );
   }
 
+  if (productPath.status === 'error') {
+    return (
+      <Card title="学习路径图谱" subtitle={`当前课程：${effectiveCourseId}`}>
+        <div className="flex min-h-52 flex-col items-center justify-center gap-2 text-center text-sm text-rose-600">
+          <Network className="h-6 w-6" />
+          <p>无法加载课程图谱：{productPath.error.message}</p>
+          <p className="text-xs text-slate-500">请确认课程服务可用后刷新；页面不会以固定路径替代真实结果。</p>
+        </div>
+      </Card>
+    );
+  }
+
+  const { graph, path, progress } = productPath;
+  const graphNodes = new Map(graph.nodes.map((node) => [node.id, node]));
+  const labels = new Map(graph.nodes.map((node) => [node.id, node.name]));
+
   return (
-    <Card title="学习路径图谱" subtitle={`当前课程：${courseId ?? path.courseId}`}>
+    <Card title="学习路径图谱" subtitle={path.explanation}>
+      <div className="mb-3 flex flex-wrap gap-2">
+        <Tag tone="blue">{path.strategy === 'foundation_first' ? '基础优先路径' : '加速先修路径'}</Tag>
+        <Tag tone="green">进度 {Math.round(progress.progress_percent)}%</Tag>
+        <Tag tone="blue">真实节点 {graph.nodes.length}</Tag>
+        <Tag tone="green">先修边 {graph.edges.length}</Tag>
+      </div>
       <div className="space-y-3">
         {path.nodes.map((node, index) => {
-          const prerequisites = path.edges
-            .filter((edge) => edge.target === node.id)
-            .map((edge) => path.nodes.find((candidate) => candidate.id === edge.source)?.label ?? edge.source);
+          const graphNode = graphNodes.get(node.knowledge_point_id);
+          const prerequisites = node.prerequisites.map((id) => labels.get(id) ?? id);
           return (
             <button
-              key={node.id}
+              key={node.knowledge_point_id}
               type="button"
-              onClick={() => dispatch({ type: 'setCurrentKp', kpId: node.id })}
+              onClick={() => dispatch({ type: 'setCurrentKp', kpId: node.knowledge_point_id })}
               className={`w-full rounded-lg border p-3 text-left transition-colors ${
-                node.id === taskContext.kpId
+                node.knowledge_point_id === taskContext.kpId
                   ? 'border-brand-blue-300 bg-brand-blue-50'
                   : 'border-slate-200 bg-white hover:border-brand-blue-200 hover:bg-slate-50'
               }`}
@@ -53,21 +76,26 @@ export function LearningPathDAG({ courseId }: LearningPathDAGProps) {
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <span className="inline-flex items-center gap-2 text-sm font-medium text-slate-900">
                   <Route className="h-4 w-4 text-brand-blue-600" />
-                  {index + 1}. {node.label}
+                  {index + 1}. {node.title}
                 </span>
                 <Tag tone={statusTone[node.status]}>{node.status}</Tag>
               </div>
-              {prerequisites.length > 0 && (
-                <p className="mt-2 text-xs text-slate-500">先修：{prerequisites.join(' / ')}</p>
-              )}
+              <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-slate-500">
+                {prerequisites.length > 0 && <span>先修：{prerequisites.join(' / ')}</span>}
+                <span>证据 {graphNode?.evidence_count ?? 0}</span>
+                <span>资源 {graphNode?.resource_count ?? 0}</span>
+              </div>
+              <p className="mt-1 text-xs text-slate-500">{node.rationale}</p>
             </button>
           );
         })}
       </div>
-      <div className="mt-4 flex flex-wrap gap-2">
-        <Tag tone="blue">真实节点 {path.nodes.length}</Tag>
-        <Tag tone="green">先修边 {path.edges.length}</Tag>
-      </div>
+      {progress.next_recommendation && (
+        <p className="mt-4 inline-flex items-center gap-1.5 text-xs text-emerald-700">
+          <ShieldCheck className="h-3.5 w-3.5" />
+          {progress.next_recommendation}
+        </p>
+      )}
     </Card>
   );
 }

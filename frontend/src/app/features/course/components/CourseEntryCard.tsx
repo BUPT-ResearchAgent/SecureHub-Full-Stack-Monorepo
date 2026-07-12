@@ -3,14 +3,15 @@ import { BookOpen, Play, ShieldCheck } from 'lucide-react';
 import { Card, Tag } from '@/app/components/PageShell';
 import { ErrorState } from '@/app/components/StateView';
 import { learningPathFromWorkflowStatus, startCourseTask } from '../api';
+import type { CourseCatalogItem } from '../catalog/courseCatalog.types';
 import { useCourseDispatch, useCourseState } from '../store';
 import { createCourseTaskLifecycle } from '../workflow/courseTaskLifecycle';
 
 export interface CourseEntryCardProps {
-  courseId?: string;
+  course: CourseCatalogItem;
 }
 
-export function CourseEntryCard({ courseId = 'course_websec' }: CourseEntryCardProps) {
+export function CourseEntryCard({ course }: CourseEntryCardProps) {
   const { taskContext } = useCourseState();
   const dispatch = useCourseDispatch();
   const [planning, setPlanning] = useState(false);
@@ -59,12 +60,12 @@ export function CourseEntryCard({ courseId = 'course_websec' }: CourseEntryCardP
 
   return (
     <div className="space-y-5">
-      <Card title="Web 安全基础" subtitle={`课程 ID：${courseId}`}>
+      <Card title={course.title} subtitle={`${course.code} · ${course.knowledgePointCount} 个真实知识点`}>
         <div className="grid gap-4 md:grid-cols-3">
           <div className="rounded-lg border border-slate-100 p-4">
             <BookOpen className="mb-3 h-5 w-5 text-[#003399]" />
             <div className="text-sm font-medium text-slate-900">课程知识库</div>
-            <p className="mt-1 text-sm text-slate-500">围绕 SQL 注入、XSS、CSRF、文件上传与 SSRF 构建学习节点。</p>
+            <p className="mt-1 text-sm text-slate-500">{course.chapterCount} 个章节、{course.knowledgePointCount} 个节点和 {course.resourceCount} 项已生成资源来自课程服务。</p>
           </div>
           <div className="rounded-lg border border-slate-100 p-4">
             <ShieldCheck className="mb-3 h-5 w-5 text-emerald-600" />
@@ -79,7 +80,7 @@ export function CourseEntryCard({ courseId = 'course_websec' }: CourseEntryCardP
         </div>
         <div className="mt-4 flex flex-wrap gap-2">
           <Tag tone="green">9 个既有智能体</Tag>
-          <Tag tone="blue">流式进度</Tag>
+          <Tag tone="blue">覆盖 {course.coreCoveragePercent}%</Tag>
           <Tag tone="amber">证据检索门槛</Tag>
         </div>
         <div className="mt-4 flex flex-wrap items-center gap-3">

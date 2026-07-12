@@ -118,12 +118,53 @@ def skill_id(agent_name: str, skill_name: str, version: int = 1) -> UUID:
 # ---- Course websec ----------------------------------------------------------
 
 COURSE_WEBSEC_ID: UUID = stable_id("course:websec-foundation")
+# Wave 0 smoke roots used this transient course row.  It remains a read-only
+# compatibility alias for already-persisted artifacts; new product roots use
+# ``COURSE_WEBSEC_ID`` and ``WEBSEC-101`` exclusively.
+LEGACY_SMOKE_COURSE_WEBSEC_ID = UUID("00000000-0000-0000-0000-000000000101")
 COURSE_WEBSEC_CODE = "WEBSEC-101"
 COURSE_WEBSEC_TITLE = "Web 安全基础"
 COURSE_WEBSEC_DESCRIPTION = (
     "面向网络安全方向本科生的入门课程：HTTP/HTTPS 协议、常见 Web 攻击与防御、"
     "OWASP Top 10、SSRF / SSTI / 反序列化等专题，配套 SQL 注入实操案例。"
 )
+
+# Course productisation uses the existing knowledge asset tables.  These
+# stable codes only classify nodes/documents; they do not introduce a parallel
+# chapter or course-content table.
+COURSE_WEBSEC_MANIFEST_ID = "websec-foundation-v1"
+WEBSEC_CHAPTERS: list[tuple[str, str, tuple[str, ...]]] = [
+    (
+        "web-foundations",
+        "Web 与浏览器安全边界",
+        ("http-basics", "same-origin", "cookie-session"),
+    ),
+    (
+        "input-and-browser-attacks",
+        "输入处理与浏览器攻击",
+        ("sql-injection", "sql-injection-blind", "xss-reflected", "xss-stored", "xss-dom", "csrf"),
+    ),
+    (
+        "server-side-attack-surface",
+        "服务端攻击面",
+        ("file-upload", "ssrf", "deserialization", "rce"),
+    ),
+    (
+        "identity-and-secure-development",
+        "身份、授权与安全开发",
+        ("auth-bypass", "waf-bypass", "secure-coding"),
+    ),
+    (
+        "owasp-review",
+        "OWASP Top 10 综合回顾",
+        ("owasp-top10",),
+    ),
+]
+WEBSEC_CHAPTER_BY_SLUG = {
+    slug: (chapter_code, chapter_title)
+    for chapter_code, chapter_title, slugs in WEBSEC_CHAPTERS
+    for slug in slugs
+}
 
 # 17 knowledge points (kept tight for demo readability).
 WEBSEC_NODES: list[tuple[str, str, int]] = [

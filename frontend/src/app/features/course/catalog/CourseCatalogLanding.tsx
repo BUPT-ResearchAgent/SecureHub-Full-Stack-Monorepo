@@ -10,12 +10,12 @@ import { useMemo } from 'react';
 import { motion } from 'motion/react';
 import { ArrowRight, BookOpen, Bot, Compass, Sparkles } from 'lucide-react';
 import {
-  courseCatalog,
   courseCoverAccent,
   courseCoverGradient,
   courseDifficultyTone,
 } from './courseCatalog';
 import type { CourseCatalogItem } from './courseCatalog.types';
+import { useCourseCatalog } from './useCourseCatalog';
 
 const STORAGE_KEY = 'securehub.course.selectedCourseId';
 
@@ -33,9 +33,11 @@ export function CourseCatalogLanding({
 }: {
   onSelect: (courseId: string) => void;
 }) {
+  const catalog = useCourseCatalog();
   const lastCourseId = useMemo(() => readStoredLast(), []);
+  const courses = catalog.courses;
   const lastCourse = lastCourseId
-    ? courseCatalog.find((course) => course.id === lastCourseId)
+    ? courses.find((course) => course.id === lastCourseId)
     : undefined;
 
   return (
@@ -47,7 +49,7 @@ export function CourseCatalogLanding({
         </p>
         <h1 className="text-2xl font-semibold text-slate-950 sm:text-3xl">课程学习</h1>
         <p className="max-w-2xl text-sm leading-relaxed text-slate-500">
-          从 {courseCatalog.length} 门课程中选择当前学习方向：9 智能体会基于你的画像协同生成讲解、PPT、思维导图、练习题、实操与拓展阅读。
+          从真实课程目录中选择当前学习方向：9 个既有产品智能体会基于你的画像生成讲解、PPT、思维导图、练习题、实操与拓展阅读。
         </p>
       </header>
 
@@ -57,13 +59,22 @@ export function CourseCatalogLanding({
         <FirstTimeBanner />
       )}
 
-      <section className="space-y-3">
+      <section className="space-y-3" aria-busy={catalog.status === 'loading'}>
         <div className="flex flex-wrap items-end justify-between gap-2">
           <h2 className="text-base font-semibold text-slate-900">学习课程目录</h2>
           <span className="text-xs text-slate-500">点击任意一门课进入对话模式</span>
         </div>
+        {catalog.status === 'loading' && (
+          <p className="text-sm text-slate-500">正在从课程服务加载目录...</p>
+        )}
+        {catalog.status === 'error' && (
+          <p className="text-sm text-rose-600">课程目录加载失败：{catalog.error.message}</p>
+        )}
+        {catalog.status === 'ready' && courses.length === 0 && (
+          <p className="text-sm text-slate-500">当前账号还没有可学习的课程。</p>
+        )}
         <ul className="grid gap-4 sm:grid-cols-2 xl:grid-cols-2">
-          {courseCatalog.map((course, index) => (
+          {courses.map((course, index) => (
             <CatalogCard
               key={course.id}
               course={course}

@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from 'react';
 import { BookOpen, Check, ChevronDown, Sparkles } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
-  courseCatalog,
   courseCoverAccent,
   courseCoverGradient,
   courseDifficultyTone,
@@ -11,9 +10,11 @@ import type { CourseCatalogItem } from './courseCatalog.types';
 
 export function CourseSwitcher({
   course,
+  courses,
   onSelect,
 }: {
   course: CourseCatalogItem;
+  courses: CourseCatalogItem[];
   onSelect: (courseId: string) => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -91,12 +92,12 @@ export function CourseSwitcher({
             <div className="border-b border-slate-100 px-4 py-3">
               <p className="flex items-center gap-1.5 text-xs font-medium text-brand-blue-700">
                 <Sparkles className="h-3.5 w-3.5" />
-                共 {courseCatalog.length} 门课程
+                共 {courses.length} 门课程
               </p>
               <p className="mt-0.5 text-xs text-slate-500">切换课程后右侧工作流与资源徽章会跟随重置。</p>
             </div>
             <ul className="max-h-[360px] divide-y divide-slate-100 overflow-y-auto">
-              {courseCatalog.map((item) => {
+              {courses.map((item) => {
                 const selected = item.id === course.id;
                 return (
                   <li key={item.id}>

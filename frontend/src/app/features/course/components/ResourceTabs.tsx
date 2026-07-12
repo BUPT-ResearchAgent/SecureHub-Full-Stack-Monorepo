@@ -11,7 +11,7 @@ import { isWorkflowDraftReplacement } from '@/lib/workflow-run.types';
 import { useCourseDispatch, useCourseState } from '../store';
 import type { ResourceItem, ResourceType } from '../types';
 import { resourceTypeIcon, resourceTypeLabel } from '../utils';
-import { retryCourseResource, startCourseResourcePack, startCourseTask } from '../api';
+import { recordCourseProgress, retryCourseResource, startCourseResourcePack, startCourseTask } from '../api';
 import { createCourseTaskLifecycle } from '../workflow/courseTaskLifecycle';
 import { DocResourceView } from './DocResourceView';
 import { LabResourceView } from './LabResourceView';
@@ -151,6 +151,20 @@ export function ResourceTabs() {
     });
   };
 
+  const persistResourceCompletion = (workflowRunId: string) => {
+    if (presenterMode) return;
+    void recordCourseProgress(taskContext.courseId, {
+      knowledge_point_id: taskContext.kpId,
+      activity_type: 'resource',
+      activity_id: workflowRunId,
+      workflow_run_id: workflowRunId,
+    })
+      .then((progress) => courseDispatch({ type: 'setProgress', progress: progress.progress_percent }))
+      .catch((cause: unknown) => {
+        setProgressText(cause instanceof Error ? `资源已生成，但进度同步失败：${cause.message}` : '资源已生成，但进度同步失败。');
+      });
+  };
+
   const startGeneration = (targetType: ResourceType = active) => {
     cancelRef.current?.();
     activeStreamTypeRef.current = targetType;
@@ -215,6 +229,9 @@ export function ResourceTabs() {
             errorMessage: undefined,
             qualityScore: done.quality_score,
           }));
+        },
+        onWorkflowTerminal(status) {
+          if (status.status === 'succeeded') persistResourceCompletion(status.run_id);
         },
         onError(error) {
           if (error.code === 'sse_reconnecting') {
@@ -297,6 +314,9 @@ export function ResourceTabs() {
           ]),
         ) as Partial<Record<ResourceType, ResourceItem>>);
       },
+      onWorkflowTerminal(status) {
+        if (status.status === 'succeeded') persistResourceCompletion(status.run_id);
+      },
       onError(error) {
         if (error.code === 'sse_reconnecting') {
           setProgressText(error.message);
@@ -359,6 +379,9 @@ export function ResourceTabs() {
         tokenBuffer.flush();
         setProgressText('');
         updateResource(active, (previous) => ({ ...previous, status: 'ready', qualityScore: done.quality_score }));
+      },
+      onWorkflowTerminal(status) {
+        if (status.status === 'succeeded') persistResourceCompletion(status.run_id);
       },
       onError(error) {
         if (error.code === 'sse_reconnecting') {

@@ -22,7 +22,7 @@ import { getMockQuizItemsForCourse } from '@/lib/mock/courses.mock';
 import { isMockMode } from '@/lib/mock';
 import { normalizePersonaDimension } from '@/lib/persona-dimension-map';
 import type { CapabilityDTO } from '@/lib/sse.types';
-import { assessmentReportFromWorkflowStatus, startCourseTask } from '../api';
+import { assessmentReportFromWorkflowStatus, recordCourseProgress, startCourseTask } from '../api';
 import { useCourseDispatch, useCourseState } from '../store';
 import { createCourseTaskLifecycle } from '../workflow/courseTaskLifecycle';
 import { ImplicitAssessmentCard } from '../assessment/ImplicitAssessmentCard';
@@ -48,16 +48,17 @@ export function AssessmentPanel() {
   const { assessment, taskContext } = useCourseState();
   const dispatch = useCourseDispatch();
   const { course } = useSelectedCourse();
+  const presenterMode = isMockMode();
   const questions = useMemo(
     () =>
-      getMockQuizItemsForCourse(course.id).map((item) => ({
+      presenterMode && course ? getMockQuizItemsForCourse(course.id).map((item) => ({
         id: item.id,
         title: item.prompt,
         correct: item.answer,
         kp: item.kp,
         options: item.options,
-      })),
-    [course.id],
+      })) : [],
+    [course?.id, presenterMode],
   );
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
@@ -65,14 +66,13 @@ export function AssessmentPanel() {
   const [events, setEvents] = useState<LoopEvent[]>([]);
   const [animatedScore, setAnimatedScore] = useState(0);
   const [diagnosisOpen, setDiagnosisOpen] = useState(false);
-  const presenterMode = isMockMode();
 
   // 切换课程时清掉旧答题状态。
   useEffect(() => {
     setAnswers({});
     setEvents([]);
     setAnimatedScore(0);
-  }, [course.id]);
+  }, [course?.id]);
 
   const selectedCapabilities = useMemo<CapabilityDTO[]>(
     () => assessment?.updatedCapabilities ?? [],
@@ -135,6 +135,16 @@ export function AssessmentPanel() {
         try {
           const report = assessmentReportFromWorkflowStatus(status);
           dispatch({ type: 'setAssessment', assessment: report });
+          if (!presenterMode) {
+            void recordCourseProgress(taskContext.courseId, {
+              knowledge_point_id: taskContext.kpId,
+              activity_type: 'assessment',
+              activity_id: status.run_id,
+              workflow_run_id: status.run_id,
+            }).catch((cause: unknown) => {
+              setError(cause instanceof Error ? `评估完成，但进度同步失败：${cause.message}` : '评估完成，但进度同步失败。');
+            });
+          }
           const firstDim = normalizePersonaDimension(report.updatedCapabilities?.[0]?.dimension) ?? 'Web 安全';
           pushEvent({
             id: `capability-${status.run_id}`,
@@ -165,6 +175,11 @@ export function AssessmentPanel() {
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_420px]">
       <Card title="学习效果评估" subtitle="完成题目后回流 outcome_evaluator 更新能力画像">
         <div className="space-y-4">
+          {!presenterMode && (
+            <p className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">
+              请先在资源工作台完成真实测验资源；非 PresenterMode 不显示固定题目或本地评分。
+            </p>
+          )}
           {questions.map((question, index) => (
             <div key={question.id} className="rounded-lg border border-slate-100 p-4">
               <p className="text-sm font-semibold text-slate-900">
