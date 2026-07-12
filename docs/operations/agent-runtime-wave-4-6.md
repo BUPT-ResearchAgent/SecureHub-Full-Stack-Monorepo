@@ -1,8 +1,8 @@
 # Agent Runtime Wave 4-6 Operations
 
 Status: real control-plane implementation. The 2026-07-12 local DeepSeek/RAG/
-PostgreSQL gate passed; Spark primary/fallback and COS remain credential or
-account dependent.
+PostgreSQL gate and an independent COS storage gate passed; Spark
+primary/fallback remains credential dependent.
 
 ## Deployment Preconditions
 
@@ -98,10 +98,23 @@ provenance audit passed with 3,549 ready Qwen-profile chunks and eight sourced
 retrieval hits. This is a direct-DeepSeek verification, not a provider fallback
 test: all roots had `provider_switches=0`.
 
-Spark primary/fallback and COS are still open gates. The resolved Spark bearer
-key is empty, so no Spark request or controlled fallback/cancel was attempted.
-COS was deliberately held at the local provider for this run; the recorded
-`451 UnavailableForLegalReasons` billing state remains an external blocker.
+A separate direct-DeepSeek cancellation test requested cancellation after its
+first observed token for `resource_generate_v1`. Root
+`2daf935b-e3b7-4dbe-af34-d792dffc66d3` reached `cancelled`; 12 token events
+arrived before cancellation took effect, live/replay SSE both contained 21
+events, and the DB audit found one `agent_run` and one provider call. This is a
+direct-DeepSeek cancellation result (`provider_switches=0`), not Spark
+cancellation or fallback verification.
+
+Spark primary, controlled Spark interruption, real DeepSeek fallback and a
+real-token Spark cancellation are still open gates. The resolved Spark bearer
+key is empty; provider construction returned sanitised `ProviderUnavailable` /
+`XFYUN_PROVIDER_UNAVAILABLE`, so no Spark request was sent. Separately, a real
+process-scoped `STORAGE_PROVIDER=cos` smoke completed upload, head, download,
+signed URL and delete. COS is therefore no longer an open gate on this
+workstation; the product paths above remain correctly labelled as local-storage
+paths. The prior `451 UnavailableForLegalReasons` result remains historical
+external-blocker evidence rather than a retroactive COS success claim.
 See `Workout/Agent-Runtime-Wave-4-6.md` for the exact commands, IDs and
 sanitised evidence.
 
@@ -113,6 +126,8 @@ settings, isolate storage when needed, probe provider and RAG independently,
 then run the opt-in workflow smoke with durable DB/SSE checks. A fixture run,
 `AGENT_RUN_REAL_ENABLED=false` refusal, local artifact storage, or
 `--expect-fallback` without an observed replacement is insufficient evidence.
+Likewise, a direct-DeepSeek cancellation check cannot establish Spark primary,
+Spark cancellation or Spark-to-DeepSeek fallback behavior.
 Bypass ambient proxies for localhost diagnostics, use disposable SQLite only
 for migration round-trips, and count durable `agent_runs` from DB audit rather
 than the status API's workflow-step `child_run_count` alias.
