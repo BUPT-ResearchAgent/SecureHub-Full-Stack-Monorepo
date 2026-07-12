@@ -104,3 +104,15 @@ COS was deliberately held at the local provider for this run; the recorded
 `451 UnavailableForLegalReasons` billing state remains an external blocker.
 See `Workout/Agent-Runtime-Wave-4-6.md` for the exact commands, IDs and
 sanitised evidence.
+
+## Validation Policy
+
+Use the standard path in `Workout/Agent-Runtime-Wave-4-6.md` before declaring
+an external gate: restore compose dependencies, confirm process-resolved real
+settings, isolate storage when needed, probe provider and RAG independently,
+then run the opt-in workflow smoke with durable DB/SSE checks. A fixture run,
+`AGENT_RUN_REAL_ENABLED=false` refusal, local artifact storage, or
+`--expect-fallback` without an observed replacement is insufficient evidence.
+Bypass ambient proxies for localhost diagnostics, use disposable SQLite only
+for migration round-trips, and count durable `agent_runs` from DB audit rather
+than the status API's workflow-step `child_run_count` alias.

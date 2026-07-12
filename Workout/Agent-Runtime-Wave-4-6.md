@@ -95,6 +95,59 @@ All five roots were `mode=real` with requested and actual
 root emitted one durable artifact event. `provider_switches=0` is expected for
 these direct-DeepSeek probes and is not a Spark-to-DeepSeek fallback claim.
 
+## Standard Validation Paths
+
+### Correct And Accepted
+
+1. Restore and verify the local dependencies first with
+   `docker compose up -d --wait postgres redis` and `docker compose ps`. Use
+   host PostgreSQL at `127.0.0.1:15432`; do not use the container-only
+   `postgres:5432` address from a host process. Run `alembic upgrade head`,
+   `alembic current`, and `scripts/seed_smoke.py` before a real root.
+2. Confirm the settings resolved by the target process, not only the contents
+   of `.env.local`. `AGENT_RUN_REAL_ENABLED=true`, the intended token ceiling,
+   host database/Redis URLs, and the selected storage provider must be visible
+   after restarting the backend because settings are process-cached.
+3. Isolate external boundaries deliberately. Set `STORAGE_PROVIDER=local` for
+   a DeepSeek/RAG/PostgreSQL gate, then label the result as local artifact
+   storage. Use the opt-in `probe_deepseek_json_protocol.py --confirm-live`,
+   the `embedding_live` test, and `audit_agent_run_provenance.py` separately
+   before the HTTP workflow smoke.
+4. For a real workflow, use the opt-in HTTP smoke with `--confirm-live`,
+   `--verify-db`, explicit `mode=real`, provider and model. It must report a
+   succeeded root, no fixture provider, ordered SSE live/replay equality, and
+   durable `agent_run_ids` plus `provider_call_ids`. The current helper batches
+   all database checks on one asyncio event loop and disposes that engine only
+   after all selected roots finish.
+5. Direct localhost diagnostics must bypass an ambient HTTP proxy, for example
+   `curl --noproxy '*' http://127.0.0.1:<port>/api/v1/llm/health`. The smoke
+   helper already uses a proxy-free opener. Keep the response limited to
+   provider/model/status and sanitised errors.
+6. Test migration downgrade/upgrade only against a disposable SQLite database.
+   Do not downgrade the local PostgreSQL instance that contains real workflow
+   records merely to exercise the migration chain.
+
+### Incorrect Or Insufficient
+
+- `AGENT_RUN_REAL_ENABLED=false` correctly produces a sanitised real-mode
+  refusal; it is not a Provider, RAG or workflow success. A fixture root proves
+  deterministic fixture behavior only and must never replace a real gate.
+- `STORAGE_PROVIDER=local` validates local Artifact Saga behavior only. It is
+  not evidence that COS upload, head, download, signed URL, or delete works.
+  Do not retry COS until the billing/availability condition is confirmed.
+- `--expect-fallback` observes a fallback that happened; it does not induce a
+  failure. A valid Spark-to-DeepSeek test needs a configured Spark bearer key
+  and a development-only controlled primary stream interruption after the first
+  real token. Report it as a controlled fault, never as a Spark service outage.
+- A `502` returned by an ambient proxy while calling `localhost` is a local
+  proxy-routing failure, not an `/llm/health` failure. Repeat through the
+  no-proxy path before diagnosing application code.
+- Do not use an older smoke implementation that calls `asyncio.run()` once per
+  `--verify-db` root: asyncpg connections become bound to a closed loop. Use the
+  batched helper in this revision. Also do not equate status API
+  `child_run_count` with `agent_runs`; it counts workflow step attempts and may
+  include deterministic action nodes. Use the DB audit's `agent_run_ids`.
+
 ## Remaining External Gates
 
 - Spark primary, controlled Spark stream interruption, real DeepSeek fallback
