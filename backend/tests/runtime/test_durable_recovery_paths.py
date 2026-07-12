@@ -521,6 +521,37 @@ class _DuplicateHintNotifier:
             await asyncio.sleep(0.001)
 
 
+class _TerminalEventRaceService:
+    def __init__(self, run_id: UUID) -> None:
+        from app.runtime.contracts import EventEnvelope
+
+        self.run_id = run_id
+        self.replay_calls = 0
+        self.progress = EventEnvelope(
+            workflow_run_id=run_id,
+            sequence=1,
+            event_type="progress",
+            payload={"status": "running"},
+        )
+        self.error = EventEnvelope(
+            workflow_run_id=run_id,
+            sequence=2,
+            event_type="error",
+            payload={"status": "failed", "terminal": True},
+        )
+
+    async def replay(self, _run_id, *, after_sequence: int, **_kwargs):
+        self.replay_calls += 1
+        if after_sequence == 0:
+            return [self.progress]
+        if self.replay_calls < 3:
+            return []
+        return [self.error]
+
+    async def get(self, _run_id, **_kwargs):
+        return SimpleNamespace(status="failed")
+
+
 @pytest.mark.anyio
 async def test_sse_gateway_replays_postgres_after_lost_or_duplicate_redis_hints() -> None:
     run_id = uuid4()
@@ -538,6 +569,18 @@ async def test_sse_gateway_replays_postgres_after_lost_or_duplicate_redis_hints(
     no_hint_gateway = WorkflowSSEGateway(no_hint_service, poll_interval_seconds=0.001)
     polled = [event async for event in no_hint_gateway.stream(no_hint_service.run_id)]
     assert [event.sequence for event in polled] == [1, 2, 3]
+
+
+@pytest.mark.anyio
+async def test_sse_gateway_waits_for_a_terminal_event_after_terminal_status() -> None:
+    service = _TerminalEventRaceService(uuid4())
+    gateway = WorkflowSSEGateway(service, poll_interval_seconds=0.001)
+
+    streamed = [event async for event in gateway.stream(service.run_id)]
+
+    assert [event.sequence for event in streamed] == [1, 2]
+    assert streamed[-1].terminal
+    assert service.replay_calls >= 3
 
 
 class _FakePubSub:
@@ -652,6 +695,55 @@ async def test_worker_heartbeat_renews_lease_before_a_second_worker_can_claim(tm
             release.set()
             outcome = await asyncio.gather(task, return_exceptions=True)
         assert outcome == [True]
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.anyio
+async def test_expired_running_root_is_reclaimed_from_a_fresh_sqlite_session(tmp_path) -> None:
+    database = tmp_path / "runtime-expired-claim.db"
+    engine = create_async_engine(f"sqlite+aiosqlite:///{database}")
+    try:
+        async with engine.begin() as connection:
+            await connection.run_sync(Base.metadata.create_all)
+        sessions = async_sessionmaker(engine, expire_on_commit=False)
+        async with sessions() as session:
+            store = RunStore(session)
+            root = await store.create_run(
+                workflow_name=_CONTROL_DEFINITION.name,
+                workflow_version="1",
+                workflow_definition_digest="e" * 64,
+                catalog_version="catalog-v1",
+                provider_policy_version="provider-v1",
+                checkpoint_schema_version="checkpoint-v1",
+                runtime_build_sha="test",
+                mode="fixture",
+                input_payload={"value": "expired claim"},
+            )
+            await session.commit()
+            first = await store.claim_next("worker-a", lease_seconds=60)
+            assert first is not None
+            running = await store.transition_run(
+                first.id,
+                expected_state_version=first.state_version,
+                lease_epoch=first.lease_epoch,
+                status="running",
+            )
+            await session.execute(
+                update(WorkflowRun)
+                .where(WorkflowRun.id == running.id)
+                .values(lease_expires_at=utcnow() - timedelta(seconds=1))
+            )
+            await session.commit()
+
+        # A restarted worker hydrates SQLite's timestamp without tzinfo. The
+        # claim must still execute in SQL and fence the old epoch.
+        async with sessions() as fresh_session:
+            replacement = await RunStore(fresh_session).claim_next("worker-b", lease_seconds=60)
+            assert replacement is not None
+            assert replacement.id == root.id
+            assert replacement.lease_epoch == first.lease_epoch + 1
+            await fresh_session.commit()
     finally:
         await engine.dispose()
 

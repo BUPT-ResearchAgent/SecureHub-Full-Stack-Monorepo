@@ -3,16 +3,14 @@
 """Frozen production Skill catalog derived from the fixed nine Agent classes.
 
 The catalog intentionally maps all 28 existing production bindings to the
-single canonical SkillDefinition contract.  It does not execute legacy
-``skill.run()`` methods, which keeps fixture fallback and implicit quality
-checks outside RuntimeEngine production paths.
+single canonical SkillDefinition contract.  It contains static metadata only;
+RuntimeEngine delegates every invocation to SkillExecutor.
 """
 
 from __future__ import annotations
 
 import importlib
-import inspect
-from typing import Any, get_type_hints
+from typing import Any
 
 from pydantic import BaseModel
 from sqlalchemy import select
@@ -33,11 +31,11 @@ class CatalogIntegrityError(RuntimeError):
 
 
 def _input_model(skill_class: type[Any]) -> type[BaseModel]:
-    hints = get_type_hints(skill_class.run)
-    model = hints.get("inp")
+    module = importlib.import_module(skill_class.__module__)
+    model = getattr(module, f"{skill_class.__name__}Input", None)
     if isinstance(model, type) and issubclass(model, BaseModel):
         return model
-    raise CatalogIntegrityError(f"{skill_class.__name__} has no typed input model")
+    raise CatalogIntegrityError(f"{skill_class.__name__} has no typed Input model")
 
 
 def _definition(agent_name: str, skill_name: str, skill_class: type[Any], risk_level: str) -> SkillDefinition:

@@ -18,7 +18,7 @@ type EndpointProbe = {
   id: string;
   label: string;
   path: string;
-  method: 'GET' | 'OPTIONS';
+  method: 'GET';
 };
 
 const endpoints: EndpointProbe[] = [
@@ -26,7 +26,6 @@ const endpoints: EndpointProbe[] = [
   { id: 'courses', label: 'GET /api/v1/courses', method: 'GET', path: '/api/v1/courses' },
   { id: 'agent-runs', label: 'GET /api/v1/agent-runs?limit=1', method: 'GET', path: '/api/v1/agent-runs?limit=1' },
   { id: 'profile', label: 'GET /api/v1/profile/me', method: 'GET', path: '/api/v1/profile/me' },
-  { id: 'rag-search', label: 'POST /api/v1/rag/search', method: 'OPTIONS', path: '/api/v1/rag/search' },
 ];
 
 const panelEventName = 'securehub-open-backend-status';
@@ -57,7 +56,7 @@ async function probeLLMHealth(): Promise<LLMHealthDTO> {
     });
     if (!response.ok) {
       return {
-        provider: 'deepseek',
+        provider: 'xfyun',
         model: 'unknown',
         mode: 'fixture',
         live_enabled: false,
@@ -69,7 +68,7 @@ async function probeLLMHealth(): Promise<LLMHealthDTO> {
     return await response.json() as LLMHealthDTO;
   } catch (error) {
     return {
-      provider: 'deepseek',
+      provider: 'xfyun',
       model: 'unknown',
       mode: 'fixture',
       live_enabled: false,
@@ -98,7 +97,7 @@ export function BackendStatusPanel() {
     Object.fromEntries(endpoints.map((endpoint) => [endpoint.id, 'pending'])),
   );
   const [llmHealth, setLlmHealth] = useState<LLMHealthDTO>({
-    provider: 'deepseek',
+    provider: 'xfyun',
     model: 'unknown',
     mode: 'fixture',
     live_enabled: false,

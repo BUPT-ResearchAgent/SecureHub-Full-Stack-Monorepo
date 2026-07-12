@@ -15,6 +15,11 @@ export type WorkflowCanvasProps = {
   onWorkflowChange: (workflowId: WorkflowDefinition['id']) => void;
   onRun: () => void;
   onPause: () => void;
+  onResume: () => void;
+  onRetry: () => void;
+  onCancel: () => void;
+  onApprove: () => void;
+  onReject: () => void;
   onReset: () => void;
   mockControlsEnabled?: boolean;
   /** Chat-first 紧凑模式：节点 / toolbar / 字号 / 背景全部收敛。 */

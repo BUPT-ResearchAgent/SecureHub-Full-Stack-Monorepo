@@ -84,6 +84,7 @@ class EventStore:
             update(WorkflowRun)
             .where(*where)
             .values(next_event_sequence=WorkflowRun.next_event_sequence + 1)
+            .execution_options(synchronize_session=False)
             .returning((WorkflowRun.next_event_sequence - 1).label("sequence"))
         )
         sequence = allocated.scalar_one_or_none()
@@ -148,12 +149,28 @@ class EventStore:
         return visible
 
     async def event_envelope(self, event: WorkflowEvent) -> EventEnvelope:
+        payload = dict(event.payload or {})
+        # Artifact/recovery events intentionally carry only their own fact.
+        # The root remains the authority for execution mode and requested
+        # provider, so every one of the fixed SSE event types still exposes a
+        # stable envelope contract without duplicating root metadata at each
+        # producer.
+        run = await self.session.get(WorkflowRun, event.workflow_run_id)
         return EventEnvelope(
             workflow_run_id=event.workflow_run_id,
             sequence=event.sequence,
             event_type=event.event_type,
-            payload=dict(event.payload or {}),
+            payload=payload,
             created_at=event.created_at or utcnow(),
+            mode=payload.get("mode") or (run.mode if run is not None else None),
+            requested_provider=payload.get("requested_provider") or (
+                run.requested_provider if run is not None else None
+            ),
+            requested_model=payload.get("requested_model") or (
+                run.requested_model if run is not None else None
+            ),
+            actual_provider=payload.get("actual_provider"),
+            actual_model=payload.get("actual_model"),
         )
 
     async def mark_publish_ready(self, event_id: UUID | str) -> bool:

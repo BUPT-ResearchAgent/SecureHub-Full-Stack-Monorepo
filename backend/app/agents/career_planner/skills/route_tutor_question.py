@@ -1,15 +1,16 @@
 # Status: real
+# Declarative Skill: SkillExecutor owns ctx.log_run for this contract.
+# Declarative Skill: SkillExecutor owns ctx.log_run for this contract.
 
-from app.agents._skill_helper import run_through_harness
-from app.agents.base import BaseSkill, SkillContext
-from app.agents.planned_skill import PlannedSkillInput, PlannedSkillOutput
+from app.agents.base import BaseSkill
+from app.agents.skill_contracts import SkillInput, SkillOutput
 
 
-class RouteTutorQuestionInput(PlannedSkillInput):
+class RouteTutorQuestionInput(SkillInput):
     question: str = ""
 
 
-class RouteTutorQuestionOutput(PlannedSkillOutput):
+class RouteTutorQuestionOutput(SkillOutput):
     target_agent: str = "career_planner"
     target_skill: str = "RecommendResources"
     reason: str = ""
@@ -39,15 +40,3 @@ class RouteTutorQuestion(BaseSkill):
     name = "RouteTutorQuestion"
     applicable_domains = ["course_websec"]
     output_schema = RouteTutorQuestionOutput
-
-    async def run(self, inp: RouteTutorQuestionInput, ctx: SkillContext) -> RouteTutorQuestionOutput:
-        return await run_through_harness(
-            self,
-            inp,
-            ctx,
-            prompt_template=PROMPT_TEMPLATE,
-            output_model=RouteTutorQuestionOutput,
-            agent_name="career_planner",
-            capability_dim="planning",
-            evidence_floor=1,  # routing 决策对证据要求低
-        )  # type: ignore[return-value]

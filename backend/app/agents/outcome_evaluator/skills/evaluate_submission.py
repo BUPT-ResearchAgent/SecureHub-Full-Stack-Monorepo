@@ -1,14 +1,16 @@
 # Status: real
+# Declarative Skill: SkillExecutor owns ctx.log_run for this contract.
+# Declarative Skill: SkillExecutor owns ctx.log_run for this contract.
 
-from app.agents.base import BaseSkill, SkillContext
-from app.agents.planned_skill import PlannedSkillInput, PlannedSkillOutput, prepare_planned_skill_output
+from app.agents.base import BaseSkill
+from app.agents.skill_contracts import SkillInput, SkillOutput
 
 
-class EvaluateSubmissionInput(PlannedSkillInput):
+class EvaluateSubmissionInput(SkillInput):
     submission: dict[str, object] = {}
 
 
-class EvaluateSubmissionOutput(PlannedSkillOutput):
+class EvaluateSubmissionOutput(SkillOutput):
     score_vector: dict[str, float] = {}
     feedback: list[str] = []
 
@@ -34,21 +36,3 @@ class EvaluateSubmission(BaseSkill):
     name = "EvaluateSubmission"
     applicable_domains = ["course_websec"]
     output_schema = EvaluateSubmissionOutput
-
-    async def run(self, inp: EvaluateSubmissionInput, ctx: SkillContext) -> EvaluateSubmissionOutput:
-        out = await prepare_planned_skill_output(
-            self,
-            inp,
-            ctx,
-            prompt_template=PROMPT_TEMPLATE,
-            output_model=EvaluateSubmissionOutput,
-        )
-        await ctx.log_run(
-            agent_id=self.agent_id,
-            skill_id=self.skill_id,
-            input_summary=inp.model_dump(),
-            output_summary=out.model_dump(),
-            evidence_chunk_ids=out.evidence_chunk_ids,
-            quality_score=out.quality_score,
-        )
-        return out

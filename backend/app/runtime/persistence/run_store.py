@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from datetime import timedelta
+from collections.abc import Callable
 from typing import Any, Iterable
 from uuid import UUID, uuid4
 
@@ -139,7 +140,15 @@ class RunStore:
         return (run, True) if return_created else run
 
     async def get_run(self, workflow_run_id: UUID | str, *, required: bool = True) -> WorkflowRun | None:
-        run = await self.session.get(WorkflowRun, as_uuid(workflow_run_id, field="workflow_run_id"))
+        run_id = as_uuid(workflow_run_id, field="workflow_run_id")
+        # A long-lived worker session must observe pause/cancel/approval
+        # decisions committed by a control-plane session. ``session.get`` can
+        # otherwise return a stale identity-map instance indefinitely.
+        run = await self.session.scalar(
+            select(WorkflowRun)
+            .where(WorkflowRun.id == run_id)
+            .execution_options(populate_existing=True)
+        )
         if run is None and required:
             raise RunNotFoundError(str(workflow_run_id))
         return run
@@ -222,10 +231,22 @@ class RunStore:
                     state_version=WorkflowRun.state_version + 1,
                     updated_at=now,
                 )
-                .returning(WorkflowRun)
+                # The candidate was loaded above. On SQLite, evaluating the
+                # timezone-aware lease predicate against its naive hydrated
+                # datetime raises before SQL executes after a worker restart.
+                # The returned row is authoritative, so no identity-map
+                # evaluation is needed here.
+                .execution_options(synchronize_session=False)
+                .returning(WorkflowRun.id)
             )
-            claimed = result.scalar_one_or_none()
-            if claimed is not None:
+            claimed_id = result.scalar_one_or_none()
+            if claimed_id is not None:
+                # `synchronize_session=False` deliberately leaves the
+                # candidate's identity-map instance stale. Reload through the
+                # store's populate-existing path before exposing the claimed
+                # root to RuntimeEngine.
+                claimed = await self.get_run(claimed_id)
+                assert claimed is not None
                 await self.session.flush()
                 return claimed
         return None
@@ -259,6 +280,40 @@ class RunStore:
         await self.session.flush()
         assert renewed is not None
         return renewed
+
+    async def mutate_budget(
+        self,
+        workflow_run_id: UUID | str,
+        *,
+        lease_epoch: int,
+        mutate: Callable[[dict[str, Any]], dict[str, Any]],
+    ) -> WorkflowRun:
+        """Apply one fenced budget-ledger mutation under the root row lock.
+
+        A fan-out branch must not use the root lifecycle CAS merely to update
+        accounting: sibling branches legitimately share an epoch, but not a
+        stale ``state_version``.  The root row lock serialises the ledger while
+        preserving the StateMachine as the only owner of lifecycle changes.
+        """
+        if lease_epoch < 1:
+            raise ValueError("budget mutations require a positive lease_epoch")
+        run_id = as_uuid(workflow_run_id, field="workflow_run_id")
+        root = await self.session.scalar(
+            select(WorkflowRun)
+            .where(WorkflowRun.id == run_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        if root is None:
+            raise RunNotFoundError(str(run_id))
+        if root.lease_epoch != lease_epoch or not lease_is_active(root.lease_expires_at):
+            raise LeaseFencedError(
+                f"budget mutation fenced for run={run_id} epoch={lease_epoch}"
+            )
+        root.budget = mapping(mutate(dict(root.budget or {})), field="budget")
+        root.updated_at = utcnow()
+        await self.session.flush()
+        return root
 
     async def transition_run(
         self,
@@ -304,7 +359,14 @@ class RunStore:
             )
         async with self.session.begin_nested():
             result = await self.session.execute(
-                update(WorkflowRun).where(*where).values(**values).returning(WorkflowRun)
+                update(WorkflowRun)
+                .where(*where)
+                .values(**values)
+                # SQLite returns naive values for timezone columns. Let the
+                # database evaluate the lease predicate rather than asking
+                # SQLAlchemy's in-memory evaluator to compare them to UTC.
+                .execution_options(synchronize_session=False, populate_existing=True)
+                .returning(WorkflowRun)
             )
             updated = result.scalar_one_or_none()
             if updated is None:

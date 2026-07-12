@@ -5,9 +5,10 @@ import { mockAnalyzeImageTask, type MockImageAnalysisContext } from './mock/mult
 import type { EvidenceChunkDTO } from './sse.types';
 
 const DEFAULT_API_BASE_URL = 'http://127.0.0.1:8000';
+const viteEnvironment = import.meta.env as { VITE_API_BASE_URL?: string } | undefined;
 
 export const API_BASE_URL =
-  import.meta.env.VITE_API_BASE_URL ?? DEFAULT_API_BASE_URL;
+  viteEnvironment?.VITE_API_BASE_URL ?? DEFAULT_API_BASE_URL;
 
 export const AUTH_TOKEN_STORAGE_KEY = 'securehub-auth-token';
 export const AUTH_SESSION_TOKEN_STORAGE_KEY = 'securehub-auth-session-token';

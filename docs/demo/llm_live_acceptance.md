@@ -11,6 +11,28 @@ Status: real
 
 Live tests are a manual demo-freeze gate. They are not part of ordinary CI and must not be reported as passed unless a real provider key was present during the run.
 
+## Wave 4-6 Provider Replacement Gate
+
+The demo primary is Spark (`xfyun`); DeepSeek is a declared real fallback, not
+a fixture substitute. Run this gate only with valid credentials for both
+providers, real RAG/embedding access and `AGENT_RUN_REAL_ENABLED=true`.
+
+1. Start `course_learning_full_v1` with `mode=real`, provider `xfyun`, and an
+   idempotency key.
+2. Retain root UUID, ordered SSE count, EvidenceRef IDs, ArtifactRef IDs and
+   provider-call IDs from PostgreSQL.
+3. Inject or observe a primary failure after visible tokens. The trace must
+   contain `provider_switch.replace_draft=true`; the next token stream must
+   have a new provider-call ID and attempt. The UI must replace, never append,
+   the draft.
+4. Confirm `actual_provider=deepseek` only for the fallback call, no
+   `fixture` provider in a real root, and replay from `Last-Event-ID` matches
+   the durable sequence.
+
+Without those credentials, record the sanitised fail-closed response (for
+example `REAL_MODE_DISABLED` or `RAG_UNAVAILABLE`) and leave this gate pending.
+Do not use a local fake or fixture test to claim the live fallback passed.
+
 ## Manual Commands
 
 DeepSeek:

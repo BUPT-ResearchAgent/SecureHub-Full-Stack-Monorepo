@@ -14,7 +14,6 @@ from app.api.v1.endpoints import (
     profile,
     rag,
     research,
-    streaming,
     system,
     tutor,
     uploads,
@@ -46,7 +45,6 @@ api_router.include_router(
 )
 api_router.include_router(profile.router, tags=["profile"])
 api_router.include_router(courses.router, tags=["courses"])
-api_router.include_router(streaming.router, tags=["streaming"])
 api_router.include_router(agents.router, tags=["agents"])
 api_router.include_router(agent_control.router, tags=["agent-control"])
 api_router.include_router(rag.router, tags=["rag"])

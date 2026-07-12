@@ -1,3 +1,3 @@
 # Status: mock
 
-"""Example skills for Harness tests. These are not registered agents."""
+"""Reserved for non-production examples; no executable skill adapter lives here."""

@@ -11,7 +11,7 @@ from pydantic import BaseModel
 
 from app.runtime.contracts import ErrorCode, ExecutionMode
 from app.runtime.harness.contracts import SkillDefinition
-from app.runtime.harness.execution_context import ExecutionContext
+from app.runtime.harness.context import ExecutionContext
 from app.runtime.harness.executor import SkillExecutionError, SkillExecutor
 
 

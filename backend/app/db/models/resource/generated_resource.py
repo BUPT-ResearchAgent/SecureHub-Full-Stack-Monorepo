@@ -37,6 +37,8 @@ class GeneratedResource(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     step_attempt_id: Mapped[UUID | None] = mapped_column(
         PG_UUID(as_uuid=True), ForeignKey("workflow_step_attempts.id"), index=True
     )
+    parent_resource_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), index=True)
+    lineage_root_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), index=True)
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
     resource_type: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
     title: Mapped[str] = mapped_column(Text, nullable=False)

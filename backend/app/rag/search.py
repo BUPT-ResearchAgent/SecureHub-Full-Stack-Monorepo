@@ -1,19 +1,14 @@
 # Status: real
 
-"""统一的 RAG 检索 service。
-
-封装：
-- ``retrieve`` 真实数据库查询；
-- 兜底 fixture 注入（用于无数据库 / chunks 为空时仍能给前端展示证据）；
-- 提供给 ``POST /api/v1/rag/search`` 端点直接调用。
-"""
+"""Mode-explicit RAG retrieval for the public evidence endpoint."""
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel
 
+from app.llm.embeddings.errors import EmbeddingError
 from app.rag.evidence_builder import Evidence, build_evidence
 from app.rag.reranker import rerank
 from app.rag.retriever import EvidenceHit, retrieve
@@ -25,24 +20,21 @@ class RagSearchRequest(BaseModel):
     query: str
     top_k: int = 5
     filters: dict[str, Any] | None = None
+    mode: Literal["fixture", "real"] = "real"
 
 
 class RagSearchResponse(BaseModel):
     hits: list[EvidenceHit]
     evidence_cards: list[Evidence]
-    fallback: bool = False
+    mode: Literal["fixture", "real"]
+
+
+class RagSearchUnavailable(RuntimeError):
+    """A real retrieval request cannot fabricate fixture evidence."""
 
 
 async def search(req: RagSearchRequest) -> RagSearchResponse:
-    hits = await retrieve(
-        req.query,
-        domain=req.domain,
-        top_k=req.top_k * 2,
-        filter=req.filters,
-    )
-    fallback = False
-    if not hits:
-        fallback = True
+    if req.mode == "fixture":
         hits = [
             EvidenceHit(
                 chunk_id=str(hit["chunk_id"]),
@@ -56,9 +48,24 @@ async def search(req: RagSearchRequest) -> RagSearchResponse:
             )
             for hit in default_evidence_fixtures(req.domain)
         ][: max(req.top_k, 3)]
+    else:
+        try:
+            hits = await retrieve(
+                req.query,
+                domain=req.domain,
+                top_k=req.top_k * 2,
+                filter=req.filters,
+            )
+        except EmbeddingError as exc:
+            # Provider configuration, authentication and rate limits are an
+            # unavailable real retrieval dependency, never permission to
+            # substitute fixture evidence.
+            raise RagSearchUnavailable("real RAG embedding dependency is unavailable") from exc
+        if not hits:
+            raise RagSearchUnavailable("real RAG retrieval returned no evidence")
     reordered = await rerank(req.query, hits, top_k=req.top_k)
     return RagSearchResponse(
         hits=reordered,
         evidence_cards=build_evidence(reordered),
-        fallback=fallback,
+        mode=req.mode,
     )

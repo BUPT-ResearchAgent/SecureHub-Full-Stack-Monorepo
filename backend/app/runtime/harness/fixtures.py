@@ -1,18 +1,15 @@
 # Status: real
 
-"""Mock / fixture support for offline harness runs.
+"""Explicit fixture data for offline RuntimeEngine execution.
 
-When the project runs without a real LLM provider or a populated vector store
-(typical for demos, CI, and the A3 evidence-floor regression tests) skills must
-still produce plausible structured outputs so the workflow can complete and the
-frontend can render the demo path.
+Fixture mode deliberately uses these deterministic records. Real mode never
+imports them as a fallback when a provider or retrieval boundary is unavailable.
 
 This module centralizes:
 - evidence fixtures (per domain / query keyword)
 - LLM completion fixtures keyed by skill name
 """
 
-from dataclasses import dataclass, field
 from typing import Any
 
 # --- Evidence fixtures ---------------------------------------------------
@@ -458,54 +455,3 @@ def default_llm_output(skill_name: str) -> dict[str, Any]:
         "content": f"[fixture] no canned output for skill {skill_name}, returning generic stub.",
         "quality_score": 0.6,
     }
-
-
-# --- Legacy fixtures kept for dev-era harness tests ----------------------
-
-
-@dataclass(slots=True)
-class ChunkHit:
-    chunk_id: str
-    document_id: str | None = None
-    source_url: str | None = None
-    excerpt: str = ""
-    chapter: str | None = None
-    score: float = 0.9
-    metadata: dict[str, Any] = field(default_factory=dict)
-
-
-class MockRetriever:
-    def __init__(self, hits: list[ChunkHit]) -> None:
-        self.hits = hits
-        self.calls: list[dict[str, Any]] = []
-
-    async def retrieve(
-        self,
-        query: str,
-        *,
-        domain: str | None = None,
-        top_k: int = 3,
-        filters: dict[str, Any] | None = None,
-    ) -> list[ChunkHit]:
-        self.calls.append({"query": query, "domain": domain, "top_k": top_k, "filters": filters})
-        return self.hits[:top_k]
-
-
-class MockLLM:
-    def __init__(self) -> None:
-        self.calls: list[dict[str, Any]] = []
-
-    async def chat(self, prompt: str, *, stream: bool = False) -> str:
-        self.calls.append({"prompt": prompt, "stream": stream})
-        return prompt
-
-
-class MockQualityCheck:
-    def __init__(self, *, score: float = 0.8, accept: bool = True) -> None:
-        self.score = score
-        self.accept = accept
-        self.calls: list[dict[str, Any]] = []
-
-    async def check(self, **kwargs: Any) -> dict[str, Any]:
-        self.calls.append(dict(kwargs))
-        return {"accept": self.accept, "quality_score": self.score}

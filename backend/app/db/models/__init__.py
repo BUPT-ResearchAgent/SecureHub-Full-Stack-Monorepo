@@ -20,6 +20,8 @@ from app.db.models.learning import (
 from app.db.models.resource import GeneratedResource, ResourceVersion
 from app.db.models.storage import StorageObject
 from app.db.models.workflow_runtime import (
+    WorkflowApproval,
+    WorkflowAuditLog,
     WorkflowCheckpoint,
     WorkflowEvidenceSnapshot,
     WorkflowEvent,
@@ -56,6 +58,8 @@ __all__ = [
     "UserCapability",
     "UserProfile",
     "WorkflowCheckpoint",
+    "WorkflowApproval",
+    "WorkflowAuditLog",
     "WorkflowEvidenceSnapshot",
     "WorkflowEvent",
     "WorkflowProviderCall",

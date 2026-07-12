@@ -99,6 +99,7 @@ export async function runWorkflowRunClientHarness(): Promise<void> {
 
   await verifyGapRecovery();
   await verifyReconnectAndRefreshCursor();
+  await verifyControlAndApprovalRequests();
 }
 
 async function verifyGapRecovery(): Promise<void> {
@@ -198,6 +199,40 @@ async function verifyReconnectAndRefreshCursor(): Promise<void> {
   assert(refreshRequest?.lastEventId === '2', 'refresh did not replay with the persisted Last-Event-ID');
 }
 
+async function verifyControlAndApprovalRequests(): Promise<void> {
+  const requests: Array<{ url: string; method?: string; body?: string }> = [];
+  const approvalId = '00000000-0000-0000-0000-000000000099';
+  const client = new WorkflowRunClient({
+    apiBaseUrl: 'https://securehub.test',
+    storage: null,
+    getAuthToken: () => null,
+    fetchImpl: async (input, init) => {
+      const url = String(input);
+      requests.push({ url, method: init?.method, body: typeof init?.body === 'string' ? init.body : undefined });
+      if (url.includes('/approvals/')) {
+        return jsonResponse({
+          approval_id: approvalId,
+          run_id: RUN_ID,
+          kind: 'workflow_action',
+          status: 'approved',
+          request: {},
+          decision: { reviewed: true },
+        });
+      }
+      return jsonResponse({ run_id: RUN_ID, status: 'queued', compatibility: 'compatible' });
+    },
+  });
+
+  const paused = await client.pause(RUN_ID);
+  const approval = await client.decideApproval(RUN_ID, approvalId, true, { reviewed: true });
+
+  assert(paused.compatibility === 'compatible', 'control response did not preserve compatibility status');
+  assert(approval.status === 'approved', 'approval response did not preserve decision status');
+  assert(requests[0]?.url.endsWith(`/workflow-runs/${RUN_ID}/pause`), 'pause endpoint path is incorrect');
+  assert(requests[1]?.url.endsWith(`/workflow-runs/${RUN_ID}/approvals/${approvalId}`), 'approval endpoint path is incorrect');
+  assert(JSON.parse(requests[1]?.body ?? '{}').approved === true, 'approval request did not send the decision');
+}
+
 function terminalState(client: WorkflowRunClient, runId: string) {
   return new Promise<ReturnType<typeof createWorkflowRunViewState>>((resolve, reject) => {
     let subscription: ReturnType<typeof client.subscribe> | undefined;
@@ -257,6 +292,10 @@ function sseResponse(frames: string[]): Response {
     },
   });
   return new Response(body, { status: 200, headers: { 'Content-Type': 'text/event-stream' } });
+}
+
+function jsonResponse(body: unknown): Response {
+  return new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } });
 }
 
 function event<T extends WorkflowEvent['event_type']>(

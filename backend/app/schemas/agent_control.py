@@ -50,6 +50,7 @@ class WorkflowRunStartRequest(BaseModel):
     provider: str | None = None
     model: str | None = None
     stream: bool = True
+    budget: dict[str, Any] = Field(default_factory=dict)
 
     # Compatibility fields used by the Agent Run v0.4 endpoint.  They are
     # folded into ``input`` and never form another durable root shape.
@@ -152,6 +153,21 @@ class WorkflowRunControlResponse(BaseModel):
     compatibility: Literal["compatible", "migratable", "incompatible"] | None = None
 
 
+class WorkflowApprovalDecisionRequest(BaseModel):
+    approved: bool
+    decision: dict[str, Any] = Field(default_factory=dict)
+
+
+class WorkflowApprovalResponse(BaseModel):
+    approval_id: UUID
+    run_id: UUID
+    node_id: str | None = None
+    kind: str
+    status: Literal["pending", "approved", "rejected"]
+    request: dict[str, Any] = Field(default_factory=dict)
+    decision: dict[str, Any] = Field(default_factory=dict)
+
+
 class WorkflowRunCancelResponse(WorkflowRunControlResponse):
     cancel_requested: bool = True
 
@@ -160,6 +176,8 @@ __all__ = [
     "AgentManifestItem",
     "AgentManifestResponse",
     "WorkflowRunCancelResponse",
+    "WorkflowApprovalDecisionRequest",
+    "WorkflowApprovalResponse",
     "WorkflowRunControlResponse",
     "WorkflowRunResponse",
     "WorkflowRunStartRequest",

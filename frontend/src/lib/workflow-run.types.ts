@@ -13,6 +13,17 @@ export const WORKFLOW_EVENT_TYPES = [
 export type WorkflowEventType = (typeof WORKFLOW_EVENT_TYPES)[number];
 
 export type WorkflowRunMode = 'fixture' | 'real';
+export type WorkflowCompatibility = 'compatible' | 'migratable' | 'incompatible';
+
+export type WorkflowRunBudget = {
+  limits?: {
+    max_tokens?: number;
+    max_cost_usd?: number;
+    max_nodes?: number;
+    max_provider_calls?: number;
+    provider_max_tokens?: Record<string, number>;
+  };
+};
 
 export type WorkflowRunStatus =
   | 'queued'
@@ -56,6 +67,8 @@ export type WorkflowProgressPayload = WorkflowEventCorrelation & {
   root_status?: WorkflowRunStatus;
   node_status?: WorkflowNodeStatus;
   message?: string;
+  approval_id?: string;
+  approval_kind?: string;
 };
 
 export type WorkflowEvidencePayload = WorkflowEventCorrelation & {
@@ -159,6 +172,7 @@ export type WorkflowRunStartRequest = {
   provider?: string;
   model?: string;
   stream?: boolean;
+  budget?: WorkflowRunBudget;
 };
 
 export type WorkflowRunStartResponse = {
@@ -200,6 +214,23 @@ export type WorkflowRunStatusResponse = {
   nodes?: WorkflowRunNode[];
   final_output?: Record<string, unknown> | null;
   error?: WorkflowErrorPayload | null;
+};
+
+export type WorkflowRunControlResponse = {
+  run_id: string;
+  status: WorkflowRunStatus;
+  cancel_requested?: boolean;
+  compatibility?: WorkflowCompatibility | null;
+};
+
+export type WorkflowApprovalResponse = {
+  approval_id: string;
+  run_id: string;
+  node_id?: string | null;
+  kind: string;
+  status: 'pending' | 'approved' | 'rejected';
+  request: Record<string, unknown>;
+  decision: Record<string, unknown>;
 };
 
 export type WorkflowNodeViewState = {
