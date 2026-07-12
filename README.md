@@ -1,20 +1,75 @@
+<p align="center">
+  <img
+    src="./design/brand/exports/readme-banner.png"
+    alt="安枢智梯 SecureHub：面向网络安全人才培养的开源智能学习与科研平台"
+    width="100%"
+  />
+</p>
+
 <div align="center">
 
-# SecureHub
-
-**安枢智梯 | 面向网络安全人才培养的智能化产教研融合中枢**
-
-[![CI](https://github.com/Nnutural/SecureHub-Full-Stack-Monorepo/actions/workflows/ci.yml/badge.svg?branch=dev)](https://github.com/Nnutural/SecureHub-Full-Stack-Monorepo/actions/workflows/ci.yml?query=branch%3Adev)
+[![CI](https://github.com/BUPT-ResearchAgent/SecureHub-Full-Stack-Monorepo/actions/workflows/ci.yml/badge.svg?branch=dev)](https://github.com/BUPT-ResearchAgent/SecureHub-Full-Stack-Monorepo/actions/workflows/ci.yml?query=branch%3Adev)
 [![Frontend](https://img.shields.io/badge/frontend-React%2018-149eca?logo=react&logoColor=white)](./frontend)
 [![Backend](https://img.shields.io/badge/backend-FastAPI-009688?logo=fastapi&logoColor=white)](./backend)
 [![Data](https://img.shields.io/badge/data-PostgreSQL%2016%20%2B%20pgvector-4169E1?logo=postgresql&logoColor=white)](./docker-compose.yml)
 [![Stage](https://img.shields.io/badge/stage-integration%20validation-EAB308)](#当前状态与路线图)
 
-[概览](#概览) · [体验](#体验) · [产品模块](#产品模块) · [系统架构](#系统架构) · [快速开始](#快速开始) · [接口与事件](#接口与事件) · [开发验证](#开发验证) · [文档索引](#文档索引)
+[核心能力](#核心能力) · [概览](#概览) · [体验](#体验) · [产品模块](#产品模块) · [系统架构](#系统架构) · [快速开始](#快速开始) · [接口与事件](#接口与事件) · [开发验证](#开发验证) · [文档索引](#文档索引)
 
 </div>
 
 SecureHub 将网络安全学习、竞赛备赛、科研创新和就业发展组织为可追溯的智能化工作流。项目以“基于多智能体的个性化课程学习”为软件杯 A3 主线，同时提供政策、热点、岗位、竞赛、选题、写作和任务协同等中枢能力。
+
+## 核心能力
+
+<table>
+  <tr>
+    <td align="center" width="33%">
+      <img src="./design/brand/icons/knowledge-base.svg" alt="" width="32" />
+      <br />
+      <strong>知识组织</strong>
+      <br />
+      <sub>统一组织课程、文档、证据与领域知识资产</sub>
+    </td>
+    <td align="center" width="33%">
+      <img src="./design/brand/icons/learning-path.svg" alt="" width="32" />
+      <br />
+      <strong>学习路径</strong>
+      <br />
+      <sub>基于画像、知识节点与能力反馈规划个性化进阶路径</sub>
+    </td>
+    <td align="center" width="33%">
+      <img src="./design/brand/icons/security-lab.svg" alt="" width="32" />
+      <br />
+      <strong>安全实验</strong>
+      <br />
+      <sub>连接教程、工具、题目、竞赛与受控实战环境</sub>
+    </td>
+  </tr>
+  <tr>
+    <td align="center" width="33%">
+      <img src="./design/brand/icons/agent-collaboration.svg" alt="" width="32" />
+      <br />
+      <strong>智能体协作</strong>
+      <br />
+      <sub>由固定产品智能体协同完成分析、规划与成果生成</sub>
+    </td>
+    <td align="center" width="33%">
+      <img src="./design/brand/icons/research.svg" alt="" width="32" />
+      <br />
+      <strong>科研创新</strong>
+      <br />
+      <sub>支持科研机会发现、选题推演、写作与成果沉淀</sub>
+    </td>
+    <td align="center" width="33%">
+      <img src="./design/brand/icons/talent-development.svg" alt="" width="32" />
+      <br />
+      <strong>人才培养</strong>
+      <br />
+      <sub>贯通学习、竞赛、科研与就业的能力成长闭环</sub>
+    </td>
+  </tr>
+</table>
 
 ## 概览
 
@@ -277,7 +332,7 @@ sequenceDiagram
 ### 启动完整本地栈
 
 ```bash
-git clone https://github.com/Nnutural/SecureHub-Full-Stack-Monorepo.git
+git clone https://github.com/BUPT-ResearchAgent/SecureHub-Full-Stack-Monorepo.git
 cd SecureHub-Full-Stack-Monorepo
 docker compose up --build
 ```
@@ -286,16 +341,16 @@ docker compose up --build
 
 | 服务 | 地址 |
 | --- | --- |
-| 前端 | http://localhost:5173 |
-| 后端 API | http://localhost:8000 |
-| OpenAPI | http://localhost:8000/docs |
+| 前端 | http://127.0.0.1:5173 |
+| 后端 API | http://127.0.0.1:8000 |
+| OpenAPI | http://127.0.0.1:8000/docs |
 | PostgreSQL（宿主机） | `127.0.0.1:15432` |
 | Redis（宿主机） | `127.0.0.1:6379` |
 
 PowerShell 健康检查：
 
 ```powershell
-Invoke-RestMethod http://localhost:8000/api/v1/health
+Invoke-RestMethod http://127.0.0.1:8000/api/v1/health
 ```
 
 停止并移除本地容器：
@@ -334,7 +389,7 @@ pnpm dev
 
 ### 体验建议路径
 
-1. 打开 `http://localhost:5173`，完成注册或登录。
+1. 打开 `http://127.0.0.1:5173`，完成注册或登录。
 2. 进入 `/course`，依次查看课程入口、学习路径、资源工作台、辅导和评估视图。
 3. 打开 `/workspace#agent-runs` 与全局证据链面板，观察运行与来源的可视化。
 4. 从 `/writing`、`/research`、`/careers` 或 `/tasks` 继续验证学习成果如何进入选题、机会、发展与执行计划。

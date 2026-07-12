@@ -1,0 +1,35 @@
+{
+  "generator": "design/brand/scripts/generate-github-brand-assets.py",
+  "formalLogoSvg": "master/logo-symbol-primary.svg",
+  "formalLogoPng": "master/logo-symbol-primary-1024.png",
+  "font": {
+    "raster": "C:\\Windows\\Fonts\\NotoSansSC-VF.ttf",
+    "svgFallback": "'Noto Sans SC', 'Microsoft YaHei', DengXian, sans-serif",
+    "weights": {
+      "title": 600,
+      "body": 400,
+      "english": 500
+    }
+  },
+  "immutableBackgrounds": {
+    "generated/github-social-background.png": "A88CF5EF350EBEC3C940526DC74B95163982559E521E311EE152C205254E5CBD",
+    "generated/readme-banner-background.png": "551D7774FD00F74E36E5E08B6344E4ADB2EE9BFFDEC925EBBA2FFA5C12CECC4C",
+    "archive/github-social-background-concept-a.png": "01E7B3101EDDC053AD260285E152464C66625E69E7C504AE42F3944198310C49"
+  },
+  "colors": {
+    "brandInk": "#0B1B2D",
+    "brandBlue": "#174BFF",
+    "brandBlueDarkMode": "#4D73FF",
+    "brandText": "#1F2937",
+    "brandMuted": "#667085",
+    "brandMutedDark": "#CBD5E1",
+    "brandBorder": "#DDE3EA",
+    "brandSurface": "#F6F8FB",
+    "brandBackground": "#FFFFFF",
+    "brandWhite": "#F8FAFC"
+  },
+  "imagegen": {
+    "formalAssets": "not used",
+    "reviewOutputDirectory": "tmp/image-gen-review/"
+  }
+}
