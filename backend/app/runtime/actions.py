@@ -220,6 +220,13 @@ class WorkflowActionService:
             "dimensions": dict(row.dimensions or {}),
             "quality_score": self._as_float(output.get("quality_score")),
         }
+        # Keep the learner-facing reply in the durable terminal output.  The
+        # profile row remains the source of truth for dimensions, while a
+        # reconnecting UI can recover the associated follow-up question.
+        for key in ("content", "next_question"):
+            value = output.get(key)
+            if isinstance(value, str) and value.strip():
+                persisted[key] = value.strip()
         # Assessment workflows end by persisting the persona. Preserve the
         # independently persisted assessment/capability result in that final
         # action output so the synchronous compatibility adapter has one

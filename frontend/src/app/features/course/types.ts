@@ -22,6 +22,7 @@ export type LearningPersona = {
 export type LearningPathNode = {
   id: string;
   label: string;
+  description?: string;
   status: 'locked' | 'ready' | 'active' | 'done';
   priority: number;
 };
@@ -34,6 +35,7 @@ export type LearningPathEdge = {
 
 export type LearningPath = {
   courseId: string;
+  workflowRunId?: string;
   nodes: LearningPathNode[];
   edges: LearningPathEdge[];
   milestones: Array<{ id: string; title: string; week: number }>;

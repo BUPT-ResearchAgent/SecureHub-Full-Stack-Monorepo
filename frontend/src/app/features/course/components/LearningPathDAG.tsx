@@ -16,9 +16,16 @@ const statusTone = {
   done: 'green',
 } as const;
 
+const generatedStatusTone = {
+  locked: 'amber',
+  ready: 'blue',
+  active: 'green',
+  done: 'green',
+} as const;
+
 /** Renders only the backend graph/path/progress projection, never local mock nodes. */
 export function LearningPathDAG({ courseId }: LearningPathDAGProps) {
-  const { taskContext } = useCourseState();
+  const { taskContext, path: generatedPath } = useCourseState();
   const dispatch = useCourseDispatch();
   const effectiveCourseId = courseId ?? taskContext.courseId;
   const productPath = useCourseProductPath(effectiveCourseId);
@@ -49,9 +56,32 @@ export function LearningPathDAG({ courseId }: LearningPathDAGProps) {
   const { graph, path, progress } = productPath;
   const graphNodes = new Map(graph.nodes.map((node) => [node.id, node]));
   const labels = new Map(graph.nodes.map((node) => [node.id, node.name]));
+  const generatedForCourse = generatedPath?.courseId === effectiveCourseId ? generatedPath : null;
 
   return (
     <Card title="学习路径图谱" subtitle={path.explanation}>
+      {generatedForCourse && (
+        <section className="mb-4 border-b border-slate-200 pb-4" aria-label="本次生成路径分析">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="text-sm font-semibold text-slate-900">本次 durable 路径</div>
+            <div className="flex flex-wrap gap-2">
+              <Tag tone="blue">{generatedForCourse.nodes.length} 个生成步骤</Tag>
+              {generatedForCourse.workflowRunId && <Tag tone="green">Root {generatedForCourse.workflowRunId.slice(0, 8)}</Tag>}
+            </div>
+          </div>
+          <div className="mt-3 space-y-2">
+            {generatedForCourse.nodes.map((node) => (
+              <div key={node.id} className="border-l-2 border-brand-blue-200 pl-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-sm font-medium text-slate-800">{node.priority}. {node.label}</span>
+                  <Tag tone={generatedStatusTone[node.status]}>{node.status}</Tag>
+                </div>
+                {node.description && <p className="mt-1 text-xs leading-5 text-slate-500">{node.description}</p>}
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
       <div className="mb-3 flex flex-wrap gap-2">
         <Tag tone="blue">{path.strategy === 'foundation_first' ? '基础优先路径' : '加速先修路径'}</Tag>
         <Tag tone="green">进度 {Math.round(progress.progress_percent)}%</Tag>

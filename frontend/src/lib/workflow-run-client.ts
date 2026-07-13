@@ -98,7 +98,10 @@ export class WorkflowRunClient {
 
   constructor(options: WorkflowRunClientOptions = {}) {
     this.apiBaseUrl = options.apiBaseUrl ?? API_BASE_URL;
-    this.fetchImpl = options.fetchImpl ?? fetch;
+    // Calling an extracted native fetch as this.fetchImpl(...) loses Window's
+    // WebIDL receiver. Keep injected test fetches intact, but invoke the
+    // browser implementation through globalThis for the production default.
+    this.fetchImpl = options.fetchImpl ?? ((input, init) => globalThis.fetch(input, init));
     this.getAuthToken = options.getAuthToken ?? getStoredAuthToken;
     this.storage = options.storage ?? safeStorage();
     this.reconnectDelayMs = options.reconnectDelayMs ?? DEFAULT_RECONNECT_DELAY_MS;

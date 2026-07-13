@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { BookOpen, Play, ShieldCheck } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { ArrowRight, BookOpen, Play, ShieldCheck } from 'lucide-react';
 import { Card, Tag } from '@/app/components/PageShell';
 import { ErrorState } from '@/app/components/StateView';
 import { learningPathFromWorkflowStatus, startCourseTask } from '../api';
@@ -12,10 +13,11 @@ export interface CourseEntryCardProps {
 }
 
 export function CourseEntryCard({ course }: CourseEntryCardProps) {
-  const { taskContext } = useCourseState();
+  const { taskContext, path } = useCourseState();
   const dispatch = useCourseDispatch();
   const [planning, setPlanning] = useState(false);
   const [error, setError] = useState<string>();
+  const generatedPath = path?.courseId === taskContext.courseId ? path : null;
 
   const planCourse = () => {
     if (planning) return;
@@ -95,6 +97,32 @@ export function CourseEntryCard({ course }: CourseEntryCardProps) {
           </button>
           <span className="text-xs text-slate-500">会创建独立 durable root，不复用对话或资源任务。</span>
         </div>
+        {generatedPath && (
+          <section className="mt-5 border-t border-slate-200 pt-4" aria-label="本次生成的学习路径">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <div className="text-sm font-semibold text-slate-900">本次生成的个性化路径</div>
+                <p className="mt-1 text-xs text-slate-500">{generatedPath.nodes.length} 个步骤已写入 durable workflow 结果。</p>
+              </div>
+              {generatedPath.workflowRunId && <Tag tone="green">Root {generatedPath.workflowRunId.slice(0, 8)}</Tag>}
+            </div>
+            <ol className="mt-3 space-y-2">
+              {generatedPath.nodes.map((node) => (
+                <li key={node.id} className="border-l-2 border-brand-blue-200 pl-3">
+                  <div className="text-sm font-medium text-slate-800">{node.priority}. {node.label}</div>
+                  {node.description && <p className="mt-0.5 text-xs leading-5 text-slate-500">{node.description}</p>}
+                </li>
+              ))}
+            </ol>
+            <Link
+              to={`/course?courseId=${encodeURIComponent(course.id)}&view=structured&tab=path`}
+              className="mt-4 inline-flex items-center gap-1.5 text-sm font-medium text-brand-blue-700 hover:text-brand-blue-800"
+            >
+              查看图谱先修关系与进度分析
+              <ArrowRight className="h-4 w-4" />
+            </Link>
+          </section>
+        )}
         {error && <div className="mt-3"><ErrorState message={error} onRetry={planCourse} /></div>}
       </Card>
     </div>

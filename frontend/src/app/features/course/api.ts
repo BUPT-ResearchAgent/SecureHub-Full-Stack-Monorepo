@@ -5,7 +5,7 @@
 // PresenterMode root must explicitly pass `{ mode: 'fixture' }` to
 // `startCourseTask`; real workflow errors stay real.
 
-import type { AssessmentRunResponse, CoursePlanResponse } from '@/lib/api-types';
+import type { AssessmentRunResponse } from '@/lib/api-types';
 import { apiGet, apiPost } from '@/lib/api';
 import type { SSEHandlers } from '@/lib/sse';
 import {
@@ -46,6 +46,11 @@ export const PRODUCT_WORKFLOWS = {
 } as const;
 
 export type CourseTaskRunMode = 'real' | 'fixture';
+
+export type PersonaDialogue = {
+  content: string;
+  nextQuestion?: string;
+};
 
 export type CourseResourcePackOptions = {
   query?: string;
@@ -216,22 +221,58 @@ export function createCourseTaskRequest(command: CourseTaskCommand): WorkflowRun
   }
 }
 
-function adaptPlanResponse(response: CoursePlanResponse, fallbackCourseId: string): LearningPath {
-  const nodes = response.path.map((node, index) => ({
-    id: node.node_id,
-    label: node.title,
-    status: node.status === 'in_progress' ? 'active' as const : node.status,
+type WorkflowPathNode = {
+  id: string;
+  label: string;
+  description?: string;
+  status: LearningPath['nodes'][number]['status'];
+  prerequisites: string[];
+};
+
+function adaptPlanResponse(response: unknown, fallbackCourseId: string): LearningPath {
+  if (!isRecord(response)) {
+    throw new WorkflowRunClientError('学习路径工作流输出不是对象', { code: 'WORKFLOW_OUTPUT_INVALID' });
+  }
+  const rawPath = response.path ?? response.nodes;
+  if (!Array.isArray(rawPath)) {
+    throw new WorkflowRunClientError('学习路径工作流输出缺少 path 数组', { code: 'WORKFLOW_OUTPUT_INVALID' });
+  }
+
+  const normalized = rawPath.map((rawNode, index): WorkflowPathNode => {
+    if (!isRecord(rawNode)) {
+      throw new WorkflowRunClientError(`学习路径节点 ${index + 1} 不是对象`, { code: 'WORKFLOW_OUTPUT_INVALID' });
+    }
+    const id = firstNonEmptyString(rawNode.node_id, rawNode.id, rawNode.kp_id);
+    const label = firstNonEmptyString(rawNode.title, rawNode.label);
+    if (!id || !label) {
+      throw new WorkflowRunClientError(`学习路径节点 ${index + 1} 缺少 ID 或标题`, { code: 'WORKFLOW_OUTPUT_INVALID' });
+    }
+    return {
+      id,
+      label,
+      description: firstNonEmptyString(rawNode.description),
+      status: normalizePathNodeStatus(rawNode.status),
+      prerequisites: Array.isArray(rawNode.prerequisites)
+        ? rawNode.prerequisites.filter((value): value is string => typeof value === 'string' && value.length > 0)
+        : [],
+    };
+  });
+  const nodes = normalized.map(({ id, label, description, status }, index) => ({
+    id,
+    label,
+    description,
+    status,
     priority: index + 1,
   }));
-  const edges = response.path.flatMap((node) =>
+  const edges = normalized.flatMap((node) =>
     node.prerequisites.map((source) => ({
-      id: `${source}-${node.node_id}`,
+      id: `${source}-${node.id}`,
       source,
-      target: node.node_id,
+      target: node.id,
     })),
   );
   return {
-    courseId: response.course_id || fallbackCourseId,
+    courseId: firstNonEmptyString(response.course_id) ?? fallbackCourseId,
     nodes,
     edges,
     milestones: nodes.map((node, index) => ({
@@ -240,6 +281,20 @@ function adaptPlanResponse(response: CoursePlanResponse, fallbackCourseId: strin
       week: index + 1,
     })),
   };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function firstNonEmptyString(...values: unknown[]): string | undefined {
+  return values.find((value): value is string => typeof value === 'string' && value.trim().length > 0)?.trim();
+}
+
+function normalizePathNodeStatus(value: unknown): LearningPath['nodes'][number]['status'] {
+  if (value === 'in_progress' || value === 'active') return 'active';
+  if (value === 'locked' || value === 'ready' || value === 'done') return value;
+  return 'ready';
 }
 
 function startWorkflowStream(
@@ -573,7 +628,10 @@ export function learningPathFromWorkflowStatus(
   status: WorkflowRunStatusResponse,
   fallbackCourseId: string,
 ): LearningPath {
-  return adaptPlanResponse(finalOutputFromStatus<CoursePlanResponse>(status), fallbackCourseId);
+  return {
+    ...adaptPlanResponse(finalOutputFromStatus<Record<string, unknown>>(status), fallbackCourseId),
+    workflowRunId: status.run_id,
+  };
 }
 
 export function assessmentReportFromWorkflowStatus(
@@ -615,6 +673,21 @@ export function learningPersonaFromWorkflowStatus(
     completeness: required.filter((key) => Boolean(dimensions[key])).length / required.length,
     updatedAt: new Date().toISOString(),
   };
+}
+
+/** Returns only learner-facing structured fields; evidence and quality internals stay out of chat bubbles. */
+export function personaDialogueFromWorkflowStatus(
+  status: WorkflowRunStatusResponse,
+): PersonaDialogue | undefined {
+  return personaDialogueFromOutput(finalOutputFromStatus<Record<string, unknown>>(status));
+}
+
+export function personaDialogueFromOutput(output: unknown): PersonaDialogue | undefined {
+  if (!isRecord(output)) return undefined;
+  const content = firstNonEmptyString(output.content);
+  const nextQuestion = firstNonEmptyString(output.next_question, output.nextQuestion);
+  if (!content && !nextQuestion) return undefined;
+  return { content: content ?? nextQuestion ?? '', nextQuestion };
 }
 
 export function streamPersonaChat(

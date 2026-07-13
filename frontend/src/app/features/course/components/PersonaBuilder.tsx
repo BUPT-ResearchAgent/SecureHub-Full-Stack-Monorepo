@@ -14,7 +14,12 @@ import { useEvidence } from '@/app/components/EvidenceDrawer';
 import { useAgentTraceDispatch } from '@/app/features/agents/store';
 import { isMockMode } from '@/lib/mock';
 import { isWorkflowDraftReplacement } from '@/lib/workflow-run.types';
-import { learningPersonaFromWorkflowStatus, startCourseTask } from '../api';
+import {
+  learningPersonaFromWorkflowStatus,
+  personaDialogueFromOutput,
+  personaDialogueFromWorkflowStatus,
+  startCourseTask,
+} from '../api';
 import { useCourseDispatch, useCourseState } from '../store';
 import type { LearningPersona, PersonaDimensionKey } from '../types';
 import { createCourseTaskLifecycle } from '../workflow/courseTaskLifecycle';
@@ -115,6 +120,7 @@ export function PersonaBuilder({ userId = '00000000-0000-0000-0000-000000000001'
   const courseDispatch = useCourseDispatch();
   const { taskContext } = useCourseState();
   const cancelRef = useRef<() => void>();
+  const personaDraftRef = useRef('');
   const [input, setInput] = useState('我学过一点 Python，想入门 Web 安全');
   const [turns, setTurns] = useState<DialogueTurn[]>([initialTurn]);
   const [streaming, setStreaming] = useState(false);
@@ -227,6 +233,14 @@ export function PersonaBuilder({ userId = '00000000-0000-0000-0000-000000000001'
     setInput('');
     setError(undefined);
     setStreaming(true);
+    personaDraftRef.current = '';
+    const history = turns
+      .filter((turn) => (
+        turn.id !== initialTurn.id &&
+        (turn.role === 'user' || turn.role === 'assistant') &&
+        turn.content.trim().length > 0
+      ))
+      .map((turn) => ({ role: turn.role, content: turn.content }));
     setTurns((current) => [
       ...current,
       { id: `live-user-${current.length}`, role: 'user', content: message },
@@ -237,24 +251,58 @@ export function PersonaBuilder({ userId = '00000000-0000-0000-0000-000000000001'
     cancelRef.current = startCourseTask({
       intent: 'build_persona',
       context: { ...taskContext, userId },
-      payload: { message, history: [] },
+      payload: { message, history },
     }, createCourseTaskLifecycle('build_persona', courseDispatch, {
       onWorkflowEvent(event) {
-        if (!isWorkflowDraftReplacement(event)) return;
-        setTurns((current) =>
-          current.map((turn, index) => (
-            index === current.length - 1 && turn.role === 'assistant' ? { ...turn, content: '' } : turn
-          )),
-        );
+        if (isWorkflowDraftReplacement(event)) {
+          if (event.event_type !== 'trace' || event.payload.node_id !== 'build_persona') return;
+          personaDraftRef.current = '';
+          setTurns((current) =>
+            current.map((turn, index) => (
+              index === current.length - 1 && turn.role === 'assistant' ? { ...turn, content: '' } : turn
+            )),
+          );
+          return;
+        }
+        // A profile root also streams QualityCheck JSON. Only the
+        // BuildLearningPersona node is learner-facing dialogue.
+        if (event.event_type !== 'token' || event.payload.node_id !== 'build_persona') return;
+        personaDraftRef.current += event.payload.content;
       },
-      onToken(token) {
-        setTurns((current) =>
-          current.map((turn, index) =>
-            index === current.length - 1
-              ? { ...turn, content: `${turn.content}${token.content}` }
-              : turn,
-          ),
-        );
+      onWorkflowTerminal(status) {
+        if (status.status !== 'succeeded') return;
+        try {
+          const persona = learningPersonaFromWorkflowStatus(status, userId);
+          const streamedDialogue = parsePersonaDialogue(personaDraftRef.current);
+          const dialogue = personaDialogueFromWorkflowStatus(status) ?? streamedDialogue;
+          setIdentified(persona.dimensions);
+          courseDispatch({ type: 'setPersona', persona });
+          setTurns((current) =>
+            current.map((turn, index) => (
+              index === current.length - 1 && turn.role === 'assistant'
+                ? {
+                    ...turn,
+                    content: dialogue
+                      ? formatPersonaDialogue(dialogue)
+                      : '画像已持久化，但本轮对话文本未通过展示校验。',
+                  }
+                : turn
+            )),
+          );
+          if (!dialogue) {
+            setError({
+              code: 'WORKFLOW_OUTPUT_INVALID',
+              message: '画像已保存，但缺少可展示的 content 或 next_question。',
+            });
+          }
+        } catch (error) {
+          setError({
+            code: 'WORKFLOW_OUTPUT_INVALID',
+            message: error instanceof Error ? error.message : '画像结果映射失败',
+          });
+        } finally {
+          setStreaming(false);
+        }
       },
       onEvidence(chunk) {
         evidence.pushEvidence([chunk]);
@@ -273,19 +321,6 @@ export function PersonaBuilder({ userId = '00000000-0000-0000-0000-000000000001'
           courseDispatch({ type: 'setPersona', persona: buildPersona(userId, fullDimensions) });
           const pick = pickChallengeForClaim(message);
           if (pick) setChallengeQueue((current) => [...current, pick]);
-        }
-      },
-      onWorkflowTerminal(status) {
-        if (status.status !== 'succeeded') return;
-        try {
-          const persona = learningPersonaFromWorkflowStatus(status, userId);
-          setIdentified(persona.dimensions);
-          courseDispatch({ type: 'setPersona', persona });
-        } catch (error) {
-          setError({
-            code: 'WORKFLOW_OUTPUT_INVALID',
-            message: error instanceof Error ? error.message : '画像结果映射失败',
-          });
         }
       },
       onError(event) {
@@ -444,6 +479,20 @@ function turnTone(role: DialogueTurn['role']): string {
     default:
       return 'bg-white text-slate-700';
   }
+}
+
+function parsePersonaDialogue(draft: string) {
+  try {
+    return personaDialogueFromOutput(JSON.parse(draft));
+  } catch {
+    return undefined;
+  }
+}
+
+function formatPersonaDialogue(dialogue: { content: string; nextQuestion?: string }): string {
+  return dialogue.nextQuestion
+    ? `${dialogue.content}\n\n${dialogue.nextQuestion}`
+    : dialogue.content;
 }
 
 function labelOf(dim: string): string {
