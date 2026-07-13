@@ -63,5 +63,7 @@ Return JSON matching:
 
 class QualityCheck(BaseSkill):
     name = "QualityCheck"
-    applicable_domains = ["course_websec"]
+    # This remains the frozen QualityCheck binding. Fund recommendation roots
+    # use the same evidence snapshot and strict-parse contract.
+    applicable_domains = ["course_websec", "fund"]
     output_schema = QualityCheckOutput

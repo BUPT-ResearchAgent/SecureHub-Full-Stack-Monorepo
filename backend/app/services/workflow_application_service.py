@@ -59,6 +59,7 @@ class WorkflowApplicationError(RuntimeError):
 def build_default_workflow_registry() -> WorkflowRegistry:
     from app.runtime.workflows.course_learning_full_v1 import COURSE_LEARNING_FULL_V1
     from app.runtime.workflows.course_learning_full_v2 import COURSE_LEARNING_FULL_V2
+    from app.runtime.workflows.fund_recommendation_v1 import FUND_RECOMMENDATION_V1
     from app.runtime.workflows.product_workflows import PRODUCT_WORKFLOWS
     from app.runtime.workflows.resource_generate_v1 import RESOURCE_GENERATE_V1
     from app.runtime.workflows.tutor_routing_v2 import TUTOR_ROUTING_V2
@@ -71,6 +72,7 @@ def build_default_workflow_registry() -> WorkflowRegistry:
         COURSE_LEARNING_FULL_V2,
         TUTOR_ROUTING_V2,
         TUTOR_ROUTING_V3,
+        FUND_RECOMMENDATION_V1,
         *PRODUCT_WORKFLOWS,
     ):
         registry.register(definition)
@@ -136,6 +138,11 @@ class WorkflowApplicationService:
                 # generative Skills before the final atomic action validates it.
                 validated_input["capability_dimensions"] = capability_dimensions
                 validated_input["persona_dimension_keys"] = persona_dimension_keys
+            if definition.name == "fund_recommendation_v1":
+                # A generic workflow start must not provide a second, caller-
+                # controlled profile snapshot. Rehydrate it from the same
+                # durable sources used by the authenticated product adapter.
+                validated_input.update(await self._hydrate_fund_profile(session, request.user_id, validated_input))
             run_store = RunStore(session)
             # Avoid appending a second queued event for an idempotent replay.
             existing = await self._existing_idempotency(session, request.user_id, definition.name, key)
@@ -571,7 +578,39 @@ class WorkflowApplicationService:
             payload.setdefault("answers", [])
         elif workflow_name in {"course_learning_full_v1", "course_learning_full_v2"}:
             payload.setdefault("query", "Generate a parallel course resource pack")
+        elif workflow_name == "fund_recommendation_v1":
+            # These are server-owned fields. Dropping them before input-model
+            # validation also avoids persisting an untrusted browser snapshot.
+            payload.pop("profile_snapshot", None)
+            payload.pop("persona_summary", None)
+            payload["domain"] = "fund"
         return payload
+
+    @staticmethod
+    async def _hydrate_fund_profile(
+        session: AsyncSession,
+        user_id: str,
+        validated_input: dict[str, Any],
+    ) -> dict[str, Any]:
+        from app.schemas.fund_recommendation import FundRecommendationRequest
+        from app.services.fund_recommendation_service import FundRecommendationService
+
+        try:
+            parsed_user_id = UUID(str(user_id))
+            product_request = FundRecommendationRequest(
+                query=str(validated_input.get("query") or ""),
+                course_context=validated_input.get("course_context") or {},
+            )
+        except Exception as exc:
+            raise WorkflowApplicationError(
+                "INVALID_INPUT",
+                "fund recommendation input does not contain a valid course context",
+                status_code=422,
+            ) from exc
+        return await FundRecommendationService(session).prepare_root_input(
+            user_id=parsed_user_id,
+            request=product_request,
+        )
 
     @staticmethod
     async def _tutor_persona_summary(session: AsyncSession, user_id: str) -> str:

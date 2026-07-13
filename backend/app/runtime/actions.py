@@ -43,7 +43,68 @@ class WorkflowActionService:
             return await self.persist_assessment_feedback(root_input, state, context)
         if action_name == "ProjectTutorAnswer":
             return await self.project_tutor_answer(root_input, state, context)
+        if action_name == "ProjectFundRecommendation":
+            return await self.project_fund_recommendation(root_input, state, context)
         raise ValueError(f"unknown deterministic workflow action: {action_name}")
+
+    async def project_fund_recommendation(
+        self,
+        root_input: dict[str, Any],
+        state: dict[str, Any],
+        _context: ExecutionContext,
+    ) -> dict[str, Any]:
+        """Project only a QualityCheck-accepted, evidence-linked fund result."""
+        from app.schemas.fund_recommendation import FundRecommendationResult
+
+        quality = dict((state.get("quality_check") or {}).get("output") or {})
+        if quality.get("accept") is not True:
+            raise ValueError("fund recommendation terminal action requires QualityCheck acceptance")
+
+        recommendation_state = dict(state.get("recommend_funds") or {})
+        recommendation = dict(recommendation_state.get("output") or {})
+        evidence_snapshot_ids = [
+            str(value)
+            for value in recommendation_state.get("evidence_snapshot_ids") or []
+            if self._optional_uuid(value) is not None
+        ]
+        if len(evidence_snapshot_ids) < 3:
+            raise ValueError("accepted fund recommendation is missing the evidence floor")
+
+        snapshot = dict(root_input.get("profile_snapshot") or {})
+        allowed_dimensions = {
+            str(key)
+            for key in dict(snapshot.get("dimensions") or {})
+            if isinstance(key, str) and key.strip()
+        }
+        allowed_dimensions.update(
+            str(item.get("dimension"))
+            for item in snapshot.get("capabilities") or []
+            if isinstance(item, dict) and isinstance(item.get("dimension"), str) and item["dimension"].strip()
+        )
+        raw_recommendations = list(recommendation.get("fund_recommendations") or [])
+        if not raw_recommendations:
+            raise ValueError("accepted fund recommendation is missing recommendations")
+        projected: list[dict[str, Any]] = []
+        for item in raw_recommendations[:3]:
+            if not isinstance(item, dict):
+                raise ValueError("fund recommendation item is not an object")
+            matches = [str(value) for value in item.get("matched_profile_dimensions") or [] if isinstance(value, str)]
+            if not matches or not set(matches).issubset(allowed_dimensions):
+                raise ValueError("fund recommendation cites profile dimensions outside the durable snapshot")
+            projected.append({**item, "matched_profile_dimensions": matches, "evidence_snapshot_ids": evidence_snapshot_ids})
+
+        landscape = dict((state.get("analyse_fund_landscape") or {}).get("output") or {})
+        result = FundRecommendationResult.model_validate(
+            {
+                "recommendations": projected,
+                "landscape_summary": str(landscape.get("trend") or recommendation.get("content") or ""),
+                "profile_dimensions_used": sorted(
+                    {dimension for item in projected for dimension in item["matched_profile_dimensions"]}
+                ),
+                "evidence_snapshot_ids": evidence_snapshot_ids,
+            }
+        )
+        return result.model_dump(mode="json")
 
     async def project_tutor_answer(
         self,

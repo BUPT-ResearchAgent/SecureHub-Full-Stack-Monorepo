@@ -7,6 +7,7 @@ from app.api.v1.endpoints import (
     auth,
     courses,
     ctftime,
+    fund_recommendations,
     health,
     llm,
     placeholder,
@@ -34,6 +35,7 @@ api_router.include_router(
     prefix="/research",
     tags=["research"],
 )
+api_router.include_router(fund_recommendations.router, tags=["fund-recommendations"])
 api_router.include_router(
     ctftime.router,
     prefix="/ctftime",

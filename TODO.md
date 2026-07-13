@@ -1,7 +1,7 @@
 # SecureHub Agent Runtime TODO
 
 > Version: v2.3
-> Updated: 2026-07-12
+> Updated: 2026-07-13
 > Authority: `Plan/2026-07-11_SecureHub_多智能体底层完整架构实施方案.md` v1.1
 > Delivery evidence: `Workout/Agent-Runtime-Wave-0-3.md` and
 > `Workout/Agent-Runtime-Wave-4-6.md`
@@ -21,6 +21,19 @@ The fixed nine business Agents remain:
 `policy_interpreter`, `hot_analyst`, `job_analyst`, `competition_advisor`,
 `career_planner`, `topic_explorer`, `doc_archivist`, `task_orchestrator`, and
 `outcome_evaluator`.
+
+### A3 Productization S5-S7
+
+- [x] S5 closes the real quiz -> assessment -> QualityCheck -> atomic
+  capability/persona audit loop without changing historical workflow roots.
+- [x] S6 projects Evidence, Agent/Skill, QualityCheck, Provider, Artifact and
+  control state from one durable root without a second event serializer.
+- [x] S7 adds the independent `fund_recommendation_v1` workflow using the
+  frozen nine Agents and 28 Skill bindings, the shared profile/capability
+  sources and the shared knowledge asset tables under `domain=fund`.
+- [ ] Re-run the three authenticated real browser chains once local
+  PostgreSQL/Docker, Qwen/DeepSeek and browser policy are available. S5-S7 are
+  engineering-accepted; no stage is yet real-accepted in this environment.
 
 ### Post-Merge Verification Note
 
