@@ -9,8 +9,8 @@ step after the root transaction has committed.
 
 from __future__ import annotations
 
-import logging
 from typing import Any, Literal
+from uuid import UUID
 
 from fastapi import APIRouter, Header, Request
 from fastapi.responses import StreamingResponse
@@ -21,11 +21,11 @@ from app.api.v1.endpoints.workflow_adapter import (
     start_product_workflow,
     workflow_service,
 )
-from app.deps import CurrentUserDep
+from app.deps import CurrentUserDep, SessionDep
+from app.repositories.identity.profiles import UserProfileRepository
 from app.services.workflow_application_service import WorkflowApplicationService
 
 
-logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
@@ -61,6 +61,14 @@ def _service(request: Request) -> WorkflowApplicationService:
     return workflow_service(request)
 
 
+def _profile_response(user_id: UUID, dimensions: dict[str, Any], updated_at: Any) -> UserProfileResponse:
+    return UserProfileResponse(
+        user_id=str(user_id),
+        dimensions=dimensions,
+        updated_at=updated_at.isoformat() if updated_at else None,
+    )
+
+
 @router.post("/profile/chat")
 async def build_profile_from_chat(
     payload: ProfileChatRequest,
@@ -86,38 +94,24 @@ async def build_profile_from_chat(
     return durable_sse_response(service, start, actor_user_id=current_user_id)
 
 
-@router.get("/profile/{user_id}", response_model=UserProfileResponse)
-async def get_profile(user_id: str) -> UserProfileResponse:
-    try:
-        from app.db.models.user_profile import UserProfile
-        from app.db.session import get_sessionmaker
-        from sqlalchemy import select
+@router.get("/profile/me", response_model=UserProfileResponse)
+async def get_current_profile(
+    session: SessionDep,
+    current_user_id: CurrentUserDep,
+) -> UserProfileResponse:
+    """Return the authenticated profile without treating ``me`` as a UUID."""
+    profile = await UserProfileRepository(session).get_by_user_id(current_user_id)
+    if profile is None:
+        return _profile_response(current_user_id, {}, None)
+    return _profile_response(current_user_id, profile.dimensions or {}, profile.updated_at)
 
-        sessionmaker = get_sessionmaker()
-        async with sessionmaker() as session:
-            row = await session.execute(select(UserProfile).where(UserProfile.user_id == user_id))
-            profile = row.scalar_one_or_none()
-            if profile is not None:
-                return UserProfileResponse(
-                    user_id=str(profile.user_id),
-                    dimensions=profile.dimensions or {},
-                    updated_at=profile.updated_at.isoformat() if profile.updated_at else None,
-                )
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("profile read fallback: %s", exc)
-    # This legacy read endpoint is outside the runtime product path. It stays
-    # compatible until profile read migration is separately scheduled.
-    return UserProfileResponse(
-        user_id=user_id,
-        dimensions={
-            "base_knowledge": "intermediate",
-            "cognitive_style": "hands-on",
-            "weak_points": ["sql_injection"],
-            "preferred_modality": ["doc", "lab"],
-            "time_budget": "8h/week",
-            "target_direction": "web_security",
-        },
-    )
+
+@router.get("/profile/{user_id}", response_model=UserProfileResponse)
+async def get_profile(user_id: UUID, session: SessionDep) -> UserProfileResponse:
+    profile = await UserProfileRepository(session).get_by_user_id(user_id)
+    if profile is None:
+        return _profile_response(user_id, {}, None)
+    return _profile_response(user_id, profile.dimensions or {}, profile.updated_at)
 
 
 @router.put("/profile/{user_id}", response_model=UserProfileResponse)

@@ -35,7 +35,7 @@ export function Profile() {
   const loadProfile = () => {
     setProfileLoading(true);
     setProfileError('');
-    getMyProfile(user?.id ?? '00000000-0000-0000-0000-000000000001')
+    getMyProfile()
       .then(setProfile)
       .catch((error) => setProfileError(error instanceof Error ? error.message : '画像数据加载失败'))
       .finally(() => setProfileLoading(false));

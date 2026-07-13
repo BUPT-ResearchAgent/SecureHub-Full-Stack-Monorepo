@@ -2,7 +2,7 @@ import { createDefaultProfileWorkspace } from './mockData';
 import type { ProfileWorkspace } from './types';
 import { apiGet } from '@/lib/api';
 import { withMockFallback } from '@/lib/mock';
-import { mockGeneratedResources, mockProfile } from '@/lib/mock/profile.mock';
+import { mockGeneratedResources } from '@/lib/mock/profile.mock';
 import type { GeneratedResourceDTO, ProfileDTO } from '@/lib/sse.types';
 
 function delay<T>(value: T, ms = 450): Promise<T> {
@@ -19,12 +19,8 @@ export function saveProfileWorkspaceDemo(workspace: ProfileWorkspace): Promise<P
   return delay(workspace, 300);
 }
 
-export function getMyProfile(userId: string): Promise<ProfileDTO> {
-  const query = new URLSearchParams({ user_id: userId });
-  return withMockFallback(
-    () => apiGet<ProfileDTO>(`/api/v1/profile/me?${query.toString()}`),
-    () => ({ ...mockProfile, user_id: userId }),
-  );
+export function getMyProfile(): Promise<ProfileDTO> {
+  return apiGet<ProfileDTO>('/api/v1/profile/me');
 }
 
 function adaptGeneratedResource(resource: GeneratedResourceDTO, userId: string): GeneratedResourceDTO {
