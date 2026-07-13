@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import get_settings
 from app.db.models.workflow_runtime import WorkflowApproval, WorkflowProviderCall, WorkflowRun, WorkflowStepAttempt
+from app.repositories.identity.provider_credentials import ProviderCredentialRepository
 from app.runtime.contracts import EventEnvelope, ExecutionMode, RunStatus, RuntimeSemanticVersion
 from app.runtime.persistence.approval_store import ApprovalNotFoundError, ApprovalStore
 from app.runtime.persistence.checkpoint_store import CheckpointStore
@@ -120,6 +121,15 @@ class WorkflowApplicationService:
 
         provider, model = self._provider_selection(request)
         async with self.sessionmaker() as session:
+            credential_id = None
+            if request.mode == ExecutionMode.REAL and provider in {"deepseek", "xfyun"}:
+                # Resolve the active key once while the root is created. The
+                # worker receives only its opaque ID and will never consult a
+                # later active-key selection for this root.
+                active_credential = await ProviderCredentialRepository(session).get_active(
+                    UUID(str(request.user_id)), provider
+                )
+                credential_id = active_credential.id if active_credential is not None else None
             if definition.name == "tutor_routing_v3":
                 validated_input["persona_summary"] = await self._tutor_persona_summary(session, request.user_id)
             if definition.name == "assessment_update_v2":
@@ -160,6 +170,7 @@ class WorkflowApplicationService:
                     mode=request.mode,
                     requested_provider=provider,
                     requested_model=model,
+                    credential_id=credential_id,
                     input_payload=validated_input,
                     budget=self._initial_budget(request.budget, mode=request.mode),
                     idempotency_key=key,
@@ -175,6 +186,7 @@ class WorkflowApplicationService:
                 mode=request.mode,
                 provider=provider,
                 model=model,
+                credential_id=credential_id,
                 budget=dict(request.budget or {}),
             )
             if created:
@@ -851,6 +863,7 @@ class WorkflowApplicationService:
         mode: ExecutionMode | str,
         provider: str | None,
         model: str | None,
+        credential_id: UUID | None,
         budget: dict[str, Any],
     ) -> None:
         if (
@@ -858,6 +871,7 @@ class WorkflowApplicationService:
             or str(run.mode) != str(mode)
             or run.requested_provider != provider
             or run.requested_model != model
+            or run.credential_id != credential_id
             or dict(run.budget or {}).get("requested", dict(run.budget or {})) != budget
         ):
             raise WorkflowApplicationError(

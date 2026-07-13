@@ -178,7 +178,7 @@ class FixtureProvider(BaseLLMProvider):
 # ── Factory ──────────────────────────────────────────────────────────────────
 
 
-def get_llm_provider(provider: str | None = None) -> BaseLLMProvider:
+def get_llm_provider(provider: str | None = None, *, api_key: str | None = None) -> BaseLLMProvider:
     """根据 LLM_PROVIDER 环境变量（或参数）返回对应 Provider。
 
     - fixture  → FixtureProvider（无需 Key，CI 默认）
@@ -196,15 +196,17 @@ def get_llm_provider(provider: str | None = None) -> BaseLLMProvider:
 
     if selected == "deepseek":
         from app.llm.deepseek_provider import DeepSeekProvider
-        if not settings.DEEPSEEK_API_KEY:
+        effective_key = settings.DEEPSEEK_API_KEY if api_key is None else api_key
+        if not effective_key:
             return _key_missing_fallback("deepseek", "DEEPSEEK_API_KEY", settings)
-        return DeepSeekProvider(settings=settings)
+        return DeepSeekProvider(settings=settings, api_key=effective_key)
 
     if selected == "xfyun":
         from app.llm.xfyun_provider import XunfeiSparkProvider
-        if not settings.XFYUN_API_KEY:
+        effective_key = settings.XFYUN_API_KEY if api_key is None else api_key
+        if not effective_key:
             return _key_missing_fallback("xfyun", "XFYUN_API_KEY", settings)
-        return XunfeiSparkProvider(settings=settings)
+        return XunfeiSparkProvider(settings=settings, api_key=effective_key)
 
     raise ValueError(f"Unknown LLM_PROVIDER: {selected!r}. Valid: fixture, deepseek, xfyun")
 

@@ -1133,6 +1133,7 @@ class RuntimeEngine:
                 requested_model=run.requested_model,
                 policy_version=run.provider_policy_version,
             ),
+            provider_credential_id=run.credential_id,
             lease_epoch=run.lease_epoch,
             course_id=(run.input_payload or {}).get("course_id"),
             persona_summary=str((run.input_payload or {}).get("persona_summary") or ""),

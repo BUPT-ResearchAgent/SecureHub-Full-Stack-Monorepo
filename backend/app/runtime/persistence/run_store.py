@@ -114,6 +114,7 @@ class RunStore:
             checkpoint_schema_version=str(data.get("checkpoint_schema_version") or "v1"),
             runtime_build_sha=str(data.get("runtime_build_sha") or "unknown"),
             user_id=user_id,
+            credential_id=optional_uuid(data.get("credential_id"), field="credential_id"),
             status=enum_value(data.get("status", "queued")),
             mode=mode,
             requested_provider=(str(data["requested_provider"]) if data.get("requested_provider") else None),

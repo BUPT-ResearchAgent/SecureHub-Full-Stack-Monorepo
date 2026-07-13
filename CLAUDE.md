@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - **文档目的**：作为"安枢智梯 SecureHub / CyberLadder"项目所有后续 Claude Code / Codex / Cursor 会话的默认上下文。任何在本仓库工作的 AI 助手（或新加入的工程师）应当**首先读完本文件**，再开始触碰代码。
 - **读者**：本项目团队成员；后续接入的 AI 编码助手；A3 赛题答辩评委（架构理解参考）。
-- **最后更新时间**：2026-07-14（SecureHub Agent Runtime v1.1 Wave 0-6、真实 DeepSeek/Qwen RAG/PostgreSQL 五路径、DeepSeek token 后 cancel、COS Runtime 五步 gate，以及 A3-S5~S7 均已 `real-accepted`；当前唯一未完成的 Provider 外部 Gate 是 S8 的 Spark primary/fallback/cancel）。原始版本 2026-06-05（由 Claude Opus 4.7 基于 4 份外部文档 + 仓库代码生成）。
+- **最后更新时间**：2026-07-14（SecureHub Agent Runtime v1.1 Wave 0-6 与 A3-S5~S7 均已 `real-accepted`；S8 保持 `planned` + `external-gate-open` 并暂缓执行，当前优先赛前 PPT/试题/可视化/证据评分准备）。原始版本 2026-06-05（由 Claude Opus 4.7 基于 4 份外部文档 + 仓库代码生成）。
 - **本文件的权威性**：在仓库层面，本文件 > `README.md` / `docs/architecture.md` / `docs/backend-overview.md`。当本文件与代码现状冲突时，**以代码为准并立即更新本文件**；当本文件与外部 4 份文档冲突时，**以本文件 §19 的"差异说明"为准**。
 
 ### 阅读约定（什么时候回读外部文档？）
@@ -19,8 +19,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | 日常判断近期交付事实 / Prompt / Workout / 6-C / 7-COS 轨迹 | **执行轨迹凝练索引**（默认替代 Layer C 执行档全量读取） | `D:/Nnutural/Desktop/BUPT大全/BUPT竞赛/26软件杯/Plan/2026-07-10_SecureHub_执行轨迹凝练索引.md` |
 | 任务涉及 workflow-runs / fixed multi-agent workflow / SSE replay / agent_runs / cancel | **Agent Run API 真实闭环凝练索引**（只在该专项任务时读，替代 Agent-Run 原始 Plan / Prompt / Workout） | `D:/Nnutural/Desktop/BUPT大全/BUPT竞赛/26软件杯/Plan/2026-07-10_Agent_Run_API_真实闭环凝练索引.md` |
 | 任务涉及 RuntimeEngine / Durable Run / SkillExecutor / Outbox / Worker / SSE replay 或五条产品 adapter | **Agent Runtime v1.1 契约与 Wave 0-6 交付报告** | `docs/api/workflow-run-contract.md`；`Workout/Agent-Runtime-Wave-4-6.md`；必要时回读 `D:/Nnutural/Desktop/BUPT大全/BUPT竞赛/26软件杯/Plan/2026-07-11_SecureHub_多智能体底层完整架构实施方案.md` |
-| 不确定"做什么、优先级、新增到哪里" | **A3 赛题规划**（最权威开发指导） | `D:/Nnutural/Desktop/BUPT大全/BUPT竞赛/26软件杯/CompetitionTheme/A3赛题规划.md` |
+| 不确定"做什么、优先级、新增到哪里" | **A3 产品化阶段 2-8 实施规划**（当前开发执行源） | `D:/Nnutural/Desktop/BUPT大全/BUPT竞赛/26软件杯/Plan/2026-07-13_SecureHub_A3产品化阶段2-8实施规划.md` |
+| 不确定 A3 产品能力与演示主线 | **A3 赛题规划**（产品需求与评分映射源） | `D:/Nnutural/Desktop/BUPT大全/BUPT竞赛/26软件杯/CompetitionTheme/A3赛题规划.md` |
 | 不确定 A3 硬性需求边界 | **A3 赛题原文** | `D:/Nnutural/Desktop/BUPT大全/BUPT竞赛/26软件杯/CompetitionTheme/A3赛题.md` |
+| 任务涉及 PPT、课程试题、资料可视化、案例/测试证据或竞赛评分 | **赛前突击准备包规划** | `D:/Nnutural/Desktop/BUPT大全/BUPT竞赛/26软件杯/Plan/2026-07-14_SecureHub_赛前突击准备包规划.md` |
 | 不确定项目整体愿景 / 商业逻辑 / 市场叙事 | **项目计划书**（挑战杯） | `D:/Nnutural/Desktop/BUPT大全/BUPT竞赛/26软件杯/Legacy/鸿雁杯/MinerU_markdown_项目计划书_2054945124833226752.md` |
 | 不确定某智能体内部算法 / 公式 / 输入输出契约 | **设计开发文档**（CyberLadder v1.8，1.5 节最重要） | `D:/Nnutural/Desktop/BUPT大全/BUPT竞赛/26软件杯/Legacy/2026037134-03 设计与开发文档/3 软件应用与开发类作品设计和开发文档模板（2026版）.md` |
 | 不确定 COS / 云存储 / GitHub 外 data 同步边界 | **先读执行轨迹凝练索引 §4；必要时再反查 COS 方案 + 7-COS 交付报告** | `D:/Nnutural/Desktop/BUPT大全/BUPT竞赛/26软件杯/Plan/2026-07-10_SecureHub_执行轨迹凝练索引.md` |
@@ -74,7 +76,7 @@ Scrapling、MediaCrawler、MindSpider 都是外部工具 / 数据采集参考，
 
 | 维度 | 统一口径 |
 |---|---|
-| 当前阶段 | **Runtime v1.1 Wave 0-6 已签收，A3-S5~S7 均为 `real-accepted`**；2026-07-14 已复核 S5 assessment/persona/path refresh、S6 当前 root UI replay、S7 Qwen fund loader、DeepSeek root 与认证 Research 链。当前仅 S8 的 Spark primary/DeepSeek replacement/Spark cancel 仍待 bearer key，不能误报 |
+| 当前阶段 | **Runtime v1.1 Wave 0-6 已签收，A3-S5~S7 均为 `real-accepted`**；S8 保持 `planned` + `external-gate-open`，Spark primary/DeepSeek replacement/Spark cancel 规划保留但暂缓执行；当前优先赛前 PPT/试题 Skill 评估、curated fallback、资料可视化、数据/案例/测试证据与评分机制 |
 | Runtime 核心 | `RuntimeEngine`、`SecureHubStateMachine`、framework-neutral `WorkflowDefinition`、唯一 `SkillExecutor`、PostgreSQL durable store/outbox、Worker/lease/fencing/recovery 均已落地 |
 | 产品路径 | `/profile/chat`、`/courses/{id}/plan`、`/courses/{id}/resources/generate`、`/tutor/ask`、`/assessment/run` 都是 `WorkflowApplicationService` adapter，复用唯一可查询 root UUID |
 | A3-S5~S7 | S5 使用 `assessment_update_v2` atomic audit；S6 从同一 durable root 投影 Evidence/Agent/QualityCheck/Provider/Artifact/control；S7 使用独立 `fund_recommendation_v1`、固定 9 Agent/28 bindings、`domain=fund` 共享知识资产和 server-side profile snapshot |
@@ -83,7 +85,8 @@ Scrapling、MediaCrawler、MindSpider 都是外部工具 / 数据采集参考，
 | 前端与 SSE | `WorkflowRunClient` 使用 typed reducer、Last-Event-ID、durable gap replay、duplicate dedupe 与 provider stream replacement；对外事件固定七类 |
 | 不可倒退语义 | real 失败不得进入 fixture；QualityCheck 不得内嵌/放宽；Redis 不是任务、lease、state 或 event 真相；Provider unknown 不假装 exactly-once |
 | COS Runtime Gate | 2026-07-12 以进程级 `STORAGE_PROVIDER=cos` 真实完成 upload、head、download、signed URL、delete；此前 HTTP 451 仅为历史记录。此结论不等于 GitHub 外 data 已全量同步 |
-| 当前外部 Gate | `XFYUN_API_KEY` 为空；Spark primary、首 token 后受控中断、真实 DeepSeek draft replacement 与 Spark cancel 均未执行、未伪造 |
+| 当前外部 Gate | `XFYUN_API_KEY` 为空；Spark primary、首 token 后受控中断、真实 DeepSeek draft replacement 与 Spark cancel 均未执行、未伪造。该 Gate 未取消，但当前暂缓排期；赛前物料完成不能替代 Spark 验收 |
+| 赛前物料策略 | Skill 调研必须 timebox；DeepSeek/Skill 产物未达质量线时使用人工审校的 `pre-generated/curated` 高质量内容，并在前端/PPT/视频显式区分 live、curated 与 fixture |
 
 ### 0.1.4 COS / 云存储当前事实（2026-07-09）
 
@@ -971,6 +974,23 @@ user_profiles (
   updated_at TIMESTAMP
 );
 -- SQLAlchemy: backend/app/db/models/user_profile.py
+
+provider_credentials (
+  id UUID PRIMARY KEY,
+  user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+  provider VARCHAR(32),            -- deepseek / xfyun
+  name VARCHAR(120),
+  encrypted_key TEXT,              -- AES-256-GCM ciphertext only; never serialised
+  key_fingerprint VARCHAR(32),     -- sha256:<12 hex>, safe for UI/audit
+  is_active BOOLEAN,
+  verification_status VARCHAR(16), -- unverified / verified / invalid / error
+  verified_at TIMESTAMP,
+  UNIQUE(user_id, provider, name),
+  UNIQUE(user_id, provider) WHERE is_active
+);
+-- SQLAlchemy: backend/app/db/models/identity/provider_credential.py
+-- Runtime: workflow_runs.credential_id fixes one selected key per root; the
+-- worker resolves it only at provider-call time and never mutates Settings.
 
 learning_events (
   id UUID PRIMARY KEY,

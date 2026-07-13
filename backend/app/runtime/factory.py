@@ -17,6 +17,29 @@ from app.runtime.persistence.run_store import RunStore
 from app.runtime.ports.run_recorder import AgentRunRecorder
 from app.runtime.skill_catalog import build_production_skill_catalog
 from app.services.workflow_application_service import build_default_workflow_registry
+from app.services.provider_credential_resolver import ProviderCredentialResolver
+
+
+def _runtime_provider_resolver(context):
+    """Build a provider for this call; no mutable global key selection exists."""
+    provider = context.provider_selection.requested_provider or "xfyun"
+    return ProviderCredentialResolver().resolve(
+        provider=provider,
+        user_id=context.user_id,
+        credential_id=context.provider_credential_id,
+    )
+
+
+def _runtime_fallback_provider_resolver(provider: str, context):
+    # A root-frozen credential only applies to the provider it was selected
+    # for. ProviderPolicy fallbacks retain their server-side environment key.
+    selected = context.provider_selection.requested_provider
+    credential_id = context.provider_credential_id if provider == selected else None
+    return ProviderCredentialResolver().resolve(
+        provider=provider,
+        user_id=context.user_id,
+        credential_id=credential_id,
+    )
 
 
 def build_runtime_engine(
@@ -36,6 +59,8 @@ def build_runtime_engine(
         skill_executor=SkillExecutor(
             evidence_snapshot_store=EvidenceSnapshotStore(session),
             provider_call_store=provider_calls,
+            provider_resolver=_runtime_provider_resolver,
+            fallback_provider_resolver=_runtime_fallback_provider_resolver,
         ),
         run_recorder=AgentRunRecorder(session),
         action_handler=WorkflowActionService(session),

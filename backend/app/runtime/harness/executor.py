@@ -10,6 +10,7 @@ RuntimeEngine workflow nodes.
 from __future__ import annotations
 
 import hashlib
+import inspect
 import json
 from collections.abc import Awaitable, Callable
 from typing import Any, Protocol
@@ -49,8 +50,8 @@ class RetrieverPort(Protocol):
     async def retrieve(self, query: str, *, domain: str, top_k: int, filters: dict[str, Any] | None = None) -> list[Any]: ...
 
 
-ProviderResolver = Callable[[ExecutionContext], BaseLLMProvider]
-FallbackProviderResolver = Callable[[str, ExecutionContext], BaseLLMProvider]
+ProviderResolver = Callable[[ExecutionContext], BaseLLMProvider | Awaitable[BaseLLMProvider]]
+FallbackProviderResolver = Callable[[str, ExecutionContext], BaseLLMProvider | Awaitable[BaseLLMProvider]]
 
 
 class SkillExecutor:
@@ -232,7 +233,7 @@ class SkillExecutor:
             mode=context.mode,
             requested_provider=context.provider_selection.requested_provider,
         )
-        provider = self._provider_resolver(context)
+        provider = await self._resolve_provider(context)
         provider_name = str(getattr(provider, "provider_name", "unknown"))
         if context.mode == ExecutionMode.REAL and provider_name == "fixture":
             raise SkillExecutionError(ErrorCode.PROVIDER_UNAVAILABLE, "real mode cannot use fixture provider")
@@ -281,7 +282,7 @@ class SkillExecutor:
             if not fallback_name or fallback_name == provider_name:
                 raise
             try:
-                fallback = self._fallback_provider_resolver(fallback_name, context)
+                fallback = await self._resolve_fallback_provider(fallback_name, context)
             except Exception as fallback_resolution_error:
                 raise SkillExecutionError(
                     ErrorCode.PROVIDER_UNAVAILABLE,
@@ -760,6 +761,14 @@ class SkillExecutor:
     @staticmethod
     def _default_fallback_provider(provider_name: str, _context: ExecutionContext) -> BaseLLMProvider:
         return get_llm_provider(provider_name)
+
+    async def _resolve_provider(self, context: ExecutionContext) -> BaseLLMProvider:
+        value = self._provider_resolver(context)
+        return await value if inspect.isawaitable(value) else value
+
+    async def _resolve_fallback_provider(self, provider_name: str, context: ExecutionContext) -> BaseLLMProvider:
+        value = self._fallback_provider_resolver(provider_name, context)
+        return await value if inspect.isawaitable(value) else value
 
     @staticmethod
     def _provider_stream(

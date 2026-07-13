@@ -55,6 +55,10 @@ class Settings(BaseSettings):
     XFYUN_MODEL: str = "spark-v4"
     DEEPSEEK_API_KEY: str = ""
     DEEPSEEK_MODEL: str = "deepseek-chat"
+    # Deliberately omitted from .env.example. This is a 32-byte urlsafe-base64
+    # server master key used only for authenticated encryption of user-owned
+    # LLM credentials; an empty value fail-closes credential operations.
+    PROVIDER_CREDENTIAL_MASTER_KEY: str = ""
     AGENT_RUN_REAL_ENABLED: bool = False
     AGENT_RUN_REAL_MAX_CONCURRENCY: int = Field(default=1, ge=1, le=16)
     AGENT_RUN_REAL_MAX_TOKENS: int = Field(default=800, ge=1, le=4096)

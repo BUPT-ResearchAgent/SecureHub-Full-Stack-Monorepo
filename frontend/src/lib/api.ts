@@ -1,3 +1,5 @@
+// Status: real
+
 import type { SSEHandlers } from './sse';
 import { streamTask, streamTaskPost } from './sse';
 import { isMockMode } from './mock';
@@ -145,6 +147,14 @@ export async function apiPost<T, B = unknown>(
       'Content-Type': 'application/json',
     },
     body: JSON.stringify(body),
+  });
+}
+
+export async function apiDelete<T = void>(path: string, init?: RequestInit): Promise<T> {
+  return requestJson<T>(path, {
+    ...init,
+    method: 'DELETE',
+    headers: authHeaders(init),
   });
 }
 

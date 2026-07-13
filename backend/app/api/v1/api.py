@@ -13,6 +13,7 @@ from app.api.v1.endpoints import (
     placeholder,
     policy,
     profile,
+    provider_credentials,
     rag,
     research,
     resources,
@@ -47,6 +48,7 @@ api_router.include_router(
     tags=["policy"],
 )
 api_router.include_router(profile.router, tags=["profile"])
+api_router.include_router(provider_credentials.router, tags=["provider-credentials"])
 api_router.include_router(courses.router, tags=["courses"])
 api_router.include_router(resources.router, tags=["resources"])
 api_router.include_router(agents.router, tags=["agents"])

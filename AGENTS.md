@@ -2,7 +2,7 @@
 
 > 权威文档：`CLAUDE.md` 是项目宪法，本文件不复述细节，仅约束 Codex 子智能体的使用边界。
 > 文档冲突时以 `CLAUDE.md` 为准。
-> 最后更新：2026-07-14（Runtime v1.1 Wave 0-6、DeepSeek 五路径/cancel、Qwen RAG、PostgreSQL、COS Runtime gate，以及 A3-S5~S7 均已 `real-accepted`；仅 S8 的 Spark 外部 Gate 仍开放）。
+> 最后更新：2026-07-14（Runtime v1.1 Wave 0-6 与 A3-S5~S7 均已 `real-accepted`；S8 保持 `planned` + `external-gate-open` 并暂缓执行，当前优先赛前 PPT/试题/可视化/证据评分准备）。
 
 ---
 
@@ -14,8 +14,15 @@
 D:/Nnutural/Desktop/BUPT大全/BUPT竞赛/26软件杯/Plan/2026-07-10_SecureHub_权威规划凝练索引.md
 D:/Nnutural/Desktop/BUPT大全/BUPT竞赛/26软件杯/Plan/2026-07-10_SecureHub_执行轨迹凝练索引.md
 D:/Nnutural/Desktop/BUPT大全/BUPT竞赛/26软件杯/Plan/2026-07-11_SecureHub_多智能体底层完整架构实施方案.md
+D:/Nnutural/Desktop/BUPT大全/BUPT竞赛/26软件杯/Plan/2026-07-13_SecureHub_A3产品化阶段2-8实施规划.md
 Workout/Agent-Runtime-Wave-4-6.md
 TODO.md
+```
+
+任务涉及 PPT、课程试题、资料可视化、案例/测试证据或竞赛评分时，再读：
+
+```text
+D:/Nnutural/Desktop/BUPT大全/BUPT竞赛/26软件杯/Plan/2026-07-14_SecureHub_赛前突击准备包规划.md
 ```
 
 只有当任务需要追证具体决策、修改契约、验收某一轮交付或生成新执行提示词时，才按索引中的 `file_path:line_number` 回读源文件。
@@ -41,8 +48,9 @@ D:/Nnutural/Desktop/BUPT大全/BUPT竞赛/26软件杯/Plan/2026-07-10_Agent_Run_
 | Spark Gate | Spark bearer key 为空；Spark primary、首 token 后受控中断、DeepSeek replacement 与 Spark cancel 均未执行。 | "Spark 已通过"、"用无效 key 或 fixture 制造 fallback 成功" |
 | COS / Storage | 2026-07-12 COS Runtime 已真实通过 upload/head/download/signed URL/delete；历史 451 仅为旧记录。GitHub 外 data 仍只确认 20 个既有同步样本，约 870 个对象未全量完成。 | "COS 仍被 451 阻塞"、"所有 data 已上传 COS"、"storage 是一个 agent" |
 | A3-S5~S7 | S5 assessment/persona/path refresh、S6 current-root Evidence/Trace/Provider replay、S7 fund loader/DeepSeek Research 链均已 `real-accepted`；S7 入口为 `POST /api/v1/research/fund-recommendations`，以 CurrentUser 绑定画像归属。 | "S5-S7 仍只有工程验收"、"浏览器可传 user_id"、"Spark Gate 阻断 S5-S7" |
+| 当前调度 | S8 保持 `planned` + `external-gate-open` 但暂缓执行；当前优先赛前 PPT/试题 Skill 评估、curated fallback、资料可视化和数据/案例/测试评分证据。 | "S8 已启动"、"S8 已取消"、"PPT 完成等于 Spark Gate 通过" |
 
-正式生命周期为 `planned -> in_progress -> code_complete -> engineering-accepted -> real-accepted`。`external-gate-open` 仅是正交 Gate 标记，不是可与生命周期拼接的阶段状态；当前唯一未完成的 Provider 外部 Gate 是 S8 的 Spark。COS Runtime gate 与 GitHub 外 data 全量同步是两个范围：前者已通过，后者继续按 `skip existing`、断点续传、增量 manifest 和限速策略治理。
+正式生命周期为 `planned -> in_progress -> code_complete -> engineering-accepted -> real-accepted`。`external-gate-open` 仅是正交 Gate 标记；“暂缓”只是资源调度，不新增状态。S8 的 Spark Gate 仍真实开放但当前不排期。DeepSeek/Skill 产物未达质量线时可使用显式 `pre-generated/curated` 内容，禁止冒充 live 或 fixture。COS Runtime gate 与 GitHub 外 data 全量同步仍是两个范围。
 
 当前验收快照：migration head `20260712_1040`，全量回归 `230 passed, 3 skipped`，最终证据提交 `89a6e0e1`。详细 root/SSE/Provider/COS 证据以 `Workout/Agent-Runtime-Wave-4-6.md` 为准。
 

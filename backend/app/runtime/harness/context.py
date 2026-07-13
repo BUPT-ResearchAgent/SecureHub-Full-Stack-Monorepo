@@ -31,6 +31,9 @@ class ExecutionContext:
     user_id: UUID | str | None
     mode: ExecutionMode
     provider_selection: ProviderSelection = field(default_factory=ProviderSelection)
+    # Opaque ID resolved while the durable root is created. It must never be
+    # substituted from a later active-key selection while a root is running.
+    provider_credential_id: UUID | str | None = None
     lease_epoch: int = 0
     course_id: UUID | str | None = None
     persona_summary: str = ""

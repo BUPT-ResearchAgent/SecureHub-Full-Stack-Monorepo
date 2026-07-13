@@ -45,6 +45,9 @@ class WorkflowRun(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     user_id: Mapped[UUID | None] = mapped_column(
         PG_UUID(as_uuid=True), ForeignKey("users.id"), nullable=True, index=True
     )
+    # Root creation resolves this once. The runtime only receives this stable
+    # opaque identifier, never an API key or a mutable global Settings value.
+    credential_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True, index=True)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="queued", index=True)
     state_version: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     mode: Mapped[str] = mapped_column(String(16), nullable=False, default="real")
