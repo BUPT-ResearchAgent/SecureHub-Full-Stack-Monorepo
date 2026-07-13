@@ -46,6 +46,21 @@ class AssessmentUpdateInput(BaseModel):
     domain: str = "course_websec"
 
 
+class AssessmentUpdateV2Input(AssessmentUpdateInput):
+    """Versioned assessment input with an optional durable quiz artifact."""
+
+    quiz_artifact_id: str | None = None
+    # The typed course command supplies bounded navigation context (not raw
+    # learner content). The final action includes its knowledge-point ID in
+    # the durable assessment audit, so it must survive Engine revalidation.
+    context: dict[str, Any] = Field(default_factory=dict)
+    # These fields are overwritten by WorkflowApplicationService from the
+    # authenticated user's persisted profile. They must survive RuntimeEngine's
+    # input-model revalidation, but callers never own their values.
+    capability_dimensions: list[str] = Field(default_factory=list)
+    persona_dimension_keys: list[str] = Field(default_factory=list)
+
+
 class GenericWorkflowOutput(BaseModel):
     output: dict[str, Any] = Field(default_factory=dict)
 
@@ -107,10 +122,51 @@ def _update_capability_input(root: dict[str, Any], state: dict[str, Any]) -> dic
     feedback = str(assessment.get("feedback") or "")[:1_200]
     proposed_delta = assessment.get("capability_delta")
     score_vector = proposed_delta if isinstance(proposed_delta, dict) else {}
+    capability_dimensions = sorted(
+        {
+            str(value).strip()
+            for value in root.get("capability_dimensions", [])
+            if isinstance(value, str) and value.strip()
+        }
+    )
     return {
         **_basic_input(root, state),
-        "query": f"Update capabilities from assessment score={score}; feedback={feedback}",
+        "query": (
+            f"Update capabilities from assessment score={score}; feedback={feedback}; "
+            f"authorized_capability_dimensions={capability_dimensions}"
+        ),
         "score_vector": score_vector,
+        "capability_dimensions": capability_dimensions,
+    }
+
+
+def _update_persona_from_assessment_input(root: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
+    """Give the persona skill accepted assessment facts, never raw answers."""
+    assessment = dict((state.get("run_assessment") or {}).get("output") or {})
+    capability = dict((state.get("update_capability") or {}).get("output") or {})
+    context = root.get("context") if isinstance(root.get("context"), dict) else {}
+    delta = capability.get("capability_delta") or capability.get("delta") or assessment.get("capability_delta") or {}
+    persona_dimension_keys = sorted(
+        {
+            str(value).strip()
+            for value in root.get("persona_dimension_keys", [])
+            if isinstance(value, str) and value.strip()
+        }
+    )
+    return {
+        **_basic_input(root, state),
+        "query": (
+            "Update only learner persona dimensions supported by the accepted assessment; "
+            f"authorized_persona_dimension_keys={persona_dimension_keys}"
+        ),
+        "learning_events": [{
+            "assessment_score": assessment.get("score"),
+            "weak_kp_ids": assessment.get("weak_kp_ids") if isinstance(assessment.get("weak_kp_ids"), list) else [],
+            "capability_delta": delta if isinstance(delta, dict) else {},
+            "course_id": root.get("course_id"),
+            "kp_id": context.get("kp_id"),
+        }],
+        "persona_dimension_keys": persona_dimension_keys,
     }
 
 
@@ -211,11 +267,42 @@ ASSESSMENT_UPDATE_V1 = WorkflowDefinition(
 )
 
 
-PRODUCT_WORKFLOWS = (PROFILE_BUILD_V1, COURSE_PLAN_V1, TUTOR_ROUTING_V1, ASSESSMENT_UPDATE_V1)
+# V1 commits two independent actions and therefore cannot promise that a
+# later persona failure leaves no capability mutation. New roots use V2; old
+# V1 roots retain their original definition digest and checkpoint semantics.
+ASSESSMENT_UPDATE_V2 = WorkflowDefinition(
+    name="assessment_update_v2",
+    version=2,
+    input_model=AssessmentUpdateV2Input,
+    output_model=GenericWorkflowOutput,
+    nodes=(
+        NodeDefinition("run_assessment", "skill", "outcome_evaluator", "RunAssessment", input_mapper=_assessment_input, quality_policy="workflow_node", input_sources=()),
+        NodeDefinition("quality_check", "skill", "outcome_evaluator", "QualityCheck", input_mapper=_quality_input, input_sources=("run_assessment",)),
+        NodeDefinition("update_capability", "skill", "outcome_evaluator", "UpdateCapability", input_mapper=_update_capability_input, quality_policy="workflow_node", input_sources=("run_assessment", "quality_check")),
+        NodeDefinition("update_persona", "skill", "career_planner", "UpdatePersona", input_mapper=_update_persona_from_assessment_input, quality_policy="workflow_node", input_sources=("run_assessment", "update_capability", "quality_check")),
+        NodeDefinition("persist_assessment_feedback", "action", action_name="PersistAssessmentFeedback", input_sources=("run_assessment", "quality_check", "update_capability", "update_persona")),
+    ),
+    edges=(
+        EdgeDefinition("run_assessment", "quality_check"),
+        EdgeDefinition("quality_check", "update_capability", "accept"),
+        EdgeDefinition("update_capability", "update_persona"),
+        EdgeDefinition("update_persona", "persist_assessment_feedback"),
+        EdgeDefinition("quality_check", "run_assessment", "defect"),
+    ),
+    catalog_version="production-catalog-v1",
+    provider_policy_version="deepseek-direct-v1",
+    checkpoint_schema_version="assessment-feedback-v2",
+    max_rework_attempts=1,
+    metadata=_quality_rework_metadata("run_assessment"),
+)
+
+
+PRODUCT_WORKFLOWS = (PROFILE_BUILD_V1, COURSE_PLAN_V1, TUTOR_ROUTING_V1, ASSESSMENT_UPDATE_V1, ASSESSMENT_UPDATE_V2)
 
 
 __all__ = [
     "ASSESSMENT_UPDATE_V1",
+    "ASSESSMENT_UPDATE_V2",
     "COURSE_PLAN_V1",
     "PRODUCT_WORKFLOWS",
     "PROFILE_BUILD_V1",

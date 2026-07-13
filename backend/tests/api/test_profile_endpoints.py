@@ -17,6 +17,12 @@ class _EmptyResult:
     def scalar_one_or_none(self) -> None:
         return None
 
+    def scalars(self) -> "_EmptyResult":
+        return self
+
+    def all(self) -> list[object]:
+        return []
+
 
 class _EmptySession:
     async def execute(self, _statement: object) -> _EmptyResult:
@@ -43,6 +49,7 @@ def test_profile_me_resolves_current_user_without_querying_with_literal_me() -> 
     assert response.json() == {
         "user_id": str(DEMO_USER_ID),
         "dimensions": {},
+        "capabilities": [],
         "updated_at": None,
     }
 

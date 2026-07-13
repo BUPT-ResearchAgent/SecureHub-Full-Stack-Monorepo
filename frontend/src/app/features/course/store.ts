@@ -13,7 +13,8 @@ import type { CompanionMessage } from './companion/types';
 
 export const DEFAULT_COURSE_TASK_CONTEXT: CourseTaskContext = {
   userId: '00000000-0000-0000-0000-000000000001',
-  courseId: '00000000-0000-0000-0000-000000000101',
+  // The productised WEBSEC-101 course, not the Wave 0 compatibility row.
+  courseId: '5f63a7c3-1c76-513c-88a5-f335d6190816',
   kpId: 'e96f770a-57d0-5b49-a7d6-3af1de08e115',
   currentPathNodeIds: [],
 };

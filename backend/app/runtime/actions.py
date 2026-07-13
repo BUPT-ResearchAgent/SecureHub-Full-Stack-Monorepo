@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
@@ -38,6 +39,8 @@ class WorkflowActionService:
             return await self.persist_learning_path(root_input, state, context)
         if action_name == "PersistCapability":
             return await self.persist_capability(root_input, state, context)
+        if action_name == "PersistAssessmentFeedback":
+            return await self.persist_assessment_feedback(root_input, state, context)
         if action_name == "ProjectTutorAnswer":
             return await self.project_tutor_answer(root_input, state, context)
         raise ValueError(f"unknown deterministic workflow action: {action_name}")
@@ -323,6 +326,277 @@ class WorkflowActionService:
             persisted.append({"dimension": str(dimension), "score": row.score, "confidence": row.confidence})
         await self.session.flush()
         return {"user_id": str(user_id), "updated_capabilities": persisted}
+
+    async def persist_assessment_feedback(
+        self,
+        root_input: dict[str, Any],
+        state: dict[str, Any],
+        context: ExecutionContext,
+    ) -> dict[str, Any]:
+        """Atomically apply an accepted assessment's capability and persona effects.
+
+        The savepoint is intentional: RuntimeEngine commits every action step
+        after it settles the durable step attempt. A nested transaction keeps
+        a validation or profile failure from leaking the capability mutation
+        into that failure commit.
+        """
+        from sqlalchemy import select
+
+        from app.db.models.identity.user_capability import UserCapability
+        from app.db.models.identity.user_profile import UserProfile
+
+        user_id = self._required_uuid(root_input.get("user_id"))
+        assessment = dict((state.get("run_assessment") or {}).get("output") or {})
+        capability = dict((state.get("update_capability") or {}).get("output") or {})
+        persona = dict((state.get("update_persona") or {}).get("output") or {})
+        proposed_delta = capability.get("capability_delta") or capability.get("delta") or assessment.get("capability_delta")
+        if not isinstance(proposed_delta, dict) or not proposed_delta:
+            raise ValueError("accepted assessment did not produce a capability delta")
+        persona_patch = persona.get("dimensions") or persona.get("updated_dimensions") or {}
+        if not isinstance(persona_patch, dict):
+            raise ValueError("persona update did not produce a dimensions patch")
+        allowed_capability_dimensions = {
+            str(value).strip()
+            for value in root_input.get("capability_dimensions", [])
+            if isinstance(value, str) and value.strip()
+        }
+        allowed_persona_dimension_keys = {
+            str(value).strip()
+            for value in root_input.get("persona_dimension_keys", [])
+            if isinstance(value, str) and value.strip()
+        }
+        evidence_snapshot_ids = [
+            str(value)
+            for value in ((state.get("run_assessment") or {}).get("evidence_snapshot_ids") or [])
+            if self._optional_uuid(value) is not None
+        ]
+        if not evidence_snapshot_ids:
+            raise ValueError("accepted assessment is missing evidence snapshots")
+
+        async with self.session.begin_nested():
+            changes: list[dict[str, Any]] = []
+            for dimension, delta, source_dimensions in self._normalise_assessment_capability_deltas(
+                proposed_delta,
+                allowed_capability_dimensions=allowed_capability_dimensions,
+                domain=str(root_input.get("domain") or ""),
+            ):
+                row = await self.session.scalar(
+                    select(UserCapability).where(
+                        UserCapability.user_id == user_id,
+                        UserCapability.dimension == str(dimension),
+                    )
+                )
+                # A model cannot create an unassessed capability baseline.
+                # The product seed/profile flow owns first-row creation.
+                if row is None:
+                    continue
+                before_score = float(row.score)
+                row.score = max(0.0, min(1.0, before_score + delta))
+                row.evidence_count = int(row.evidence_count) + len(evidence_snapshot_ids)
+                changes.append(
+                    {
+                        "dimension": str(dimension),
+                        "before_score": before_score,
+                        "after_score": float(row.score),
+                        "delta": float(row.score) - before_score,
+                        "confidence": float(row.confidence),
+                        "evidence_count": int(row.evidence_count),
+                        "source_dimensions": source_dimensions,
+                    }
+                )
+            if not changes:
+                raise ValueError("accepted assessment did not target an existing capability")
+
+            profile = await self.session.get(UserProfile, user_id)
+            before_dimensions = dict(profile.dimensions or {}) if profile is not None else {}
+            persona_projection = "model"
+            if allowed_persona_dimension_keys:
+                # The assessment agent may describe a learner gap, but it
+                # cannot replace a profile field. V2 writes only a bounded,
+                # append-only review item derived from the accepted feedback.
+                persona_patch = self._assessment_persona_fallback(
+                    before_dimensions,
+                    assessment=assessment,
+                    allowed_keys=allowed_persona_dimension_keys,
+                )
+                persona_projection = "assessment_feedback" if persona_patch else "none"
+            unexpected_persona_keys = set(map(str, persona_patch)) - allowed_persona_dimension_keys
+            if allowed_persona_dimension_keys and unexpected_persona_keys:
+                raise ValueError("persona update included a non-profile dimension")
+            after_dimensions = {**before_dimensions, **persona_patch}
+            if profile is None:
+                profile = UserProfile(user_id=user_id, dimensions=after_dimensions)
+                self.session.add(profile)
+            else:
+                profile.dimensions = after_dimensions
+            changed_dimensions = [
+                {"dimension": str(key), "before": before_dimensions.get(key), "after": value}
+                for key, value in persona_patch.items()
+                if before_dimensions.get(key) != value
+            ]
+            if allowed_persona_dimension_keys and not changed_dimensions:
+                raise ValueError("accepted assessment did not produce a persona change")
+            await self.session.flush()
+
+        assessment_payload = {
+            key: assessment[key]
+            for key in ("score", "overall_score", "feedback", "capability_delta", "weak_kp_ids", "next_recommendation")
+            if key in assessment
+        }
+        assessment_payload["updated_capabilities"] = [
+            {
+                "dimension": item["dimension"],
+                "score": item["after_score"],
+                "confidence": item["confidence"],
+                "evidence_count": item["evidence_count"],
+            }
+            for item in changes
+        ]
+        context_payload = root_input.get("context") if isinstance(root_input.get("context"), dict) else {}
+        reasons = [
+            {
+                "dimension": item["dimension"],
+                "delta": item["delta"],
+                "effect": self._path_effect(item),
+            }
+            for item in changes
+        ]
+        recommendation = assessment.get("next_recommendation")
+        return {
+            "user_id": str(user_id),
+            "assessment": assessment_payload,
+            "updated_capabilities": assessment_payload["updated_capabilities"],
+            "assessment_audit": {
+                "schema_version": 1,
+                "root_run_id": str(context.workflow_run_id),
+                "occurred_at": datetime.now(UTC).isoformat(),
+                "quiz": {
+                    "artifact_id": root_input.get("quiz_artifact_id"),
+                    "knowledge_point_id": context_payload.get("kp_id"),
+                    "answered_count": len(root_input.get("answers") or []),
+                    "submitted_answers": self._assessment_answers_for_audit(root_input.get("answers")),
+                },
+                "evidence_snapshot_ids": evidence_snapshot_ids,
+                "capability_changes": changes,
+                "persona": {
+                    "before_dimensions": before_dimensions,
+                    "after_dimensions": after_dimensions,
+                    "changed_dimensions": changed_dimensions,
+                    "projection": persona_projection,
+                },
+                "recommendation": {
+                    "previous": None,
+                    "next": recommendation if isinstance(recommendation, str) and recommendation.strip() else None,
+                    "reasons": reasons,
+                },
+            },
+        }
+
+    @staticmethod
+    def _normalise_assessment_capability_deltas(
+        proposed_delta: dict[str, Any],
+        *,
+        allowed_capability_dimensions: set[str],
+        domain: str,
+    ) -> list[tuple[str, float, list[str]]]:
+        """Map assessment sub-concepts to an existing durable capability only.
+
+        ``RunAssessment`` evaluates concrete learning concepts, while the
+        current course profile intentionally exposes the coarser
+        ``web_security`` capability. The mapping is explicit, course-domain
+        bounded and included in the audit's ``source_dimensions`` field.
+        """
+        aggregated: dict[str, float] = {}
+        sources: dict[str, list[str]] = {}
+        for raw_dimension, raw_delta in proposed_delta.items():
+            try:
+                delta = float(raw_delta)
+            except (TypeError, ValueError):
+                continue
+            dimension = str(raw_dimension).strip()
+            if not dimension:
+                continue
+            if domain == "course_websec" and "web_security" in allowed_capability_dimensions:
+                # Course assessment evaluates sub-concepts, while its durable
+                # feedback contract owns only the Web security capability.
+                # Do not let an otherwise valid profile dimension turn this
+                # root into a cross-domain mutation.
+                target = "web_security"
+            elif not allowed_capability_dimensions or dimension in allowed_capability_dimensions:
+                target = dimension
+            else:
+                continue
+            aggregated[target] = aggregated.get(target, 0.0) + delta
+            sources.setdefault(target, []).append(dimension)
+        return [
+            (dimension, delta, sources[dimension])
+            for dimension, delta in sorted(aggregated.items())
+        ]
+
+    @staticmethod
+    def _assessment_persona_fallback(
+        before_dimensions: dict[str, Any],
+        *,
+        assessment: dict[str, Any],
+        allowed_keys: set[str],
+    ) -> dict[str, Any]:
+        """Project an accepted learner-facing gap onto an existing persona key."""
+        feedback = assessment.get("feedback")
+        if not isinstance(feedback, str) or not feedback.strip():
+            return {}
+        for key in ("weak_points", "easy_mistakes"):
+            if key not in allowed_keys:
+                continue
+            existing = before_dimensions.get(key)
+            values = [str(value) for value in existing] if isinstance(existing, list) else []
+            entry = f"评估待复盘：{feedback.strip()[:180]}"
+            return {key: list(dict.fromkeys([*values, entry]))}
+        return {}
+
+    @staticmethod
+    def _assessment_answers_for_audit(value: Any) -> list[dict[str, Any]]:
+        """Retain only bounded learner-visible answers in the terminal audit."""
+        if not isinstance(value, list):
+            return []
+        answers: list[dict[str, Any]] = []
+        for raw in value[:20]:
+            if not isinstance(raw, dict):
+                continue
+            quiz_item_id = raw.get("quiz_item_id")
+            if not isinstance(quiz_item_id, str) or not quiz_item_id.strip():
+                continue
+            answer = raw.get("answer")
+            if isinstance(answer, str):
+                projected_answer: str | list[str] = answer.strip()[:800]
+            elif isinstance(answer, list):
+                projected_answer = [
+                    item.strip()[:400]
+                    for item in answer[:8]
+                    if isinstance(item, str) and item.strip()
+                ]
+            else:
+                continue
+            prompt = raw.get("question")
+            answers.append(
+                {
+                    "quiz_item_id": quiz_item_id.strip()[:160],
+                    "prompt": prompt.strip()[:800] if isinstance(prompt, str) and prompt.strip() else None,
+                    "answer": projected_answer,
+                }
+            )
+        return answers
+
+    @staticmethod
+    def _path_effect(change: dict[str, Any]) -> str:
+        if change["dimension"] != "web_security":
+            return "下一次推荐会使用这项已持久化能力变化。"
+        before_score = float(change["before_score"])
+        after_score = float(change["after_score"])
+        if before_score < 0.7 <= after_score:
+            return "已达到加速先修路径阈值，下一次课程路径会优先解锁后续主题。"
+        if before_score >= 0.7 > after_score:
+            return "低于加速先修路径阈值，下一次课程路径会先巩固基础主题。"
+        return "下一次课程路径会按更新后的 Web 安全能力重新排序。"
 
     @staticmethod
     def _required_uuid(value: Any) -> UUID:

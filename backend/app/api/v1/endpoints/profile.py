@@ -22,6 +22,7 @@ from app.api.v1.endpoints.workflow_adapter import (
     workflow_service,
 )
 from app.deps import CurrentUserDep, SessionDep
+from app.repositories.identity.capabilities import UserCapabilityRepository
 from app.repositories.identity.profiles import UserProfileRepository
 from app.services.workflow_application_service import WorkflowApplicationService
 
@@ -50,6 +51,7 @@ class ProfileChatResponse(BaseModel):
 class UserProfileResponse(BaseModel):
     user_id: str
     dimensions: dict[str, Any]
+    capabilities: list[dict[str, Any]] = Field(default_factory=list)
     updated_at: str | None = None
 
 
@@ -61,10 +63,25 @@ def _service(request: Request) -> WorkflowApplicationService:
     return workflow_service(request)
 
 
-def _profile_response(user_id: UUID, dimensions: dict[str, Any], updated_at: Any) -> UserProfileResponse:
+async def _profile_response(
+    session: SessionDep,
+    user_id: UUID,
+    dimensions: dict[str, Any],
+    updated_at: Any,
+) -> UserProfileResponse:
+    capabilities = await UserCapabilityRepository(session).list_by_user(user_id)
     return UserProfileResponse(
         user_id=str(user_id),
         dimensions=dimensions,
+        capabilities=[
+            {
+                "dimension": row.dimension,
+                "score": row.score,
+                "confidence": row.confidence,
+                "evidence_count": row.evidence_count,
+            }
+            for row in capabilities
+        ],
         updated_at=updated_at.isoformat() if updated_at else None,
     )
 
@@ -102,16 +119,16 @@ async def get_current_profile(
     """Return the authenticated profile without treating ``me`` as a UUID."""
     profile = await UserProfileRepository(session).get_by_user_id(current_user_id)
     if profile is None:
-        return _profile_response(current_user_id, {}, None)
-    return _profile_response(current_user_id, profile.dimensions or {}, profile.updated_at)
+        return await _profile_response(session, current_user_id, {}, None)
+    return await _profile_response(session, current_user_id, profile.dimensions or {}, profile.updated_at)
 
 
 @router.get("/profile/{user_id}", response_model=UserProfileResponse)
 async def get_profile(user_id: UUID, session: SessionDep) -> UserProfileResponse:
     profile = await UserProfileRepository(session).get_by_user_id(user_id)
     if profile is None:
-        return _profile_response(user_id, {}, None)
-    return _profile_response(user_id, profile.dimensions or {}, profile.updated_at)
+        return await _profile_response(session, user_id, {}, None)
+    return await _profile_response(session, user_id, profile.dimensions or {}, profile.updated_at)
 
 
 @router.put("/profile/{user_id}", response_model=UserProfileResponse)

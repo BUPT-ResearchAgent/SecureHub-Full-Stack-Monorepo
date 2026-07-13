@@ -10,6 +10,8 @@ from app.agents.skill_contracts import SkillInput, SkillOutput
 
 class RecommendResourcesInput(SkillInput):
     current_kp_id: str | None = None
+    course_id: str | None = None
+    learning_context: dict[str, object] = Field(default_factory=dict)
 
 
 class RecommendResourcesOutput(SkillOutput):
@@ -33,6 +35,9 @@ When this skill is used for a tutor question, `content` must be a direct,
 evidence-grounded Chinese answer for the learner. It must answer the question
 before suggesting optional resources. Do not expose routing decisions, provider
 metadata, QualityCheck fields, or JSON-in-JSON text to the learner.
+Use only the supplied course and knowledge-point context; when the evidence
+does not support the requested scope, say that evidence is insufficient and
+ask the learner to narrow the question.
 
 Return JSON matching:
 {output_schema_hint}

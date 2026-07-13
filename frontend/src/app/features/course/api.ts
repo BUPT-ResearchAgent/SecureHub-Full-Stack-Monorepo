@@ -41,8 +41,8 @@ export const PRODUCT_WORKFLOWS = {
   build_persona: 'profile_build_v1',
   plan_course: 'course_plan_v1',
   generate_resource: 'resource_generate_v1',
-  ask_tutor: 'tutor_routing_v2',
-  run_assessment: 'assessment_update_v1',
+  ask_tutor: 'tutor_routing_v3',
+  run_assessment: 'assessment_update_v2',
 } as const;
 
 export type CourseTaskRunMode = 'real' | 'fixture';
@@ -214,7 +214,11 @@ export function createCourseTaskRequest(command: CourseTaskCommand): WorkflowRun
         workflow: PRODUCT_WORKFLOWS.run_assessment,
         user_id: context.userId,
         course_id: courseId,
-        input: { answers: command.payload.answers, context: { kp_id: kpId, current_path_node_ids: context.currentPathNodeIds } },
+        input: {
+          answers: command.payload.answers,
+          quiz_artifact_id: command.payload.quizArtifactId,
+          context: { kp_id: kpId, current_path_node_ids: context.currentPathNodeIds },
+        },
       };
     default:
       throw new UnsupportedCourseTaskIntentError((command as { intent?: unknown }).intent);
@@ -792,7 +796,8 @@ export { workflowRunClient };
 function defaultTaskContext(userId: string): CourseTaskContext {
   return {
     userId,
-    courseId: '00000000-0000-0000-0000-000000000101',
+    // Match the durable WEBSEC-101 root used by the catalog-backed course UI.
+    courseId: '5f63a7c3-1c76-513c-88a5-f335d6190816',
     kpId: 'e96f770a-57d0-5b49-a7d6-3af1de08e115',
     currentPathNodeIds: [],
   };

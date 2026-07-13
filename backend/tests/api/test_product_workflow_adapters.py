@@ -148,7 +148,7 @@ def client() -> TestClient:
                 "course_id": COURSE_ID,
                 "question": "Why use parameterized queries?",
             },
-            "tutor_routing_v2",
+                "tutor_routing_v3",
         ),
         (
             "/api/v1/courses/course-websec/resources/generate?type=doc",
@@ -308,7 +308,7 @@ def test_assessment_maps_a_completed_durable_output_without_executing_a_skill(
     assert response.headers["X-Workflow-Events-URL"] == f"/api/v1/workflow-runs/{run_id}/events"
     assert response.json()["score"] == 0.86
     assert response.json()["updated_capabilities"][0]["dimension"] == "web_security"
-    assert service.requests[-1][0].workflow == "assessment_update_v1"
+    assert service.requests[-1][0].workflow == "assessment_update_v2"
     assert service.requests[-1][0].user_id == str(DEMO_USER_ID)
 
 

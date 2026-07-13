@@ -9,6 +9,7 @@ queue; RuntimeWorker claims the root through PostgreSQL.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from typing import Any
@@ -61,6 +62,7 @@ def build_default_workflow_registry() -> WorkflowRegistry:
     from app.runtime.workflows.product_workflows import PRODUCT_WORKFLOWS
     from app.runtime.workflows.resource_generate_v1 import RESOURCE_GENERATE_V1
     from app.runtime.workflows.tutor_routing_v2 import TUTOR_ROUTING_V2
+    from app.runtime.workflows.tutor_routing_v3 import TUTOR_ROUTING_V3
 
     registry = WorkflowRegistry()
     for definition in (
@@ -68,6 +70,7 @@ def build_default_workflow_registry() -> WorkflowRegistry:
         COURSE_LEARNING_FULL_V1,
         COURSE_LEARNING_FULL_V2,
         TUTOR_ROUTING_V2,
+        TUTOR_ROUTING_V3,
         *PRODUCT_WORKFLOWS,
     ):
         registry.register(definition)
@@ -115,6 +118,24 @@ class WorkflowApplicationService:
 
         provider, model = self._provider_selection(request)
         async with self.sessionmaker() as session:
+            if definition.name == "tutor_routing_v3":
+                validated_input["persona_summary"] = await self._tutor_persona_summary(session, request.user_id)
+            if definition.name == "assessment_update_v2":
+                await self._validate_assessment_quiz_artifact(
+                    session,
+                    user_id=request.user_id,
+                    course_id=validated_input.get("course_id"),
+                    quiz_artifact_id=validated_input.get("quiz_artifact_id"),
+                    mode=request.mode,
+                )
+                capability_dimensions, persona_dimension_keys = await self._assessment_feedback_constraints(
+                    session, request.user_id
+                )
+                # These are server-owned constraints, not caller-controlled DTO
+                # fields. They make the mutation target explicit to the two
+                # generative Skills before the final atomic action validates it.
+                validated_input["capability_dimensions"] = capability_dimensions
+                validated_input["persona_dimension_keys"] = persona_dimension_keys
             run_store = RunStore(session)
             # Avoid appending a second queued event for an idempotent replay.
             existing = await self._existing_idempotency(session, request.user_id, definition.name, key)
@@ -544,13 +565,133 @@ class WorkflowApplicationService:
         elif workflow_name == "resource_generate_v1":
             resource_type = payload.setdefault("resource_type", "doc")
             payload.setdefault("query", f"Generate {resource_type} resource")
-        elif workflow_name in {"tutor_routing_v1", "tutor_routing_v2"}:
+        elif workflow_name in {"tutor_routing_v1", "tutor_routing_v2", "tutor_routing_v3"}:
             payload.setdefault("question", payload.get("query", "Tutor question"))
-        elif workflow_name == "assessment_update_v1":
+        elif workflow_name in {"assessment_update_v1", "assessment_update_v2"}:
             payload.setdefault("answers", [])
         elif workflow_name in {"course_learning_full_v1", "course_learning_full_v2"}:
             payload.setdefault("query", "Generate a parallel course resource pack")
         return payload
+
+    @staticmethod
+    async def _tutor_persona_summary(session: AsyncSession, user_id: str) -> str:
+        """Persist only the bounded, relevant persona snapshot for a new tutor root."""
+        from app.db.models.identity.user_profile import UserProfile
+
+        try:
+            parsed = UUID(str(user_id))
+        except (TypeError, ValueError):
+            return ""
+        profile = await session.get(UserProfile, parsed)
+        if profile is None:
+            return ""
+        allowed = {
+            # Current durable demo/persona keys.
+            "knowledge_basis",
+            "easy_mistakes",
+            "learning_pace",
+            "interest_anchors",
+            "career_goal",
+            "base_knowledge",
+            "cognitive_style",
+            "weak_points",
+            "preferred_modality",
+            "time_budget",
+            "target_direction",
+            "motivation",
+        }
+        snapshot = {
+            str(key): value
+            for key, value in dict(profile.dimensions or {}).items()
+            if key in allowed
+        }
+        return json.dumps(snapshot, ensure_ascii=False, separators=(",", ":"))[:800]
+
+    @staticmethod
+    async def _assessment_feedback_constraints(
+        session: AsyncSession, user_id: str
+    ) -> tuple[list[str], list[str]]:
+        """Load only stable mutation keys for the v2 assessment feedback root."""
+        from app.db.models.identity.user_capability import UserCapability
+        from app.db.models.identity.user_profile import UserProfile
+
+        try:
+            parsed = UUID(str(user_id))
+        except (TypeError, ValueError):
+            return [], []
+        capability_dimensions = sorted(
+            {
+                str(value).strip()
+                for value in (
+                    await session.scalars(
+                        select(UserCapability.dimension).where(UserCapability.user_id == parsed)
+                    )
+                ).all()
+                if str(value).strip()
+            }
+        )
+        # assessment_update_v2 is the course-websec feedback workflow. Its
+        # atomic action may update only the course's canonical capability;
+        # other profile dimensions remain available to their owning workflows.
+        capability_dimensions = [
+            dimension for dimension in capability_dimensions if dimension == "web_security"
+        ]
+        profile = await session.get(UserProfile, parsed)
+        persona_dimension_keys = sorted(
+            {
+                str(key).strip()
+                for key in dict(profile.dimensions or {}).keys()
+                if str(key).strip()
+            }
+        ) if profile is not None else []
+        return capability_dimensions, persona_dimension_keys
+
+    @staticmethod
+    async def _validate_assessment_quiz_artifact(
+        session: AsyncSession,
+        *,
+        user_id: str,
+        course_id: Any,
+        quiz_artifact_id: Any,
+        mode: ExecutionMode,
+    ) -> None:
+        """Require a real assessment to cite an active, owned quiz Artifact.
+
+        The generated-resource row is the existing durable artifact truth. It
+        prevents a browser-provided ID from being projected as a quiz attempt
+        when it belongs to another learner/course or was never quality-ready.
+        Fixture roots deliberately remain isolated for PresenterMode.
+        """
+        if mode == ExecutionMode.FIXTURE:
+            return
+
+        from app.db.models.resource.generated_resource import GeneratedResource
+
+        try:
+            parsed_user_id = UUID(str(user_id))
+            parsed_course_id = UUID(str(course_id))
+            parsed_artifact_id = UUID(str(quiz_artifact_id))
+        except (TypeError, ValueError) as exc:
+            raise WorkflowApplicationError(
+                "INVALID_ASSESSMENT_ARTIFACT",
+                "a real assessment requires a generated quiz artifact",
+                status_code=422,
+            ) from exc
+
+        artifact = await session.get(GeneratedResource, parsed_artifact_id)
+        if (
+            artifact is None
+            or artifact.user_id != parsed_user_id
+            or artifact.course_id != parsed_course_id
+            or artifact.resource_type != "quiz"
+            or artifact.status != "active"
+            or not artifact.evidence_chunk_ids
+        ):
+            raise WorkflowApplicationError(
+                "INVALID_ASSESSMENT_ARTIFACT",
+                "the quiz artifact is unavailable for this learner and course",
+                status_code=422,
+            )
 
     @staticmethod
     def _initial_budget(
