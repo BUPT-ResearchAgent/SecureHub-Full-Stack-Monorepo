@@ -36,6 +36,7 @@ def test_course_learning_full_v2_keeps_each_resource_in_quality_and_artifact_lin
     assert quality.agent_name == "outcome_evaluator"
     assert quality.skill_name == "QualityCheck"
     assert quality.input_sources == resource_nodes
+    assert quality.budget_tokens == 320
     assert persist.action_name == "PersistResourceFanout"
     assert persist.input_sources == (*resource_nodes, "quality_check")
     assert COURSE_LEARNING_FULL_V2.rework_targets(

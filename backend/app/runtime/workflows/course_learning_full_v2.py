@@ -156,6 +156,9 @@ COURSE_LEARNING_FULL_V2 = WorkflowDefinition(
             input_mapper=_quality_input,
             quality_policy="none",
             input_sources=_RESOURCE_NODES,
+            # The quality decision is an internal strict JSON record, not a
+            # learner-facing draft. Its compact schema needs no token stream.
+            budget_tokens=320,
         ),
         NodeDefinition(
             node_id="persist_artifacts",

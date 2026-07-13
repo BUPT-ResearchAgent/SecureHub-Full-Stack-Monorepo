@@ -46,6 +46,7 @@ TEXTBOOK_METADATA: dict[str, dict[str, Any]] = {
         "isbn": "978-7-5635-4307-6",
         "domain_tag": ["crypto", "cryptography"],
         "trust_score": 0.9,
+        "course_eligible": False,
         "rights_note": TEXTBOOK_RIGHTS_NOTE,
         "license": "proprietary-educational-use",
     },
@@ -57,6 +58,7 @@ TEXTBOOK_METADATA: dict[str, dict[str, Any]] = {
         "isbn": "978-7-302-35654-7",
         "domain_tag": ["network_security"],
         "trust_score": 0.9,
+        "course_eligible": True,
         "rights_note": TEXTBOOK_RIGHTS_NOTE,
         "license": "proprietary-educational-use",
     },
@@ -68,6 +70,7 @@ TEXTBOOK_METADATA: dict[str, dict[str, Any]] = {
         "isbn": "978-7-302-33314-2",
         "domain_tag": ["reverse", "assembly", "binary"],
         "trust_score": 0.9,
+        "course_eligible": False,
         "rights_note": TEXTBOOK_RIGHTS_NOTE,
         "license": "proprietary-educational-use",
     },
@@ -349,6 +352,7 @@ async def pdf_mineru_import(
                         "source_type": "pdf_mineru",
                         "book_title": body_title,
                         "title_zh": merged_metadata.get("title_zh"),
+                        "course_eligible": merged_metadata.get("course_eligible", True),
                     },
                 )
             )

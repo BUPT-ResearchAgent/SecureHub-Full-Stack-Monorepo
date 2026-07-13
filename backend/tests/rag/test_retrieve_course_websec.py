@@ -11,6 +11,7 @@ from app.db.models.knowledge.knowledge_node import KnowledgeNode
 from app.db.models.learning.quiz_item import QuizItem
 from app.db.seeds.seed_course_websec import run as seed_course_websec
 from app.knowledge.loaders.course_loader import pdf_mineru_import
+from app.rag.retriever import _course_evidence_allowed
 from app.services.knowledge.retrieval_service import RetrievalService
 
 
@@ -264,3 +265,10 @@ AX、BX、CX、DX 是典型的 8086 通用寄存器。""",
             assert term in joined
         assert all(hit.metadata["platform"] == "mineru" for hit in hits)
         assert all(hit.metadata["asset_type"] == "markdown_chapter" for hit in hits)
+
+
+def test_course_retriever_excludes_explicitly_ineligible_supplementary_material() -> None:
+    assert not _course_evidence_allowed("course_websec", {"course_eligible": False})
+    assert _course_evidence_allowed("course_websec", {"course_eligible": True})
+    assert _course_evidence_allowed("course_websec", {})
+    assert _course_evidence_allowed("cryptography", {"course_eligible": False})

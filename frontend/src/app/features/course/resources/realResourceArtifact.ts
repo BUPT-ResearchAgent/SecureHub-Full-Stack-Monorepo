@@ -34,8 +34,15 @@ function objectArray(value: unknown): Array<Record<string, unknown>> {
 }
 
 function extractOutput(content: Record<string, unknown> | undefined): Record<string, unknown> {
-  if (!content) return {};
-  return isRecord(content.output) ? content.output : content;
+  let output: Record<string, unknown> = content ?? {};
+  // ArtifactSaga stores the strict producer payload in an `output` envelope.
+  // Recovery/retry projections can add a second envelope, so unwrap only the
+  // known durable wrapper instead of rendering its JSON to a learner.
+  for (let depth = 0; depth < 3; depth += 1) {
+    if (!isRecord(output.output)) break;
+    output = output.output;
+  }
+  return output;
 }
 
 function asPptMarkdown(output: Record<string, unknown>): string | undefined {
@@ -75,17 +82,23 @@ function stringArray(value: unknown): string[] {
 
 function asLabMarkdown(output: Record<string, unknown>): string | undefined {
   const sections: string[] = [];
+  const overview = stringValue(output.content);
   const prerequisites = stringArray(output.prerequisites);
   const setup = stringArray(output.setup);
   const acceptance = stringArray(output.acceptance_criteria);
   const hints = stringArray(output.hints);
   const steps = objectArray(output.steps);
+  if (overview) sections.push(overview);
   if (prerequisites.length) sections.push(`## 前置条件\n\n${prerequisites.map((item) => `- ${item}`).join('\n')}`);
   if (setup.length) sections.push(`## 实验准备\n\n${setup.map((item) => `- ${item}`).join('\n')}`);
   if (steps.length) {
     sections.push(`## 操作步骤\n\n${steps.map((step, index) => {
+      const legacyStep = Object.entries(step).find(([key, value]) => /^step\d+$/i.test(key) && typeof value === 'string');
       const title = stringValue(step.title) ?? stringValue(step.name) ?? `步骤 ${index + 1}`;
-      const detail = stringValue(step.instruction) ?? stringValue(step.description) ?? stringValue(step.content) ?? '';
+      const detail = stringValue(step.instruction)
+        ?? stringValue(step.description)
+        ?? stringValue(step.content)
+        ?? (typeof legacyStep?.[1] === 'string' ? legacyStep[1] : '');
       return `### ${title}\n\n${detail}`.trim();
     }).join('\n\n')}`);
   }

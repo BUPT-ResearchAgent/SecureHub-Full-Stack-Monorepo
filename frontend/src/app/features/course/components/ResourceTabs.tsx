@@ -6,7 +6,6 @@ import { LLMErrorState, LoadingState } from '@/app/components/StateView';
 import { useEvidence } from '@/app/components/EvidenceDrawer';
 import { useAgentTraceDispatch } from '@/app/features/agents/store';
 import { isMockMode } from '@/lib/mock';
-import { useRafTokenBuffer } from '@/lib/raf-token-buffer';
 import { isWorkflowDraftReplacement } from '@/lib/workflow-run.types';
 import { useCourseDispatch, useCourseState } from '../store';
 import type { ResourceItem, ResourceType } from '../types';
@@ -116,17 +115,6 @@ export function ResourceTabs() {
   const previewResource = artifactProjection.resource;
   const isGenerating = resource.status === 'generating';
   const isReconnecting = resource.errorCode === 'sse_reconnecting';
-  const tokenBuffer = useRafTokenBuffer((type, content) => {
-    const resourceType = type as ResourceType;
-    setResources((current) => {
-      const previous = current[resourceType] ?? fallbackResource(resourceType);
-      return {
-        ...current,
-        [resourceType]: { ...previous, content: `${previous.content}${content}` },
-      };
-    });
-  });
-
   const selectedResourceTypes = useMemo(() => resourceTypes, []);
 
   useEffect(() => {
@@ -168,7 +156,6 @@ export function ResourceTabs() {
   const startGeneration = (targetType: ResourceType = active) => {
     cancelRef.current?.();
     activeStreamTypeRef.current = targetType;
-    tokenBuffer.cancel();
     setProgressText('正在校验输入');
     updateResource(targetType, (previous) => ({
       ...previous,
@@ -186,7 +173,6 @@ export function ResourceTabs() {
     }, createCourseTaskLifecycle('generate_resource', courseDispatch, {
         onWorkflowEvent(event) {
           if (!isWorkflowDraftReplacement(event)) return;
-          tokenBuffer.cancel();
           updateResource(targetType, (previous) => ({ ...previous, content: '' }));
         },
         onProgress(progress) {
@@ -201,9 +187,10 @@ export function ResourceTabs() {
               : [...previous.evidenceRefs, chunk],
           }));
         },
-        onToken(token) {
-          tokenBuffer.push(targetType, token.content);
-        },
+        // Producer streams are strict JSON for the durable artifact. The
+        // learner sees real node progress here; rendering those transport
+        // tokens would expose a serialized payload instead of a document.
+        onToken() {},
         onArtifact(artifact) {
           const artifactType = artifact.resource_type ?? targetType;
           activeStreamTypeRef.current = artifactType;
@@ -219,7 +206,6 @@ export function ResourceTabs() {
           traceDispatch({ type: 'upsertRun', run });
         },
         onDone(done) {
-          tokenBuffer.flush();
           setProgressText('');
           const doneType = activeStreamTypeRef.current ?? targetType;
           updateResource(doneType, (previous) => ({
@@ -244,7 +230,6 @@ export function ResourceTabs() {
             }));
             return;
           }
-          tokenBuffer.flush();
           setProgressText('');
           updateResource(targetType, (previous) => ({
             ...previous,
@@ -258,7 +243,6 @@ export function ResourceTabs() {
 
   const startResourcePack = () => {
     cancelRef.current?.();
-    tokenBuffer.cancel();
     setBundleGenerating(true);
     setProgressText('正在创建完整资源包');
     setResources((current) => {
@@ -284,9 +268,7 @@ export function ResourceTabs() {
       onEvidence(chunk) {
         evidence.pushEvidence([chunk]);
       },
-      onToken(token) {
-        tokenBuffer.push(activeStreamTypeRef.current, token.content);
-      },
+      onToken() {},
       onArtifact(artifact) {
         const artifactType = artifact.resource_type;
         activeStreamTypeRef.current = artifactType;
@@ -302,14 +284,20 @@ export function ResourceTabs() {
         traceDispatch({ type: 'upsertRun', run });
       },
       onDone(done) {
-        tokenBuffer.flush();
         setProgressText('');
         setBundleGenerating(false);
         setResources((current) => Object.fromEntries(
           Object.entries(current).map(([type, item]) => [
             type,
             item?.status === 'generating'
-              ? { ...item, status: 'ready', qualityScore: done.quality_score }
+              ? UUID_PATTERN.test(item.id)
+                ? { ...item, status: 'ready', qualityScore: done.quality_score }
+                : {
+                    ...item,
+                    status: 'failed',
+                    errorCode: 'ARTIFACT_MISSING',
+                    errorMessage: '资源包已结束，但该资源没有完成 Artifact Saga。请单独重试此资源。',
+                  }
               : item,
           ]),
         ) as Partial<Record<ResourceType, ResourceItem>>);
@@ -322,7 +310,6 @@ export function ResourceTabs() {
           setProgressText(error.message);
           return;
         }
-        tokenBuffer.flush();
         setProgressText('');
         setBundleGenerating(false);
         setResources((current) => Object.fromEntries(
@@ -343,7 +330,6 @@ export function ResourceTabs() {
       return;
     }
     cancelRef.current?.();
-    tokenBuffer.cancel();
     setProgressText(`正在重新生成${resourceTypeLabel(active)}`);
     updateResource(active, (previous) => ({
       ...previous,
@@ -360,9 +346,7 @@ export function ResourceTabs() {
       onEvidence(chunk) {
         evidence.pushEvidence([chunk]);
       },
-      onToken(token) {
-        tokenBuffer.push(active, token.content);
-      },
+      onToken() {},
       onArtifact(artifact) {
         updateResource(artifact.resource_type, (previous) => ({
           ...previous,
@@ -376,7 +360,6 @@ export function ResourceTabs() {
         traceDispatch({ type: 'upsertRun', run });
       },
       onDone(done) {
-        tokenBuffer.flush();
         setProgressText('');
         updateResource(active, (previous) => ({ ...previous, status: 'ready', qualityScore: done.quality_score }));
       },
@@ -388,7 +371,6 @@ export function ResourceTabs() {
           setProgressText(error.message);
           return;
         }
-        tokenBuffer.flush();
         setProgressText('');
         updateResource(active, (previous) => ({
           ...previous,

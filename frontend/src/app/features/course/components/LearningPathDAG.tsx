@@ -1,6 +1,7 @@
 // Status: real
 
-import { Network, Route, ShieldCheck } from 'lucide-react';
+import { ChevronDown, Network, Route, ShieldCheck } from 'lucide-react';
+import { useState } from 'react';
 import { Card, Tag } from '@/app/components/PageShell';
 import { useCourseProductPath } from '../path/useCourseProductPath';
 import { useCourseDispatch, useCourseState } from '../store';
@@ -27,6 +28,7 @@ const generatedStatusTone = {
 export function LearningPathDAG({ courseId }: LearningPathDAGProps) {
   const { taskContext, path: generatedPath } = useCourseState();
   const dispatch = useCourseDispatch();
+  const [expandedGeneratedNodeId, setExpandedGeneratedNodeId] = useState<string | null>(null);
   const effectiveCourseId = courseId ?? taskContext.courseId;
   const productPath = useCourseProductPath(effectiveCourseId);
 
@@ -70,15 +72,45 @@ export function LearningPathDAG({ courseId }: LearningPathDAGProps) {
             </div>
           </div>
           <div className="mt-3 space-y-2">
-            {generatedForCourse.nodes.map((node) => (
-              <div key={node.id} className="border-l-2 border-brand-blue-200 pl-3">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-sm font-medium text-slate-800">{node.priority}. {node.label}</span>
-                  <Tag tone={generatedStatusTone[node.status]}>{node.status}</Tag>
+            {generatedForCourse.nodes.map((node, index) => {
+              const projectedNode = path.nodes[index];
+              const graphNode = projectedNode ? graphNodes.get(projectedNode.knowledge_point_id) : undefined;
+              const expanded = expandedGeneratedNodeId === node.id;
+              const prerequisites = projectedNode?.prerequisites
+                .map((id) => labels.get(id) ?? id)
+                .join(' / ');
+              return (
+                <div key={node.id} className="border-l-2 border-brand-blue-200 pl-3">
+                  <button
+                    type="button"
+                    aria-expanded={expanded}
+                    onClick={() => {
+                      setExpandedGeneratedNodeId(expanded ? null : node.id);
+                      if (projectedNode) dispatch({ type: 'setCurrentKp', kpId: projectedNode.knowledge_point_id });
+                    }}
+                    className="flex w-full flex-wrap items-center justify-between gap-2 py-1 text-left hover:text-brand-blue-700"
+                  >
+                    <span className="flex flex-wrap items-center gap-2">
+                      <span className="text-sm font-medium text-slate-800">{node.priority}. {node.label}</span>
+                      <Tag tone={generatedStatusTone[node.status]}>{node.status}</Tag>
+                    </span>
+                    <span className="inline-flex items-center gap-1 text-xs font-medium text-brand-blue-700">
+                      查看详情 <ChevronDown className={`h-3.5 w-3.5 transition-transform ${expanded ? 'rotate-180' : ''}`} />
+                    </span>
+                  </button>
+                  {node.description && <p className="mt-1 text-xs leading-5 text-slate-500">{node.description}</p>}
+                  {expanded && (
+                    <div className="mt-2 grid gap-1 border-t border-slate-100 pt-2 text-xs leading-5 text-slate-600 sm:grid-cols-2">
+                      <span>课程知识点：{projectedNode?.title ?? '该步骤尚未映射到课程节点'}</span>
+                      <span>状态：{projectedNode?.status ?? node.status}</span>
+                      {prerequisites && <span className="sm:col-span-2">先修：{prerequisites}</span>}
+                      {graphNode && <span className="sm:col-span-2">证据 {graphNode.evidence_count} · 已生成资源 {graphNode.resource_count}</span>}
+                      {projectedNode?.rationale && <span className="sm:col-span-2">路径依据：{projectedNode.rationale}</span>}
+                    </div>
+                  )}
                 </div>
-                {node.description && <p className="mt-1 text-xs leading-5 text-slate-500">{node.description}</p>}
-              </div>
-            ))}
+              );
+            })}
           </div>
         </section>
       )}

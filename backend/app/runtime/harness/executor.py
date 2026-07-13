@@ -270,10 +270,24 @@ class SkillExecutor:
             self._provider_policy.record_failure(provider_name)
             if context.mode != ExecutionMode.REAL or definition.fallback_policy != "explicit-real-provider-only":
                 raise
-            fallback_name = route.fallback
+            # A3 S2-S4 intentionally run direct DeepSeek. Spark is an S8
+            # external gate and must not be attempted as an implicit fallback
+            # merely because a DeepSeek call is temporarily unavailable.
+            fallback_name = (
+                None
+                if context.provider_selection.policy_version == "deepseek-direct-v1"
+                else route.fallback
+            )
             if not fallback_name or fallback_name == provider_name:
                 raise
-            fallback = self._fallback_provider_resolver(fallback_name, context)
+            try:
+                fallback = self._fallback_provider_resolver(fallback_name, context)
+            except Exception as fallback_resolution_error:
+                raise SkillExecutionError(
+                    ErrorCode.PROVIDER_UNAVAILABLE,
+                    "declared real fallback provider is unavailable",
+                    recoverable=True,
+                ) from fallback_resolution_error
             actual_fallback = str(getattr(fallback, "provider_name", "unknown"))
             if actual_fallback in {"fixture", "unknown"}:
                 raise SkillExecutionError(ErrorCode.PROVIDER_UNAVAILABLE, "fallback provider is not a declared real provider")
