@@ -8,6 +8,8 @@ import type {
   LearningPersona,
   ResourceItem,
 } from './types';
+import type { ChatSession } from '@/app/features/chat/types';
+import type { CompanionMessage } from './companion/types';
 
 export const DEFAULT_COURSE_TASK_CONTEXT: CourseTaskContext = {
   userId: '00000000-0000-0000-0000-000000000001',
@@ -17,7 +19,7 @@ export const DEFAULT_COURSE_TASK_CONTEXT: CourseTaskContext = {
 };
 
 export type CourseState = {
-  stateVersion: 2;
+  stateVersion: 4;
   currentKpId: string;
   taskContext: CourseTaskContext;
   persona: LearningPersona | null;
@@ -27,6 +29,8 @@ export type CourseState = {
   progress: number;
   workflowRoots: Record<string, CourseWorkflowRoot>;
   activeWorkflowRootId: string | null;
+  tutorSessions: Record<string, ChatSession>;
+  companionSessions: Record<string, CompanionMessage[]>;
 };
 
 export type CourseAction =
@@ -39,10 +43,12 @@ export type CourseAction =
   | { type: 'setCurrentKp'; kpId: string }
   | { type: 'setTaskContext'; context: CourseTaskContext }
   | { type: 'upsertWorkflowRoot'; root: CourseWorkflowRoot; active?: boolean }
-  | { type: 'setActiveWorkflowRoot'; runId: string | null };
+  | { type: 'setActiveWorkflowRoot'; runId: string | null }
+  | { type: 'setTutorSession'; courseId: string; session: ChatSession }
+  | { type: 'setCompanionSession'; courseId: string; messages: CompanionMessage[] };
 
 export const initialCourseState: CourseState = {
-  stateVersion: 2,
+  stateVersion: 4,
   currentKpId: DEFAULT_COURSE_TASK_CONTEXT.kpId,
   taskContext: DEFAULT_COURSE_TASK_CONTEXT,
   persona: null,
@@ -52,6 +58,8 @@ export const initialCourseState: CourseState = {
   progress: 0,
   workflowRoots: {},
   activeWorkflowRootId: null,
+  tutorSessions: {},
+  companionSessions: {},
 };
 
 export function courseReducer(state: CourseState, action: CourseAction): CourseState {
@@ -92,6 +100,19 @@ export function courseReducer(state: CourseState, action: CourseAction): CourseS
       };
     case 'setActiveWorkflowRoot':
       return { ...state, activeWorkflowRootId: action.runId };
+    case 'setTutorSession':
+      return {
+        ...state,
+        tutorSessions: { ...state.tutorSessions, [action.courseId]: action.session },
+      };
+    case 'setCompanionSession':
+      return {
+        ...state,
+        companionSessions: {
+          ...state.companionSessions,
+          [action.courseId]: action.messages.map(({ attachments: _attachments, ...message }) => message),
+        },
+      };
     default:
       return state;
   }
@@ -104,10 +125,21 @@ export function useCourseStore() {
 function normalizeCourseState(state: CourseState | Record<string, unknown>): CourseState {
   // v1 persisted a complete mock course as its initial value. Do not carry
   // those fixture persona/path/resource values into a real course session.
-  if (state.stateVersion !== 2 || !state.taskContext || !state.workflowRoots) {
+  if ((state.stateVersion !== 2 && state.stateVersion !== 3 && state.stateVersion !== 4) || !state.taskContext || !state.workflowRoots) {
     return initialCourseState;
   }
-  return state as CourseState;
+  const tutorSessions = state.tutorSessions;
+  const companionSessions = state.companionSessions;
+  return {
+    ...(state as Omit<CourseState, 'stateVersion' | 'tutorSessions' | 'companionSessions'>),
+    stateVersion: 4,
+    tutorSessions: tutorSessions && typeof tutorSessions === 'object' && !Array.isArray(tutorSessions)
+      ? tutorSessions as Record<string, ChatSession>
+      : {},
+    companionSessions: companionSessions && typeof companionSessions === 'object' && !Array.isArray(companionSessions)
+      ? companionSessions as Record<string, CompanionMessage[]>
+      : {},
+  };
 }
 
 const CourseStateContext = createContext<CourseState | null>(null);

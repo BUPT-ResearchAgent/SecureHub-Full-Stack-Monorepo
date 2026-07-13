@@ -8,6 +8,7 @@ return the durable root ID.  RuntimeEngine performs all execution.
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -91,7 +92,26 @@ def _route_input(root: dict[str, Any], _state: dict[str, Any]) -> dict[str, Any]
 
 
 def _assessment_input(root: dict[str, Any], _state: dict[str, Any]) -> dict[str, Any]:
-    return {**_basic_input(root, _state), "answers": root.get("answers", [])}
+    answers = root.get("answers", [])
+    answer_context = json.dumps(answers, ensure_ascii=False, default=str)[:4_000]
+    return {
+        **_basic_input(root, _state),
+        "query": f"Assess the learner's submitted course answers: {answer_context}",
+        "answers": answers,
+    }
+
+
+def _update_capability_input(root: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
+    assessment = dict((state.get("run_assessment") or {}).get("output") or {})
+    score = assessment.get("score")
+    feedback = str(assessment.get("feedback") or "")[:1_200]
+    proposed_delta = assessment.get("capability_delta")
+    score_vector = proposed_delta if isinstance(proposed_delta, dict) else {}
+    return {
+        **_basic_input(root, state),
+        "query": f"Update capabilities from assessment score={score}; feedback={feedback}",
+        "score_vector": score_vector,
+    }
 
 
 def _quality_input(root: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
@@ -169,7 +189,7 @@ ASSESSMENT_UPDATE_V1 = WorkflowDefinition(
     nodes=(
         NodeDefinition("run_assessment", "skill", "outcome_evaluator", "RunAssessment", input_mapper=_assessment_input, quality_policy="workflow_node", input_sources=()),
         NodeDefinition("quality_check", "skill", "outcome_evaluator", "QualityCheck", input_mapper=_quality_input, input_sources=("run_assessment",)),
-        NodeDefinition("update_capability", "skill", "outcome_evaluator", "UpdateCapability", input_mapper=_basic_input, quality_policy="workflow_node", input_sources=("run_assessment", "quality_check")),
+        NodeDefinition("update_capability", "skill", "outcome_evaluator", "UpdateCapability", input_mapper=_update_capability_input, quality_policy="workflow_node", input_sources=("run_assessment", "quality_check")),
         # These writes are deliberately separate deterministic actions.  The
         # model may propose a delta/persona, but it cannot claim that either
         # has been applied until RuntimeEngine executes and persists it.

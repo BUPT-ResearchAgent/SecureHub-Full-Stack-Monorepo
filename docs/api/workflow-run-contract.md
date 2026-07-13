@@ -192,7 +192,7 @@ unqueryable run ID.
 | `POST /api/v1/profile/chat` | `profile_build_v1` | SSE after root commit. |
 | `POST /api/v1/courses/{id}/plan` | `course_plan_v1` | Short synchronous wait; on timeout returns `202`, `Location`, and `run_id`. |
 | `POST /api/v1/courses/{id}/resources/generate` | `resource_generate_v1` | SSE after root commit. |
-| `POST /api/v1/tutor/ask` | `tutor_routing_v1` | SSE after root commit. |
+| `POST /api/v1/tutor/ask` | `tutor_routing_v2` | SSE after root commit; v2 projects the accepted learner answer after QualityCheck. |
 | `POST /api/v1/assessment/run` | `assessment_update_v1` | Short synchronous wait; on timeout returns `202`, `Location`, and `run_id`. |
 
 For adapter SSE responses, `X-Workflow-Run-ID` and `Location` expose the root

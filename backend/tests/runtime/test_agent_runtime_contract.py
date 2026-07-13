@@ -32,6 +32,7 @@ from app.runtime.workflows.product_workflows import (
     PROFILE_BUILD_V1,
     TUTOR_ROUTING_V1,
 )
+from app.runtime.workflows.tutor_routing_v2 import TUTOR_ROUTING_V2
 from app.services import workflow_application_service
 from app.services.workflow_application_service import WorkflowApplicationService
 
@@ -143,6 +144,7 @@ def test_quality_check_output_requires_the_frozen_defect_taxonomy() -> None:
         (PROFILE_BUILD_V1, "build_persona"),
         (COURSE_PLAN_V1, "generate_path"),
         (TUTOR_ROUTING_V1, "answer"),
+        (TUTOR_ROUTING_V2, "answer"),
         (ASSESSMENT_UPDATE_V1, "run_assessment"),
     ),
 )
@@ -154,6 +156,12 @@ def test_product_workflows_rework_each_recoverable_quality_defect(
 
     assert definition.max_rework_attempts == 1
     assert [target.node_id for target in targets] == [producer_node]
+
+
+def test_tutor_routing_v2_projects_the_accepted_answer_without_rewriting_v1() -> None:
+    assert TUTOR_ROUTING_V1.nodes[-1].node_id == "quality_check"
+    assert TUTOR_ROUTING_V2.nodes[-1].node_id == "project_answer"
+    assert TUTOR_ROUTING_V2.successors("quality_check", condition="accept")[0].node_id == "project_answer"
 
 
 def test_state_machine_rejects_terminal_and_illegal_transitions() -> None:

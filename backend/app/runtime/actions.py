@@ -38,7 +38,27 @@ class WorkflowActionService:
             return await self.persist_learning_path(root_input, state, context)
         if action_name == "PersistCapability":
             return await self.persist_capability(root_input, state, context)
+        if action_name == "ProjectTutorAnswer":
+            return await self.project_tutor_answer(root_input, state, context)
         raise ValueError(f"unknown deterministic workflow action: {action_name}")
+
+    async def project_tutor_answer(
+        self,
+        _root_input: dict[str, Any],
+        state: dict[str, Any],
+        _context: ExecutionContext,
+    ) -> dict[str, Any]:
+        """Expose only the accepted learner answer as a tutor workflow terminal value."""
+        answer = dict((state.get("answer") or {}).get("output") or {})
+        content = answer.get("content")
+        if not isinstance(content, str) or not content.strip():
+            raise ValueError("accepted tutor answer is missing learner-facing content")
+        resources = answer.get("resources")
+        return {
+            "content": content.strip(),
+            "resources": resources if isinstance(resources, list) else [],
+            "quality_score": self._as_float(answer.get("quality_score")),
+        }
 
     async def persist_generated_resource(
         self,

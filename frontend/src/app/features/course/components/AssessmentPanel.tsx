@@ -25,6 +25,8 @@ import type { CapabilityDTO } from '@/lib/sse.types';
 import { assessmentReportFromWorkflowStatus, recordCourseProgress, startCourseTask } from '../api';
 import { useCourseDispatch, useCourseState } from '../store';
 import { createCourseTaskLifecycle } from '../workflow/courseTaskLifecycle';
+import { parseCourseQuiz, type CourseQuizQuestion } from './QuizResourceView';
+import { useRealResourceArtifact } from '../resources/realResourceArtifact';
 import { ImplicitAssessmentCard } from '../assessment/ImplicitAssessmentCard';
 import { WeaknessDiagnosisDrawer } from '../assessment/WeaknessDiagnosisDrawer';
 import { PeerComparisonCard } from '../assessment/PeerComparisonCard';
@@ -43,24 +45,48 @@ type LoopEvent = {
   text: string;
 };
 
+type AssessmentQuestion = Pick<CourseQuizQuestion, 'id' | 'type' | 'prompt' | 'options'>;
+type AssessmentAnswer = string | string[];
+
+const EMPTY_QUIZ_RESOURCE = {
+  id: 'assessment-quiz-placeholder',
+  type: 'quiz' as const,
+  title: '练习题',
+  status: 'idle' as const,
+  content: '',
+  evidenceRefs: [],
+};
+
+function hasAnswer(value: AssessmentAnswer | undefined): boolean {
+  return Array.isArray(value) ? value.length > 0 : Boolean(value?.trim());
+}
+
 export function AssessmentPanel() {
   const navigate = useNavigate();
-  const { assessment, taskContext } = useCourseState();
+  const { assessment, taskContext, resources } = useCourseState();
   const dispatch = useCourseDispatch();
   const { course } = useSelectedCourse();
   const presenterMode = isMockMode();
-  const questions = useMemo(
-    () =>
-      presenterMode && course ? getMockQuizItemsForCourse(course.id).map((item) => ({
+  const quizResource = useMemo(
+    () => resources.find((resource) => resource.type === 'quiz' && resource.status === 'ready') ?? null,
+    [resources],
+  );
+  const quizArtifact = useRealResourceArtifact(quizResource ?? EMPTY_QUIZ_RESOURCE);
+  const realQuestions = useMemo<AssessmentQuestion[]>(
+    () => parseCourseQuiz(quizArtifact.resource.content).map(({ id, type, prompt, options }) => ({ id, type, prompt, options })),
+    [quizArtifact.resource.content],
+  );
+  const questions = useMemo<AssessmentQuestion[]>(
+    () => presenterMode && course ? getMockQuizItemsForCourse(course.id).map((item) => ({
         id: item.id,
-        title: item.prompt,
-        correct: item.answer,
+        type: 'single' as const,
+        prompt: item.prompt,
         kp: item.kp,
         options: item.options,
-      })) : [],
-    [course?.id, presenterMode],
+      })) : realQuestions,
+    [course?.id, presenterMode, realQuestions],
   );
-  const [answers, setAnswers] = useState<Record<string, string>>({});
+  const [answers, setAnswers] = useState<Record<string, AssessmentAnswer>>({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [events, setEvents] = useState<LoopEvent[]>([]);
@@ -112,11 +138,16 @@ export function AssessmentPanel() {
       intent: 'run_assessment',
       context: taskContext,
       payload: {
-        answers: Object.entries(answers).map(([quiz_item_id, answer]) => ({
-          quiz_item_id,
-          answer,
-          kp_id: taskContext.kpId,
-        })),
+        answers: questions
+          .filter((question) => hasAnswer(answers[question.id]))
+          .map((question) => ({
+            quiz_item_id: question.id,
+            answer: answers[question.id],
+            kp_id: taskContext.kpId,
+            question: question.prompt,
+            options: question.options,
+            question_type: question.type,
+          })),
       },
     }, createCourseTaskLifecycle('run_assessment', dispatch, {
       onProgress(progress) {
@@ -152,7 +183,11 @@ export function AssessmentPanel() {
             text: `已持久化能力维度「${firstDim}」，课程进度将据此更新。`,
           });
           toast.success(`能力维度 ${firstDim} 已更新`);
-          navigate(`/profile?tab=persona&highlight=${encodeURIComponent(firstDim)}`);
+          pushEvent({
+            id: `navigate-${status.run_id}`,
+            tone: 'navigate',
+            text: '评估结果已保留在本页；可继续查看反馈，或前往画像页查看能力变化。',
+          });
         } catch (err) {
           setError(err instanceof Error ? err.message : '评估结果映射失败');
         } finally {
@@ -169,6 +204,7 @@ export function AssessmentPanel() {
 
   const hasSubmitted = Boolean(assessment);
   const score = Math.round((assessment?.score ?? 0) * 100);
+  const canSubmit = !loading && questions.length > 0 && questions.every((question) => hasAnswer(answers[question.id]));
 
   return (
     <>
@@ -176,18 +212,34 @@ export function AssessmentPanel() {
       <Card title="学习效果评估" subtitle="完成题目后回流 outcome_evaluator 更新能力画像">
         <div className="space-y-4">
           {!presenterMode && (
-            <p className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">
-              请先在资源工作台完成真实测验资源；非 PresenterMode 不显示固定题目或本地评分。
-            </p>
+            <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">
+              {!quizResource && (
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span>请先在资源工作台生成真实测验资源；非 PresenterMode 不显示固定题目或本地评分。</span>
+                  <button
+                    type="button"
+                    onClick={() => navigate(`/course?courseId=${encodeURIComponent(taskContext.courseId)}&view=structured&tab=workbench`)}
+                    className="rounded-md border border-brand-blue-200 bg-white px-2.5 py-1 text-xs font-medium text-brand-blue-700 hover:bg-brand-blue-50"
+                  >
+                    前往生成测验
+                  </button>
+                </div>
+              )}
+              {quizResource && quizArtifact.isLoading && '正在读取已生成的真实测验资源...'}
+              {quizResource && quizArtifact.error && `测验资源读取失败：${quizArtifact.error}`}
+              {quizResource && !quizArtifact.isLoading && !quizArtifact.error && !realQuestions.length && '测验资源内容无法解析，请在资源工作台重新生成练习题。'}
+            </div>
           )}
           {questions.map((question, index) => (
             <div key={question.id} className="rounded-lg border border-slate-100 p-4">
               <p className="text-sm font-semibold text-slate-900">
-                {index + 1}. {question.title}
+                {index + 1}. {question.prompt}
               </p>
-              <div className="mt-3 grid gap-2">
+              {question.type !== 'short' && <div className="mt-3 grid gap-2">
                 {question.options.map((option) => {
-                  const picked = answers[question.id] === option;
+                  const picked = question.type === 'multiple'
+                    ? Array.isArray(answers[question.id]) && answers[question.id].includes(option)
+                    : answers[question.id] === option;
                   return (
                     <label
                       key={option}
@@ -198,16 +250,34 @@ export function AssessmentPanel() {
                       }`}
                     >
                       <input
-                        type="radio"
+                        type={question.type === 'multiple' ? 'checkbox' : 'radio'}
                         name={question.id}
                         checked={picked}
-                        onChange={() => setAnswers((current) => ({ ...current, [question.id]: option }))}
+                        onChange={(event) => setAnswers((current) => {
+                          if (question.type !== 'multiple') return { ...current, [question.id]: option };
+                          const existing = current[question.id];
+                          const previous = Array.isArray(existing) ? existing : [];
+                          return {
+                            ...current,
+                            [question.id]: event.target.checked
+                              ? [...previous, option]
+                              : previous.filter((item) => item !== option),
+                          };
+                        })}
                       />
                       {option}
                     </label>
                   );
                 })}
-              </div>
+              </div>}
+              {question.type === 'short' && (
+                <textarea
+                  value={typeof answers[question.id] === 'string' ? answers[question.id] : ''}
+                  onChange={(event) => setAnswers((current) => ({ ...current, [question.id]: event.target.value }))}
+                  className="mt-3 min-h-[96px] w-full rounded-md border border-slate-200 px-3 py-2 text-sm outline-none focus:border-brand-blue-500"
+                  placeholder="请输入你的判断理由"
+                />
+              )}
             </div>
           ))}
 
@@ -216,7 +286,7 @@ export function AssessmentPanel() {
           <button
             type="button"
             onClick={submit}
-            disabled={loading || Object.keys(answers).length === 0}
+            disabled={!canSubmit}
             className="inline-flex items-center gap-2 rounded-lg bg-brand-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
           >
             <CheckCircle2 className="h-4 w-4" />
@@ -270,6 +340,18 @@ export function AssessmentPanel() {
               </p>
             ))}
           </div>
+          {hasSubmitted && (
+            <button
+              type="button"
+              onClick={() => {
+                const firstDim = normalizePersonaDimension(assessment?.updatedCapabilities?.[0]?.dimension) ?? 'Web 安全';
+                navigate(`/profile?tab=persona&highlight=${encodeURIComponent(firstDim)}`);
+              }}
+              className="mt-4 inline-flex w-full items-center justify-center rounded-md border border-brand-blue-200 bg-white px-3 py-2 text-sm font-medium text-brand-blue-700 hover:bg-brand-blue-50"
+            >
+              查看更新后的学习画像
+            </button>
+          )}
         </Card>
         <CapabilityRadarCard capabilities={selectedCapabilities} />
         {presenterMode && hasSubmitted && (

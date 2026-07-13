@@ -41,7 +41,7 @@ export const PRODUCT_WORKFLOWS = {
   build_persona: 'profile_build_v1',
   plan_course: 'course_plan_v1',
   generate_resource: 'resource_generate_v1',
-  ask_tutor: 'tutor_routing_v1',
+  ask_tutor: 'tutor_routing_v2',
   run_assessment: 'assessment_update_v1',
 } as const;
 
@@ -637,14 +637,49 @@ export function learningPathFromWorkflowStatus(
 export function assessmentReportFromWorkflowStatus(
   status: WorkflowRunStatusResponse,
 ): AssessmentReport {
-  const response = finalOutputFromStatus<AssessmentRunResponse>(status);
+  const output = finalOutputFromStatus<Record<string, unknown>>(status);
+  const nested = isRecord(output.assessment) ? output.assessment : output;
+  const rawScore = nested.score ?? nested.overall_score ?? output.score ?? output.overall_score;
+  const score = typeof rawScore === 'number' ? rawScore : Number(rawScore);
+  const feedback = firstNonEmptyString(nested.feedback, nested.next_recommendation, nested.content, output.feedback, output.next_recommendation, output.content);
+  if (!Number.isFinite(score) || score < 0 || score > 1 || !feedback) {
+    throw new WorkflowRunClientError('评估工作流没有返回有效的分数和反馈，请重新生成测验后重试。', {
+      code: 'WORKFLOW_OUTPUT_INVALID',
+    });
+  }
+  const updatedCapabilities = Array.isArray(nested.updated_capabilities)
+    ? nested.updated_capabilities
+    : Array.isArray(output.updated_capabilities) ? output.updated_capabilities : [];
   return {
-    score: response.score,
-    scoreVector: Object.fromEntries((response.updated_capabilities ?? []).map((item) => [item.dimension, item.score])),
-    feedback: [response.feedback],
+    score,
+    scoreVector: Object.fromEntries(updatedCapabilities.flatMap((item) => {
+      if (!isRecord(item) || typeof item.dimension !== 'string' || typeof item.score !== 'number') return [];
+      return [[item.dimension, item.score] as const];
+    })),
+    feedback: [feedback],
     updatedProfile: {},
-    updatedCapabilities: response.updated_capabilities,
+    updatedCapabilities: updatedCapabilities.filter(isCapabilityDto),
   };
+}
+
+function isCapabilityDto(value: unknown): value is AssessmentRunResponse['updated_capabilities'][number] {
+  return isRecord(value)
+    && typeof value.dimension === 'string'
+    && typeof value.score === 'number'
+    && typeof value.confidence === 'number'
+    && typeof value.evidence_count === 'number';
+}
+
+/** Extracts only the learner-facing answer from the durable tutor terminal output. */
+export function tutorAnswerFromWorkflowStatus(status: WorkflowRunStatusResponse): string {
+  const output = finalOutputFromStatus<Record<string, unknown>>(status);
+  const content = firstNonEmptyString(output.content, isRecord(output.answer) ? output.answer.content : undefined);
+  if (!content) {
+    throw new WorkflowRunClientError('辅导工作流没有返回可展示的回答，请重试该问题。', {
+      code: 'WORKFLOW_OUTPUT_INVALID',
+    });
+  }
+  return content;
 }
 
 export function learningPersonaFromWorkflowStatus(

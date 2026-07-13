@@ -425,6 +425,7 @@ _DEFAULT_LLM_OUTPUTS: dict[str, dict[str, Any]] = {
     "RunAssessment": {
         "content": "Assessment completed",
         "score": 0.82,
+        "feedback": "重点复习布尔盲注与时间盲注，并使用参数化查询。",
         "weak_kp_ids": ["kp-blind-sqli"],
         "next_recommendation": "重点复习布尔盲注 + 时间盲注",
         "capability_delta": {"sql_injection": 0.12},

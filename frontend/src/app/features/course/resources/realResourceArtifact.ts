@@ -70,7 +70,9 @@ function asQuizContent(output: Record<string, unknown>): string | undefined {
       options: Array.isArray(question.options) ? question.options.filter((item): item is string => typeof item === 'string') : [],
       answer: Array.isArray(question.answer)
         ? question.answer.filter((item): item is string => typeof item === 'string')
-        : stringValue(question.answer) ?? '',
+        : Array.isArray(question.correct_answer)
+          ? question.correct_answer.filter((item): item is string => typeof item === 'string')
+          : stringValue(question.answer) ?? stringValue(question.correct_answer) ?? '',
       explanation: stringValue(question.explanation) ?? '请结合证据链复盘。',
     })),
   });

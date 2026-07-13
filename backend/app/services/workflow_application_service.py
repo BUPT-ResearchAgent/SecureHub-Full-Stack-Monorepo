@@ -60,12 +60,14 @@ def build_default_workflow_registry() -> WorkflowRegistry:
     from app.runtime.workflows.course_learning_full_v2 import COURSE_LEARNING_FULL_V2
     from app.runtime.workflows.product_workflows import PRODUCT_WORKFLOWS
     from app.runtime.workflows.resource_generate_v1 import RESOURCE_GENERATE_V1
+    from app.runtime.workflows.tutor_routing_v2 import TUTOR_ROUTING_V2
 
     registry = WorkflowRegistry()
     for definition in (
         RESOURCE_GENERATE_V1,
         COURSE_LEARNING_FULL_V1,
         COURSE_LEARNING_FULL_V2,
+        TUTOR_ROUTING_V2,
         *PRODUCT_WORKFLOWS,
     ):
         registry.register(definition)
@@ -542,7 +544,7 @@ class WorkflowApplicationService:
         elif workflow_name == "resource_generate_v1":
             resource_type = payload.setdefault("resource_type", "doc")
             payload.setdefault("query", f"Generate {resource_type} resource")
-        elif workflow_name == "tutor_routing_v1":
+        elif workflow_name in {"tutor_routing_v1", "tutor_routing_v2"}:
             payload.setdefault("question", payload.get("query", "Tutor question"))
         elif workflow_name == "assessment_update_v1":
             payload.setdefault("answers", [])

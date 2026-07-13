@@ -1,6 +1,6 @@
 # Status: real
 
-"""Tutor HTTP adapter for the durable ``tutor_routing_v1`` workflow."""
+"""Tutor HTTP adapter for the durable ``tutor_routing_v2`` workflow."""
 
 from __future__ import annotations
 
@@ -34,7 +34,7 @@ async def tutor_ask(
     service = _service(request)
     start = await start_product_workflow(
         service,
-        workflow="tutor_routing_v1",
+        workflow="tutor_routing_v2",
         actor_user_id=current_user_id,
         course_id=payload.course_id,
         input_payload={

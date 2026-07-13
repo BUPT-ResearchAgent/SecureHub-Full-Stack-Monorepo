@@ -148,7 +148,7 @@ def client() -> TestClient:
                 "course_id": COURSE_ID,
                 "question": "Why use parameterized queries?",
             },
-            "tutor_routing_v1",
+            "tutor_routing_v2",
         ),
         (
             "/api/v1/courses/course-websec/resources/generate?type=doc",
@@ -310,6 +310,38 @@ def test_assessment_maps_a_completed_durable_output_without_executing_a_skill(
     assert response.json()["updated_capabilities"][0]["dimension"] == "web_security"
     assert service.requests[-1][0].workflow == "assessment_update_v1"
     assert service.requests[-1][0].user_id == str(DEMO_USER_ID)
+
+
+def test_assessment_maps_the_nested_terminal_payload_written_by_profile_persistence(
+    client: TestClient, service: RecordingWorkflowService
+) -> None:
+    original_start = service.start
+
+    async def completed_start(*args: object, **kwargs: object) -> WorkflowRunStartResponse:
+        start = await original_start(*args, **kwargs)
+        service.mark_succeeded(
+            start.run_id,
+            {
+                "assessment": {
+                    "score": 0.73,
+                    "feedback": "复习参数化查询后再完成下一次测验。",
+                },
+                "updated_capabilities": [
+                    {"dimension": "web_security", "score": 0.61, "confidence": 0.7, "evidence_count": 1}
+                ],
+            },
+        )
+        return start
+
+    service.start = completed_start  # type: ignore[method-assign]
+    response = client.post(
+        "/api/v1/assessment/run",
+        json={"user_id": UNTRUSTED_USER_ID, "course_id": COURSE_ID, "answers": []},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["score"] == 0.73
+    assert response.json()["feedback"] == "复习参数化查询后再完成下一次测验。"
 
 
 def test_product_routes_do_not_retain_direct_skill_or_fixture_execution() -> None:
