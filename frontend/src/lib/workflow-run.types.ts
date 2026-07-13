@@ -193,10 +193,12 @@ export type WorkflowRunStartResponse = {
 export type WorkflowRunNode = WorkflowEventCorrelation & {
   node_id: string;
   status: WorkflowNodeStatus;
+  attempt?: number | null;
   started_at?: string | null;
   finished_at?: string | null;
   duration_ms?: number | null;
   quality_score?: number | null;
+  error_code?: string | null;
 };
 
 export type WorkflowRunStatusResponse = {
@@ -256,6 +258,19 @@ export type WorkflowTokenDraft = {
   replacedAtSequence?: number;
 };
 
+/**
+ * Correlation-only evidence lineage.  The evidence body remains the canonical
+ * EvidenceChunkDTO stored in `evidence`; this companion projection records
+ * the durable event relationship without recreating a second serializer.
+ */
+export type WorkflowEvidenceLineage = {
+  chunkId: string;
+  stepAttemptId?: string;
+  nodeId?: string;
+  agentName?: string;
+  evidenceSnapshotIds: string[];
+};
+
 export type WorkflowRunViewState = {
   runId: string;
   status: WorkflowRunStatus;
@@ -266,6 +281,7 @@ export type WorkflowRunViewState = {
   actualModel?: string | null;
   nodes: Record<string, WorkflowNodeViewState>;
   evidence: Record<string, EvidenceChunkDTO>;
+  evidenceLineage: Record<string, WorkflowEvidenceLineage>;
   artifacts: Record<string, WorkflowArtifactPayload>;
   traces: Record<string, WorkflowTracePayload>;
   tokenDrafts: Record<string, WorkflowTokenDraft>;
@@ -275,6 +291,8 @@ export type WorkflowRunViewState = {
   terminalEvent?: 'done' | 'error';
   error?: WorkflowErrorPayload;
   qualityScore?: number;
+  approvalId?: string;
+  approvalKind?: string;
 };
 
 export const TERMINAL_WORKFLOW_STATUSES: ReadonlySet<WorkflowRunStatus> = new Set([
@@ -307,6 +325,7 @@ export function createWorkflowRunViewState(runId: string): WorkflowRunViewState 
     status: 'queued',
     nodes: {},
     evidence: {},
+    evidenceLineage: {},
     artifacts: {},
     traces: {},
     tokenDrafts: {},
@@ -382,14 +401,23 @@ function applyProgress(
 ): WorkflowRunViewState {
   const payload = event.payload;
   const rootStatus = payload.root_status ?? asWorkflowRunStatus(payload.status);
+  const approvalState = rootStatus === 'waiting_approval'
+    ? {
+      approvalId: payload.approval_id ?? state.approvalId,
+      approvalKind: payload.approval_kind ?? state.approvalKind,
+    }
+    : rootStatus
+      ? { approvalId: undefined, approvalKind: undefined }
+      : { approvalId: state.approvalId, approvalKind: state.approvalKind };
   const nodeId = payload.node_id;
   if (!nodeId) {
-    return rootStatus ? { ...state, status: rootStatus } : state;
+    return rootStatus ? { ...state, status: rootStatus, ...approvalState } : state;
   }
 
   const nodeStatus = payload.node_status ?? asWorkflowNodeStatus(payload.status) ?? 'running';
   return {
     ...state,
+    ...approvalState,
     nodes: {
       ...state.nodes,
       [nodeId]: {
@@ -411,10 +439,18 @@ function applyEvidence(
   event: WorkflowEventEnvelope<'evidence'>,
 ): WorkflowRunViewState {
   const evidence = { ...state.evidence };
+  const evidenceLineage = { ...state.evidenceLineage };
   for (const item of event.payload.items) {
     evidence[item.chunk_id] = item;
+    evidenceLineage[item.chunk_id] = {
+      chunkId: item.chunk_id,
+      stepAttemptId: event.payload.step_attempt_id,
+      nodeId: event.payload.node_id,
+      agentName: event.payload.agent_name,
+      evidenceSnapshotIds: event.payload.evidence_snapshot_ids ?? [],
+    };
   }
-  return { ...state, evidence };
+  return { ...state, evidence, evidenceLineage };
 }
 
 function applyToken(
@@ -489,7 +525,12 @@ function applyTrace(
   event: WorkflowEventEnvelope<'trace'>,
 ): WorkflowRunViewState {
   const payload = event.payload;
-  const traceId = payload.agent_run_id ?? payload.id ?? payload.run_id ?? `trace-${event.sequence}`;
+  // A later terminal trace for the same AgentRun must not erase a durable
+  // provider replacement trace. Keep replacement records sequence-addressable
+  // while the node projection below still converges to the latest status.
+  const traceId = payload.provider_switch
+    ? `provider-switch-${event.sequence}`
+    : payload.agent_run_id ?? payload.id ?? payload.run_id ?? `trace-${event.sequence}`;
   let next: WorkflowRunViewState = {
     ...state,
     traces: { ...state.traces, [traceId]: payload },

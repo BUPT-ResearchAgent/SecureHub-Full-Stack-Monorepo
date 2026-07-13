@@ -8,11 +8,13 @@ import { SourcePanel } from '@/app/features/sources/components/SourcePanel';
 
 type EvidenceContextValue = {
   chunks: EvidenceChunkDTO[];
+  rootRunId?: string;
   isOpen: boolean;
   open: (trigger?: HTMLElement | null) => void;
   close: () => void;
   toggle: (trigger?: HTMLElement | null) => void;
   pushEvidence: (chunks: EvidenceChunkDTO[]) => void;
+  showEvidenceForRoot: (rootRunId: string, chunks: EvidenceChunkDTO[], trigger?: HTMLElement | null) => void;
   clearEvidence: () => void;
 };
 
@@ -20,6 +22,7 @@ const EvidenceContext = createContext<EvidenceContextValue | null>(null);
 
 export function EvidenceProvider({ children }: { children: ReactNode }) {
   const [chunks, setChunks] = useState<EvidenceChunkDTO[]>([]);
+  const [rootRunId, setRootRunId] = useState<string>();
   const [isOpen, setIsOpen] = useState(false);
   const lastFocusRef = useRef<HTMLElement | null>(null);
 
@@ -46,6 +49,15 @@ export function EvidenceProvider({ children }: { children: ReactNode }) {
       incoming.forEach((chunk) => byId.set(chunk.chunk_id, chunk));
       return Array.from(byId.values());
     });
+    setRootRunId(undefined);
+    setIsOpen(true);
+  }, [rememberFocus]);
+
+  const showEvidenceForRoot = useCallback((runId: string, incoming: EvidenceChunkDTO[], trigger?: HTMLElement | null) => {
+    rememberFocus(trigger);
+    const byId = new Map(incoming.map((chunk) => [chunk.chunk_id, chunk]));
+    setChunks(Array.from(byId.values()));
+    setRootRunId(runId);
     setIsOpen(true);
   }, [rememberFocus]);
 
@@ -70,8 +82,12 @@ export function EvidenceProvider({ children }: { children: ReactNode }) {
     close,
     toggle,
     pushEvidence,
-    clearEvidence: () => setChunks([]),
-  }), [chunks, close, isOpen, open, pushEvidence, toggle]);
+    showEvidenceForRoot,
+    clearEvidence: () => {
+      setChunks([]);
+      setRootRunId(undefined);
+    },
+  }), [chunks, close, isOpen, open, pushEvidence, rootRunId, showEvidenceForRoot, toggle]);
 
   return <EvidenceContext.Provider value={value}>{children}</EvidenceContext.Provider>;
 }
@@ -90,20 +106,12 @@ function formatDate(value?: string | null): string {
 }
 
 function formatReliability(value?: number | null): string {
-  if (value == null) return '未评分';
+  if (value == null) return '未标注';
   return `${Math.round(value * 100)}%`;
 }
 
-function formatLocation(chunk: EvidenceChunkDTO): string {
-  const parts: string[] = [];
-  if (chunk.page_no != null) parts.push(`第 ${chunk.page_no} 页`);
-  if (chunk.chapter) parts.push(chunk.chapter);
-  if (chunk.timestamp != null) parts.push(`${chunk.timestamp} 秒`);
-  return parts.join(' · ');
-}
-
 export function EvidenceDrawer() {
-  const { chunks, isOpen, close, clearEvidence } = useEvidence();
+  const { chunks, rootRunId, isOpen, close, clearEvidence } = useEvidence();
   const drawerRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
@@ -170,7 +178,9 @@ export function EvidenceDrawer() {
         <header className="flex h-16 items-center justify-between border-b border-slate-200 px-5">
           <div>
             <h2 className="text-base font-semibold text-slate-900">证据链</h2>
-            <p className="text-xs text-slate-500">共 {chunks.length} 条来源片段</p>
+            <p className="text-xs text-slate-500">
+              {rootRunId ? `当前 root ${rootRunId} · ` : ''}共 {chunks.length} 条来源片段
+            </p>
           </div>
           <button
             type="button"
@@ -206,7 +216,6 @@ export function EvidenceDrawer() {
           )}
 
           {chunks.map((chunk) => {
-            const location = formatLocation(chunk);
             return (
               <article key={chunk.chunk_id} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
                 <div className="flex flex-wrap items-center justify-between gap-2">
@@ -226,6 +235,16 @@ export function EvidenceDrawer() {
 
                 <dl className="mt-3 grid gap-2 text-xs text-slate-500">
                   <div className="flex justify-between gap-3">
+                    <dt>来源地址</dt>
+                    <dd className="max-w-[220px] truncate text-right text-slate-700" title={chunk.source_url ?? undefined}>
+                      {chunk.source_url ?? '未标注'}
+                    </dd>
+                  </div>
+                  <div className="flex justify-between gap-3">
+                    <dt>平台</dt>
+                    <dd className="text-right text-slate-700">{chunk.platform || '未标注'}</dd>
+                  </div>
+                  <div className="flex justify-between gap-3">
                     <dt>作者</dt>
                     <dd className="text-right text-slate-700">{chunk.author ?? '未标注'}</dd>
                   </div>
@@ -237,22 +256,35 @@ export function EvidenceDrawer() {
                     <dt>资源类型</dt>
                     <dd className="text-right text-slate-700">{chunk.asset_type ?? '未标注'}</dd>
                   </div>
-                  {location && (
-                    <div className="flex justify-between gap-3">
-                      <dt>定位</dt>
-                      <dd className="text-right text-slate-700">{location}</dd>
-                    </div>
-                  )}
+                  <div className="flex justify-between gap-3">
+                    <dt>页码</dt>
+                    <dd className="text-right text-slate-700">{chunk.page_no == null ? '未标注' : `第 ${chunk.page_no} 页`}</dd>
+                  </div>
+                  <div className="flex justify-between gap-3">
+                    <dt>章节</dt>
+                    <dd className="text-right text-slate-700">{chunk.chapter ?? '未标注'}</dd>
+                  </div>
+                  <div className="flex justify-between gap-3">
+                    <dt>时间定位</dt>
+                    <dd className="text-right text-slate-700">{chunk.timestamp == null ? '未标注' : `${chunk.timestamp} 秒`}</dd>
+                  </div>
+                  <div className="flex justify-between gap-3">
+                    <dt>可信度</dt>
+                    <dd className="text-right text-slate-700">{formatReliability(chunk.reliability)}</dd>
+                  </div>
+                  <div className="flex justify-between gap-3">
+                    <dt>采集方式</dt>
+                    <dd className="text-right text-slate-700">{chunk.collection_mode ?? '未标注'}</dd>
+                  </div>
+                  <div className="flex justify-between gap-3">
+                    <dt>权利说明</dt>
+                    <dd className="max-w-[220px] text-right text-slate-700">{chunk.rights_note || '未标注'}</dd>
+                  </div>
                 </dl>
 
-                {chunk.rights_note && (
-                  <p className="mt-3 rounded-lg bg-slate-50 p-2 text-xs leading-5 text-slate-500">
-                    {chunk.rights_note}
-                    {chunk.license && chunk.license !== chunk.rights_note ? (
-                      <span className="ml-1 text-slate-400">· {chunk.license}</span>
-                    ) : null}
-                  </p>
-                )}
+                <p className="mt-3 rounded-lg bg-slate-50 p-2 text-xs leading-5 text-slate-500">
+                  许可：{chunk.license ?? '未标注'}
+                </p>
 
                 {chunk.source_url && (
                   <a

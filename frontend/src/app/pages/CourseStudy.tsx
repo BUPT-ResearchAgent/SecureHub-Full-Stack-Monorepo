@@ -43,14 +43,20 @@ import { setMockMode } from '@/lib/mock';
 
 function EntryTab() {
   const { course } = useSelectedCourse();
+  const { activeWorkflowRootId, workflowRoots } = useCourseState();
   if (!course) return null;
+  const activeRoot = activeWorkflowRootId ? workflowRoots[activeWorkflowRootId] : undefined;
   return (
     <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_420px]">
       <div className="space-y-4">
         <CourseEntryCard course={course} />
         <PersonaBuilder userId="00000000-0000-0000-0000-000000000001" />
       </div>
-      <AgentTracePanel workflow="course_learning" userId="00000000-0000-0000-0000-000000000001" />
+      <AgentTracePanel
+        rootRunId={activeRoot?.runId}
+        workflow="course_learning"
+        userId="00000000-0000-0000-0000-000000000001"
+      />
     </div>
   );
 }

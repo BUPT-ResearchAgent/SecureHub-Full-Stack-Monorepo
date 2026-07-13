@@ -53,6 +53,8 @@ export type WorkflowRunClientOptions = {
 export type WorkflowSubscriptionOptions = {
   eventsUrl?: string;
   initialState?: WorkflowRunViewState;
+  /** Rebuild an audit view from the durable event log, ignoring its UI cursor. */
+  replayFromStart?: boolean;
   onEvent?: (event: WorkflowEvent) => void;
   onState?: (state: WorkflowRunViewState) => void;
   onConnection?: (state: 'connecting' | 'live' | 'reconnecting' | 'closed') => void;
@@ -185,7 +187,7 @@ export class WorkflowRunClient {
     let active = true;
     let controller: AbortController | undefined;
     let state = options.initialState ?? createWorkflowRunViewState(runId);
-    const restoredCursor = this.restoreCursor(runId);
+    const restoredCursor = options.replayFromStart ? 0 : this.restoreCursor(runId);
     if (restoredCursor > state.lastSequence) {
       state = { ...state, lastSequence: restoredCursor };
     }
@@ -193,7 +195,9 @@ export class WorkflowRunClient {
     let pipeline = Promise.resolve();
 
     const publishState = () => {
-      this.persistCursor(runId, state.lastSequence);
+      // An audit replay must never move the interactive task stream's cursor
+      // backwards while it reconstructs historical lineage from sequence 0.
+      if (!options.replayFromStart) this.persistCursor(runId, state.lastSequence);
       options.onState?.(state);
     };
 

@@ -9,6 +9,7 @@ import type { AssessmentRunResponse } from '@/lib/api-types';
 import { apiGet, apiPost } from '@/lib/api';
 import type { SSEHandlers } from '@/lib/sse';
 import {
+  createWorkflowRunStateFromStart,
   WorkflowRunClient,
   WorkflowRunClientError,
   type WorkflowSubscription,
@@ -435,23 +436,7 @@ export function retryCourseResource(
 }
 
 function handlersInitialState(start: WorkflowRunStartResponse): WorkflowRunViewState {
-  return {
-    runId: start.run_id,
-    status: start.status,
-    mode: start.mode,
-    requestedProvider: start.requested_provider,
-    requestedModel: start.requested_model,
-    actualProvider: start.actual_provider ?? start.provider,
-    actualModel: start.actual_model ?? start.model,
-    nodes: {},
-    evidence: {},
-    artifacts: {},
-    traces: {},
-    tokenDrafts: {},
-    activeStreamByStep: {},
-    replacementPendingByStep: {},
-    lastSequence: 0,
-  };
+  return createWorkflowRunStateFromStart(start);
 }
 
 function dispatchWorkflowEvent(event: WorkflowEvent, handlers: WorkflowProductHandlers): void {
