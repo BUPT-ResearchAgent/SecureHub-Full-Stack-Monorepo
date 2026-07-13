@@ -31,9 +31,10 @@ The fixed nine business Agents remain:
 - [x] S7 adds the independent `fund_recommendation_v1` workflow using the
   frozen nine Agents and 28 Skill bindings, the shared profile/capability
   sources and the shared knowledge asset tables under `domain=fund`.
-- [ ] Re-run the three authenticated real browser chains once local
-  PostgreSQL/Docker, Qwen/DeepSeek and browser policy are available. S5-S7 are
-  engineering-accepted; no stage is yet real-accepted in this environment.
+- [x] Re-ran the authenticated real chains with PostgreSQL, Qwen, DeepSeek
+  and Browser Use: S5 assessment/profile/path refresh, S6 root-scoped replay,
+  and S7 fund recommendation are all `real-accepted`. Spark remains the S8
+  external gate.
 
 ### Post-Merge Verification Note
 
