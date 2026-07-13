@@ -2,7 +2,7 @@
 
 > 权威文档：`CLAUDE.md` 是项目宪法，本文件不复述细节，仅约束 Codex 子智能体的使用边界。
 > 文档冲突时以 `CLAUDE.md` 为准。
-> 最后更新：2026-07-12（Runtime v1.1 Wave 0-6、DeepSeek 五路径/cancel、Qwen RAG、PostgreSQL 与 COS Runtime gate 已签收；Spark 外部 Gate 仍开放）。
+> 最后更新：2026-07-14（Runtime v1.1 Wave 0-6、DeepSeek 五路径/cancel、Qwen RAG、PostgreSQL、COS Runtime gate，以及 A3-S5~S7 均已 `real-accepted`；仅 S8 的 Spark 外部 Gate 仍开放）。
 
 ---
 
@@ -29,7 +29,7 @@ D:/Nnutural/Desktop/BUPT大全/BUPT竞赛/26软件杯/Plan/2026-07-10_Agent_Run_
 它替代 Agent-Run 原始 Plan / Prompt / Workout 的逐份阅读。当前 RuntimeEngine、HTTP/SSE 与五条产品路径以
 `docs/api/workflow-run-contract.md`、Wave 4-6 报告和 v1.1 架构方案为准。
 
-## 0.1 当前阶段口径（2026-07-12）
+## 0.1 当前阶段口径（2026-07-14）
 
 子智能体在审查、写码、起草报告时统一使用以下表述：
 
@@ -40,8 +40,9 @@ D:/Nnutural/Desktop/BUPT大全/BUPT竞赛/26软件杯/Plan/2026-07-10_Agent_Run_
 | DeepSeek cancel | Root `2daf935b-e3b7-4dbe-af34-d792dffc66d3` 为 `cancelled`，21 条 live/replay SSE 一致，终态后无 token/artifact。 | "这是 Spark cancel"、"provider_switches=0 是 fallback" |
 | Spark Gate | Spark bearer key 为空；Spark primary、首 token 后受控中断、DeepSeek replacement 与 Spark cancel 均未执行。 | "Spark 已通过"、"用无效 key 或 fixture 制造 fallback 成功" |
 | COS / Storage | 2026-07-12 COS Runtime 已真实通过 upload/head/download/signed URL/delete；历史 451 仅为旧记录。GitHub 外 data 仍只确认 20 个既有同步样本，约 870 个对象未全量完成。 | "COS 仍被 451 阻塞"、"所有 data 已上传 COS"、"storage 是一个 agent" |
+| A3-S5~S7 | S5 assessment/persona/path refresh、S6 current-root Evidence/Trace/Provider replay、S7 fund loader/DeepSeek Research 链均已 `real-accepted`；S7 入口为 `POST /api/v1/research/fund-recommendations`，以 CurrentUser 绑定画像归属。 | "S5-S7 仍只有工程验收"、"浏览器可传 user_id"、"Spark Gate 阻断 S5-S7" |
 
-当前唯一未完成的 Provider 外部 Gate 是 Spark。COS Runtime gate 与 GitHub 外 data 全量同步是两个范围：前者已通过，后者继续按 `skip existing`、断点续传、增量 manifest 和限速策略治理。
+正式生命周期为 `planned -> in_progress -> code_complete -> engineering-accepted -> real-accepted`。`external-gate-open` 仅是正交 Gate 标记，不是可与生命周期拼接的阶段状态；当前唯一未完成的 Provider 外部 Gate 是 S8 的 Spark。COS Runtime gate 与 GitHub 外 data 全量同步是两个范围：前者已通过，后者继续按 `skip existing`、断点续传、增量 manifest 和限速策略治理。
 
 当前验收快照：migration head `20260712_1040`，全量回归 `230 passed, 3 skipped`，最终证据提交 `89a6e0e1`。详细 root/SSE/Provider/COS 证据以 `Workout/Agent-Runtime-Wave-4-6.md` 为准。
 

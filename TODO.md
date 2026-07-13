@@ -1,10 +1,12 @@
 # SecureHub Agent Runtime TODO
 
-> Version: v2.3
-> Updated: 2026-07-13
+> Version: v2.4
+> Updated: 2026-07-14
 > Authority: `Plan/2026-07-11_SecureHub_多智能体底层完整架构实施方案.md` v1.1
 > Delivery evidence: `Workout/Agent-Runtime-Wave-0-3.md` and
 > `Workout/Agent-Runtime-Wave-4-6.md`
+> Productization evidence: `../Workout/10-A3-S5-AB-1.md`,
+> `../Workout/10-A3-S6-BA-1.md`, and `../Workout/10-A3-S7-ACB-1.md`
 
 ## Current Status
 
@@ -35,6 +37,9 @@ The fixed nine business Agents remain:
   and Browser Use: S5 assessment/profile/path refresh, S6 root-scoped replay,
   and S7 fund recommendation are all `real-accepted`. Spark remains the S8
   external gate.
+- [x] Formal lifecycle status is `planned -> in_progress -> code_complete ->
+  engineering-accepted -> real-accepted`; `external-gate-open` is a separate
+  Gate marker and never a substitute for a lifecycle state.
 
 ### Post-Merge Verification Note
 
