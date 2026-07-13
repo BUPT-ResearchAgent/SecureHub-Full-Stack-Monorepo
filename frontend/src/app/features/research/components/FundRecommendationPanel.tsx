@@ -65,6 +65,7 @@ function stringList(value: unknown): string[] {
 export function FundRecommendationPanel({ courseContext }: Props) {
   const evidence = useEvidence();
   const subscriptionRef = useRef<WorkflowSubscription>();
+  const startInFlightRef = useRef(false);
   const [rootRunId, setRootRunId] = useState<string>();
   const [result, setResult] = useState<FundWorkflowResult>();
   const [view, setView] = useState<WorkflowRunViewState>();
@@ -72,6 +73,10 @@ export function FundRecommendationPanel({ courseContext }: Props) {
   const [error, setError] = useState<string>();
 
   const start = async () => {
+    // React StrictMode replays the initial effect in development. A product
+    // entry must create one durable root, not two concurrent real workflows.
+    if (startInFlightRef.current) return;
+    startInFlightRef.current = true;
     subscriptionRef.current?.unsubscribe();
     setRootRunId(undefined);
     setLoading(true);
@@ -109,6 +114,8 @@ export function FundRecommendationPanel({ courseContext }: Props) {
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : '无法创建基金推荐任务。');
       setLoading(false);
+    } finally {
+      startInFlightRef.current = false;
     }
   };
 

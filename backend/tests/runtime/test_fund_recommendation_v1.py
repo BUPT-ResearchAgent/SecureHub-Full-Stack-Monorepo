@@ -125,3 +125,20 @@ def test_fund_terminal_action_requires_profile_backed_recommendations_and_eviden
     state["recommend_funds"]["evidence_snapshot_ids"] = evidence_ids[:2]
     with pytest.raises(ValueError, match="evidence floor"):
         asyncio.run(actions.project_fund_recommendation(root, state, SimpleNamespace()))
+
+
+def test_fund_terminal_action_normalises_only_traceable_profile_display_labels() -> None:
+    actions = WorkflowActionService(None, storage_service=SimpleNamespace())
+
+    assert actions._canonical_profile_dimensions(
+        ["web_security (1.0)", "interest_anchors: Web安全"],
+        {"web_security", "interest_anchors"},
+    ) == ["web_security", "interest_anchors"]
+    assert actions._canonical_profile_dimensions(
+        ["网络与系统安全（0.45）", "兴趣锚点：AI安全"],
+        {"network_security", "system_security", "interest_anchors"},
+    ) == ["network_security", "system_security", "interest_anchors"]
+    assert actions._canonical_profile_dimensions(
+        ["web_security_extra", "unknown_dimension (0.8)"],
+        {"web_security"},
+    ) == []

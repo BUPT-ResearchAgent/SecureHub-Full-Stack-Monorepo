@@ -88,8 +88,11 @@ class WorkflowActionService:
         for item in raw_recommendations[:3]:
             if not isinstance(item, dict):
                 raise ValueError("fund recommendation item is not an object")
-            matches = [str(value) for value in item.get("matched_profile_dimensions") or [] if isinstance(value, str)]
-            if not matches or not set(matches).issubset(allowed_dimensions):
+            matches = self._canonical_profile_dimensions(
+                item.get("matched_profile_dimensions"),
+                allowed_dimensions,
+            )
+            if not matches:
                 raise ValueError("fund recommendation cites profile dimensions outside the durable snapshot")
             projected.append({**item, "matched_profile_dimensions": matches, "evidence_snapshot_ids": evidence_snapshot_ids})
 
@@ -105,6 +108,69 @@ class WorkflowActionService:
             }
         )
         return result.model_dump(mode="json")
+
+    @staticmethod
+    def _canonical_profile_dimensions(value: Any, allowed_dimensions: set[str]) -> list[str]:
+        """Map harmless display suffixes back to the durable profile keys.
+
+        Fund prompts ask for a persisted dimension name, but providers commonly
+        append a score or value (for example ``web_security (1.0)``).  The
+        terminal projection retains only the exact durable key and still
+        rejects a label that cannot be unambiguously traced to that snapshot.
+        """
+        matches: list[str] = []
+        # These are display aliases of existing profile keys, not a second
+        # profile taxonomy. Some Chinese provider responses translate the
+        # bounded keys despite the output contract requesting the key itself.
+        aliases: dict[str, tuple[str, ...]] = {
+            "Web安全": ("web_security",),
+            "网络安全": ("network_security",),
+            "系统安全": ("system_security",),
+            "网络与系统安全": ("network_security", "system_security"),
+            "AI安全": ("ai_security",),
+            "工程实践": ("engineering_practice",),
+            "学术写作": ("academic_writing",),
+            "兴趣锚点": ("interest_anchors",),
+            "职业目标": ("career_goal",),
+            "认知风格": ("cognitive_style",),
+            "知识基础": ("knowledge_basis",),
+            "学习节奏": ("learning_pace",),
+            "易错点": ("easy_mistakes",),
+        }
+        for raw_value in value if isinstance(value, list) else []:
+            if not isinstance(raw_value, str):
+                continue
+            label = raw_value.strip()
+            canonical = next(
+                (
+                    dimension
+                    for dimension in sorted(allowed_dimensions, key=len, reverse=True)
+                    if label == dimension
+                    or (
+                        label.startswith(dimension)
+                        and len(label) > len(dimension)
+                        and label[len(dimension)] in {" ", "(", "（", ":", "："}
+                    )
+                ),
+                None,
+            )
+            resolved = (canonical,) if canonical is not None else next(
+                (
+                    dimensions
+                    for alias, dimensions in aliases.items()
+                    if label == alias
+                    or (
+                        label.startswith(alias)
+                        and len(label) > len(alias)
+                        and label[len(alias)] in {" ", "(", "（", ":", "："}
+                    )
+                ),
+                (),
+            )
+            for dimension in resolved:
+                if dimension in allowed_dimensions and dimension not in matches:
+                    matches.append(dimension)
+        return matches
 
     async def project_tutor_answer(
         self,
