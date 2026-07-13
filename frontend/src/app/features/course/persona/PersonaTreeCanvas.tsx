@@ -76,8 +76,14 @@ export function PersonaTreeCanvas({
   const animateDuration = reducedMotion ? 0 : 0.6;
 
   return (
-    <div className="relative mx-auto" style={{ width: SIZE, height: SIZE }}>
-      <svg width={SIZE} height={SIZE} viewBox={`0 0 ${SIZE} ${SIZE}`} role="img" aria-label="学习画像树">
+    <div className="relative mx-auto aspect-square w-full max-w-[520px]">
+      <svg
+        className="block h-full w-full"
+        viewBox={`0 0 ${SIZE} ${SIZE}`}
+        preserveAspectRatio="xMidYMid meet"
+        role="img"
+        aria-label="学习画像树"
+      >
         <defs>
           <radialGradient id="persona-core" cx="50%" cy="50%" r="50%">
             <stop offset="0%" stopColor="#dbeafe" stopOpacity={0.9} />

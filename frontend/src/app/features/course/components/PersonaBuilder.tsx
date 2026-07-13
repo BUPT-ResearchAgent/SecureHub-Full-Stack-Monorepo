@@ -361,7 +361,7 @@ export function PersonaBuilder({ userId = '00000000-0000-0000-0000-000000000001'
   };
 
   return (
-    <div className="grid gap-4 xl:grid-cols-[minmax(0,1.2fr)_minmax(420px,1fr)]">
+    <div className="grid gap-4 xl:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)]">
       <Card title="画像对话" subtitle={`用户：${userId}`}>
         <div className="space-y-4">
           <PersonaNarrative segment={narrative} />
@@ -439,7 +439,7 @@ export function PersonaBuilder({ userId = '00000000-0000-0000-0000-000000000001'
         </div>
       </Card>
 
-      <Card title="画像树" subtitle="径向布局 · 节点状态实时随对话刷新">
+      <Card title="画像树" subtitle="径向布局 · 节点状态实时随对话刷新" className="min-w-0">
         <PersonaTreeCanvas
           studentName="小李"
           studentInitial="李"
