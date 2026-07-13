@@ -20,11 +20,24 @@ from app.api.v1.endpoints.workflow_adapter import (
     wait_for_terminal,
     workflow_service,
 )
-from app.db.seeds._constants import COURSE_WEBSEC_ID
-from app.deps import CurrentUserDep
+from app.db.seeds._constants import COURSE_WEBSEC_ID, LEGACY_SMOKE_COURSE_WEBSEC_ID
+from app.deps import CurrentUserDep, SessionDep
 from app.schemas.agent_control import WorkflowRunStartResponse
 from app.schemas.course import CoursePlanRequest, CoursePlanResponse
+from app.schemas.course_product import (
+    CourseCatalogItemDTO,
+    CourseDetailDTO,
+    CourseGraphDTO,
+    CoursePathDTO,
+    CourseProgressDTO,
+    CourseProgressUpdateRequest,
+)
 from app.schemas.resource import ResourceGenerateRequest
+from app.services.course_catalog_service import (
+    CourseCatalogService,
+    CourseProductNotFoundError,
+    CourseProgressValidationError,
+)
 from app.services.workflow_application_service import WorkflowApplicationService
 
 
@@ -39,6 +52,14 @@ class CourseSummary(BaseModel):
     title: str
     domain: str
     description: str | None = None
+
+
+class CourseResourceBundleRequest(BaseModel):
+    kp_id: UUID
+    options: dict[str, Any] | None = None
+    mode: Literal["fixture", "real"] = "real"
+    provider: str | None = None
+    model: str | None = None
 
 
 _DEMO_COURSES: list[CourseSummary] = [
@@ -59,7 +80,13 @@ def _service(request: Request) -> WorkflowApplicationService:
 
 
 def _contract_course_id(course_id: str) -> UUID:
-    if course_id in {"course-websec", "WEB-SEC-101", str(COURSE_WEBSEC_ID)}:
+    if course_id in {
+        "course-websec",
+        "WEB-SEC-101",
+        "WEBSEC-101",
+        str(COURSE_WEBSEC_ID),
+        str(LEGACY_SMOKE_COURSE_WEBSEC_ID),
+    }:
         return COURSE_WEBSEC_ID
     try:
         return UUID(course_id)
@@ -115,9 +142,124 @@ def _option_query(options: dict[str, object] | None, fallback: str) -> str:
     return value.strip() if isinstance(value, str) and value.strip() else fallback
 
 
+def _course_catalog_service(session: SessionDep) -> CourseCatalogService:
+    return CourseCatalogService(session)
+
+
+def _raise_course_product_error(exc: Exception) -> None:
+    if isinstance(exc, CourseProductNotFoundError):
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "COURSE_NOT_FOUND", "message": "course product does not exist"},
+        ) from exc
+    if isinstance(exc, CourseProgressValidationError):
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "INVALID_COURSE_PROGRESS", "message": str(exc)},
+        ) from exc
+    raise exc
+
+
 @router.get("/courses", response_model=list[CourseSummary])
 async def list_courses() -> list[CourseSummary]:
     return _DEMO_COURSES
+
+
+@router.get("/courses/catalog", response_model=list[CourseCatalogItemDTO])
+async def list_course_catalog(
+    session: SessionDep,
+    current_user_id: CurrentUserDep,
+) -> list[CourseCatalogItemDTO]:
+    try:
+        return await _course_catalog_service(session).list_catalog(user_id=current_user_id)
+    except (CourseProductNotFoundError, CourseProgressValidationError) as exc:
+        _raise_course_product_error(exc)
+
+
+@router.get("/courses/{course_id}/detail", response_model=CourseDetailDTO)
+async def get_course_detail(
+    course_id: str,
+    session: SessionDep,
+    current_user_id: CurrentUserDep,
+) -> CourseDetailDTO:
+    try:
+        return await _course_catalog_service(session).get_detail(
+            course_id=_contract_course_id(course_id),
+            user_id=current_user_id,
+        )
+    except (CourseProductNotFoundError, CourseProgressValidationError) as exc:
+        _raise_course_product_error(exc)
+
+
+@router.get("/courses/{course_id}/graph", response_model=CourseGraphDTO)
+async def get_course_graph(
+    course_id: str,
+    session: SessionDep,
+    current_user_id: CurrentUserDep,
+) -> CourseGraphDTO:
+    try:
+        return await _course_catalog_service(session).get_graph(
+            course_id=_contract_course_id(course_id),
+            user_id=current_user_id,
+        )
+    except (CourseProductNotFoundError, CourseProgressValidationError) as exc:
+        _raise_course_product_error(exc)
+
+
+@router.get("/courses/{course_id}/path", response_model=CoursePathDTO)
+async def get_course_path(
+    course_id: str,
+    session: SessionDep,
+    current_user_id: CurrentUserDep,
+) -> CoursePathDTO:
+    try:
+        return await _course_catalog_service(session).get_path(
+            course_id=_contract_course_id(course_id),
+            user_id=current_user_id,
+        )
+    except (CourseProductNotFoundError, CourseProgressValidationError) as exc:
+        _raise_course_product_error(exc)
+
+
+@router.get("/courses/{course_id}/progress", response_model=CourseProgressDTO)
+async def get_course_progress(
+    course_id: str,
+    session: SessionDep,
+    current_user_id: CurrentUserDep,
+) -> CourseProgressDTO:
+    try:
+        return await _course_catalog_service(session).get_progress(
+            course_id=_contract_course_id(course_id),
+            user_id=current_user_id,
+        )
+    except (CourseProductNotFoundError, CourseProgressValidationError) as exc:
+        _raise_course_product_error(exc)
+
+
+@router.post("/courses/{course_id}/progress", response_model=CourseProgressDTO)
+async def record_course_progress(
+    course_id: str,
+    payload: CourseProgressUpdateRequest,
+    session: SessionDep,
+    current_user_id: CurrentUserDep,
+) -> CourseProgressDTO:
+    try:
+        progress = await _course_catalog_service(session).record_completion(
+            course_id=_contract_course_id(course_id),
+            user_id=current_user_id,
+            knowledge_point_id=payload.knowledge_point_id,
+            activity_type=payload.activity_type,
+            activity_id=payload.activity_id,
+            workflow_run_id=payload.workflow_run_id,
+        )
+        # `SessionDep` deliberately does not auto-commit.  The caller only
+        # receives a persisted progress projection after this transaction is
+        # committed, so refresh/reconnect cannot observe a phantom update.
+        await session.commit()
+        return progress
+    except (CourseProductNotFoundError, CourseProgressValidationError) as exc:
+        await session.rollback()
+        _raise_course_product_error(exc)
 
 
 @router.get("/courses/{course_id}", response_model=CourseSummary)
@@ -186,6 +328,37 @@ async def generate_resource(
             "resource_type": resource_type,
             "kp_id": str(payload.kp_id),
             "query": _option_query(options, f"Generate {resource_type} resource for {course_id}"),
+            "options": options,
+            "domain": "course_websec",
+        },
+        mode=payload.mode,
+        provider=payload.provider,
+        model=payload.model,
+        idempotency_key=idempotency_key,
+    )
+    return durable_sse_response(service, start, actor_user_id=current_user_id)
+
+
+@router.post("/courses/{course_id}/resources/generate-bundle")
+async def generate_resource_bundle(
+    course_id: str,
+    payload: CourseResourceBundleRequest,
+    request: Request,
+    current_user_id: CurrentUserDep,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> StreamingResponse:
+    """Create one v2 root for the default six-resource course bundle."""
+    canonical_course_id = _contract_course_id(course_id)
+    options = dict(payload.options or {})
+    service = _service(request)
+    start = await start_product_workflow(
+        service,
+        workflow="course_learning_full_v2",
+        actor_user_id=current_user_id,
+        course_id=canonical_course_id,
+        input_payload={
+            "kp_id": str(payload.kp_id),
+            "query": _option_query(options, f"Generate the complete course resource pack for {course_id}"),
             "options": options,
             "domain": "course_websec",
         },

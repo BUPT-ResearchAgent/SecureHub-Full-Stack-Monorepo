@@ -26,7 +26,11 @@ export async function runWorkflowRunClientHarness(): Promise<void> {
     step_attempt_id: STEP_ID,
     status: 'running',
   }));
-  state = reduceWorkflowEvent(state, event('evidence', 2, { items: [evidence], step_attempt_id: STEP_ID }));
+  state = reduceWorkflowEvent(state, event('evidence', 2, {
+    items: [evidence],
+    step_attempt_id: STEP_ID,
+    evidence_snapshot_ids: ['00000000-0000-0000-0000-000000000007'],
+  }));
   state = reduceWorkflowEvent(state, event('token', 3, {
     content: 'old provider draft',
     step_attempt_id: STEP_ID,
@@ -49,6 +53,8 @@ export async function runWorkflowRunClientHarness(): Promise<void> {
 
   assert(state.nodes.doc_archivist?.status === 'succeeded', 'progress/trace reducer did not update node state');
   assert(state.evidence[evidence.chunk_id]?.chunk_text === evidence.chunk_text, 'evidence reducer changed real evidence');
+  assert(state.evidenceLineage[evidence.chunk_id]?.stepAttemptId === STEP_ID, 'evidence lineage lost its step attempt');
+  assert(state.evidenceLineage[evidence.chunk_id]?.evidenceSnapshotIds.length === 1, 'evidence lineage lost snapshot IDs');
   assert(Object.keys(state.artifacts).length === 1, 'active artifact was not retained');
 
   state = reduceWorkflowEvent(state, event('trace', 6, {
@@ -88,6 +94,30 @@ export async function runWorkflowRunClientHarness(): Promise<void> {
   }));
   assert(state.status === 'succeeded' && state.terminalEvent === 'done', 'done/error terminal exclusivity failed');
 
+  let approvalState = createWorkflowRunViewState(RUN_ID);
+  approvalState = reduceWorkflowEvent(approvalState, event('progress', 1, {
+    root_status: 'waiting_approval',
+    approval_id: '00000000-0000-0000-0000-000000000008',
+    approval_kind: 'provider_retry',
+  }));
+  assert(approvalState.approvalKind === 'provider_retry', 'approval kind was not retained for the control matrix');
+  approvalState = reduceWorkflowEvent(approvalState, event('progress', 2, { root_status: 'queued' }));
+  assert(!approvalState.approvalId && !approvalState.approvalKind, 'stale approval control survived after resume');
+
+  let providerTraceState = createWorkflowRunViewState(RUN_ID);
+  providerTraceState = reduceWorkflowEvent(providerTraceState, event('trace', 1, {
+    agent_run_id: '00000000-0000-0000-0000-000000000009',
+    provider_switch: { from_provider: 'xfyun', to_provider: 'deepseek', replace_draft: true },
+  }));
+  providerTraceState = reduceWorkflowEvent(providerTraceState, event('trace', 2, {
+    agent_run_id: '00000000-0000-0000-0000-000000000009',
+    status: 'succeeded',
+  }));
+  assert(
+    Object.values(providerTraceState.traces).some((trace) => trace.provider_switch?.to_provider === 'deepseek'),
+    'terminal trace erased the provider replacement audit',
+  );
+
   const legacyFrame = parseSSEFrame('id: 11\nevent: token\ndata: {"content":"legacy fragment"}');
   assert(legacyFrame != null, 'SSE frame parser rejected a valid frame');
   const legacyEvent = normalizeWorkflowEvent(legacyFrame.data, {
@@ -99,6 +129,7 @@ export async function runWorkflowRunClientHarness(): Promise<void> {
 
   await verifyGapRecovery();
   await verifyReconnectAndRefreshCursor();
+  await verifyRootScopedReplayStartsAtZero();
   await verifyControlAndApprovalRequests();
 }
 
@@ -197,6 +228,41 @@ async function verifyReconnectAndRefreshCursor(): Promise<void> {
   assert(refreshed.lastSequence === 3, 'refreshed client did not process the resumed terminal event');
   assert(refreshRequest?.url.includes('after_sequence=2'), 'refresh did not restore the persisted cursor');
   assert(refreshRequest?.lastEventId === '2', 'refresh did not replay with the persisted Last-Event-ID');
+}
+
+async function verifyRootScopedReplayStartsAtZero(): Promise<void> {
+  const storage = new MemoryStorage();
+  storage.setItem(`securehub-workflow-run:${RUN_ID}:last-event-id`, '9');
+  let requestUrl = '';
+  const client = new WorkflowRunClient({
+    apiBaseUrl: 'https://securehub.test',
+    storage,
+    getAuthToken: () => null,
+    fetchImpl: async (input) => {
+      requestUrl = String(input);
+      return sseResponse([
+        envelopeFrame('progress', 1, { node_id: 'quality_check', status: 'running' }),
+        envelopeFrame('done', 2, { status: 'succeeded' }),
+      ]);
+    },
+  });
+
+  const replayed = await new Promise<ReturnType<typeof createWorkflowRunViewState>>((resolve, reject) => {
+    let subscription: ReturnType<typeof client.subscribe> | undefined;
+    subscription = client.subscribe(RUN_ID, {
+      replayFromStart: true,
+      onState: (state) => {
+        if (state.status !== 'succeeded') return;
+        subscription?.unsubscribe();
+        resolve(state);
+      },
+      onError: reject,
+    });
+  });
+
+  assert(replayed.lastSequence === 2, 'root-scoped replay did not rebuild from event sequence 0');
+  assert(!requestUrl.includes('after_sequence='), 'root-scoped replay inherited an unrelated UI cursor');
+  assert(storage.getItem(`securehub-workflow-run:${RUN_ID}:last-event-id`) === '9', 'audit replay overwrote the interactive stream cursor');
 }
 
 async function verifyControlAndApprovalRequests(): Promise<void> {

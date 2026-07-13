@@ -190,6 +190,7 @@ export const navItems: NavItem[] = [
     label: '个人中心',
     children: [
       { key: 'persona', label: '用户画像' },
+      { key: 'models', label: '模型与密钥' },
       { key: 'resources', label: '资源历史' },
       { key: 'vault', label: '个人资产库' },
       { key: 'docs', label: '文档资产' },

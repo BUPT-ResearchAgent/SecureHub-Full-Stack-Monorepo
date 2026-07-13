@@ -1,11 +1,11 @@
 import { ArrowRight, BookOpen, Sparkles } from 'lucide-react';
 import {
-  courseCatalog,
   courseCoverAccent,
   courseCoverGradient,
   courseDifficultyTone,
 } from './courseCatalog';
 import type { CourseCatalogItem } from './courseCatalog.types';
+import { useCourseCatalog } from './useCourseCatalog';
 
 /**
  * 课程目录网格 —— 备用入口，URL 没有 `?courseId=` 时可作为引导视图。
@@ -18,13 +18,21 @@ export function CourseCatalogPanel({
   activeCourseId?: string;
   onSelect: (courseId: string) => void;
 }) {
+  const catalog = useCourseCatalog();
+  if (catalog.status === 'loading') {
+    return <p className="text-sm text-slate-500">正在加载真实课程目录...</p>;
+  }
+  if (catalog.status === 'error') {
+    return <p className="text-sm text-rose-600">课程目录加载失败：{catalog.error.message}</p>;
+  }
+  const courses = catalog.courses;
   return (
     <section className="space-y-3">
       <header className="flex flex-wrap items-end justify-between gap-2">
         <div>
           <h2 className="text-base font-semibold text-slate-900">学习课程目录</h2>
           <p className="mt-0.5 text-xs text-slate-500">
-            从 {courseCatalog.length} 门课程中选择当前学习方向，工作流与资源徽章会自动随上下文切换。
+            从 {courses.length} 门真实课程中选择当前学习方向，工作流与资源徽章会自动随上下文切换。
           </p>
         </div>
         <span className="inline-flex items-center gap-1 rounded-full bg-brand-blue-50 px-2 py-0.5 text-xs text-brand-blue-700">
@@ -34,7 +42,7 @@ export function CourseCatalogPanel({
       </header>
 
       <ul className="grid gap-3 sm:grid-cols-2 xl:grid-cols-2">
-        {courseCatalog.map((course) => (
+        {courses.map((course) => (
           <CourseGridCard
             key={course.id}
             course={course}

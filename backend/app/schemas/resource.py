@@ -23,6 +23,16 @@ class ResourceGenerateRequest(BaseModel):
     model: str | None = None
 
 
+class GeneratedResourceRetryRequest(BaseModel):
+    """Request one new lineage-linked version of an owned resource."""
+
+    query: str | None = Field(default=None, max_length=2_000)
+    options: JsonObject | None = None
+    mode: Literal["fixture", "real"] = "real"
+    provider: str | None = None
+    model: str | None = None
+
+
 class GeneratedResourceDTO(BaseModel):
     id: str
     resource_type: ResourceType

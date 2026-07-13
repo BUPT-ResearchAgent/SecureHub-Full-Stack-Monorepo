@@ -10,6 +10,7 @@ RuntimeEngine workflow nodes.
 from __future__ import annotations
 
 import hashlib
+import inspect
 import json
 from collections.abc import Awaitable, Callable
 from typing import Any, Protocol
@@ -49,8 +50,8 @@ class RetrieverPort(Protocol):
     async def retrieve(self, query: str, *, domain: str, top_k: int, filters: dict[str, Any] | None = None) -> list[Any]: ...
 
 
-ProviderResolver = Callable[[ExecutionContext], BaseLLMProvider]
-FallbackProviderResolver = Callable[[str, ExecutionContext], BaseLLMProvider]
+ProviderResolver = Callable[[ExecutionContext], BaseLLMProvider | Awaitable[BaseLLMProvider]]
+FallbackProviderResolver = Callable[[str, ExecutionContext], BaseLLMProvider | Awaitable[BaseLLMProvider]]
 
 
 class SkillExecutor:
@@ -161,6 +162,7 @@ class SkillExecutor:
                 lease_epoch=context.lease_epoch,
                 response_ref={
                     "parse_category": category,
+                    "validation_errors": self._validation_error_summary(exc),
                     "content_length": len(raw_text),
                     "response_digest": hashlib.sha256(raw_text.encode("utf-8")).hexdigest(),
                 },
@@ -231,7 +233,7 @@ class SkillExecutor:
             mode=context.mode,
             requested_provider=context.provider_selection.requested_provider,
         )
-        provider = self._provider_resolver(context)
+        provider = await self._resolve_provider(context)
         provider_name = str(getattr(provider, "provider_name", "unknown"))
         if context.mode == ExecutionMode.REAL and provider_name == "fixture":
             raise SkillExecutionError(ErrorCode.PROVIDER_UNAVAILABLE, "real mode cannot use fixture provider")
@@ -269,10 +271,24 @@ class SkillExecutor:
             self._provider_policy.record_failure(provider_name)
             if context.mode != ExecutionMode.REAL or definition.fallback_policy != "explicit-real-provider-only":
                 raise
-            fallback_name = route.fallback
+            # A3 S2-S4 intentionally run direct DeepSeek. Spark is an S8
+            # external gate and must not be attempted as an implicit fallback
+            # merely because a DeepSeek call is temporarily unavailable.
+            fallback_name = (
+                None
+                if context.provider_selection.policy_version == "deepseek-direct-v1"
+                else route.fallback
+            )
             if not fallback_name or fallback_name == provider_name:
                 raise
-            fallback = self._fallback_provider_resolver(fallback_name, context)
+            try:
+                fallback = await self._resolve_fallback_provider(fallback_name, context)
+            except Exception as fallback_resolution_error:
+                raise SkillExecutionError(
+                    ErrorCode.PROVIDER_UNAVAILABLE,
+                    "declared real fallback provider is unavailable",
+                    recoverable=True,
+                ) from fallback_resolution_error
             actual_fallback = str(getattr(fallback, "provider_name", "unknown"))
             if actual_fallback in {"fixture", "unknown"}:
                 raise SkillExecutionError(ErrorCode.PROVIDER_UNAVAILABLE, "fallback provider is not a declared real provider")
@@ -449,6 +465,19 @@ class SkillExecutor:
         if isinstance(exc, TypeError):
             return "non_object_json"
         return "invalid_payload"
+
+    @staticmethod
+    def _validation_error_summary(exc: BaseException) -> list[dict[str, str]]:
+        """Keep field-level schema diagnostics without retaining model output."""
+        if not isinstance(exc, ValidationError):
+            return []
+        return [
+            {
+                "location": ".".join(str(part) for part in error.get("loc", ())),
+                "type": str(error.get("type", "validation_error")),
+            }
+            for error in exc.errors(include_url=False)
+        ]
 
     @staticmethod
     def _assert_safe_text(text: str, *, boundary: str) -> None:
@@ -732,6 +761,14 @@ class SkillExecutor:
     @staticmethod
     def _default_fallback_provider(provider_name: str, _context: ExecutionContext) -> BaseLLMProvider:
         return get_llm_provider(provider_name)
+
+    async def _resolve_provider(self, context: ExecutionContext) -> BaseLLMProvider:
+        value = self._provider_resolver(context)
+        return await value if inspect.isawaitable(value) else value
+
+    async def _resolve_fallback_provider(self, provider_name: str, context: ExecutionContext) -> BaseLLMProvider:
+        value = self._fallback_provider_resolver(provider_name, context)
+        return await value if inspect.isawaitable(value) else value
 
     @staticmethod
     def _provider_stream(

@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
@@ -38,7 +39,156 @@ class WorkflowActionService:
             return await self.persist_learning_path(root_input, state, context)
         if action_name == "PersistCapability":
             return await self.persist_capability(root_input, state, context)
+        if action_name == "PersistAssessmentFeedback":
+            return await self.persist_assessment_feedback(root_input, state, context)
+        if action_name == "ProjectTutorAnswer":
+            return await self.project_tutor_answer(root_input, state, context)
+        if action_name == "ProjectFundRecommendation":
+            return await self.project_fund_recommendation(root_input, state, context)
         raise ValueError(f"unknown deterministic workflow action: {action_name}")
+
+    async def project_fund_recommendation(
+        self,
+        root_input: dict[str, Any],
+        state: dict[str, Any],
+        _context: ExecutionContext,
+    ) -> dict[str, Any]:
+        """Project only a QualityCheck-accepted, evidence-linked fund result."""
+        from app.schemas.fund_recommendation import FundRecommendationResult
+
+        quality = dict((state.get("quality_check") or {}).get("output") or {})
+        if quality.get("accept") is not True:
+            raise ValueError("fund recommendation terminal action requires QualityCheck acceptance")
+
+        recommendation_state = dict(state.get("recommend_funds") or {})
+        recommendation = dict(recommendation_state.get("output") or {})
+        evidence_snapshot_ids = [
+            str(value)
+            for value in recommendation_state.get("evidence_snapshot_ids") or []
+            if self._optional_uuid(value) is not None
+        ]
+        if len(evidence_snapshot_ids) < 3:
+            raise ValueError("accepted fund recommendation is missing the evidence floor")
+
+        snapshot = dict(root_input.get("profile_snapshot") or {})
+        allowed_dimensions = {
+            str(key)
+            for key in dict(snapshot.get("dimensions") or {})
+            if isinstance(key, str) and key.strip()
+        }
+        allowed_dimensions.update(
+            str(item.get("dimension"))
+            for item in snapshot.get("capabilities") or []
+            if isinstance(item, dict) and isinstance(item.get("dimension"), str) and item["dimension"].strip()
+        )
+        raw_recommendations = list(recommendation.get("fund_recommendations") or [])
+        if not raw_recommendations:
+            raise ValueError("accepted fund recommendation is missing recommendations")
+        projected: list[dict[str, Any]] = []
+        for item in raw_recommendations[:3]:
+            if not isinstance(item, dict):
+                raise ValueError("fund recommendation item is not an object")
+            matches = self._canonical_profile_dimensions(
+                item.get("matched_profile_dimensions"),
+                allowed_dimensions,
+            )
+            if not matches:
+                raise ValueError("fund recommendation cites profile dimensions outside the durable snapshot")
+            projected.append({**item, "matched_profile_dimensions": matches, "evidence_snapshot_ids": evidence_snapshot_ids})
+
+        landscape = dict((state.get("analyse_fund_landscape") or {}).get("output") or {})
+        result = FundRecommendationResult.model_validate(
+            {
+                "recommendations": projected,
+                "landscape_summary": str(landscape.get("trend") or recommendation.get("content") or ""),
+                "profile_dimensions_used": sorted(
+                    {dimension for item in projected for dimension in item["matched_profile_dimensions"]}
+                ),
+                "evidence_snapshot_ids": evidence_snapshot_ids,
+            }
+        )
+        return result.model_dump(mode="json")
+
+    @staticmethod
+    def _canonical_profile_dimensions(value: Any, allowed_dimensions: set[str]) -> list[str]:
+        """Map harmless display suffixes back to the durable profile keys.
+
+        Fund prompts ask for a persisted dimension name, but providers commonly
+        append a score or value (for example ``web_security (1.0)``).  The
+        terminal projection retains only the exact durable key and still
+        rejects a label that cannot be unambiguously traced to that snapshot.
+        """
+        matches: list[str] = []
+        # These are display aliases of existing profile keys, not a second
+        # profile taxonomy. Some Chinese provider responses translate the
+        # bounded keys despite the output contract requesting the key itself.
+        aliases: dict[str, tuple[str, ...]] = {
+            "Web安全": ("web_security",),
+            "网络安全": ("network_security",),
+            "系统安全": ("system_security",),
+            "网络与系统安全": ("network_security", "system_security"),
+            "AI安全": ("ai_security",),
+            "工程实践": ("engineering_practice",),
+            "学术写作": ("academic_writing",),
+            "兴趣锚点": ("interest_anchors",),
+            "职业目标": ("career_goal",),
+            "认知风格": ("cognitive_style",),
+            "知识基础": ("knowledge_basis",),
+            "学习节奏": ("learning_pace",),
+            "易错点": ("easy_mistakes",),
+        }
+        for raw_value in value if isinstance(value, list) else []:
+            if not isinstance(raw_value, str):
+                continue
+            label = raw_value.strip()
+            canonical = next(
+                (
+                    dimension
+                    for dimension in sorted(allowed_dimensions, key=len, reverse=True)
+                    if label == dimension
+                    or (
+                        label.startswith(dimension)
+                        and len(label) > len(dimension)
+                        and label[len(dimension)] in {" ", "(", "（", ":", "："}
+                    )
+                ),
+                None,
+            )
+            resolved = (canonical,) if canonical is not None else next(
+                (
+                    dimensions
+                    for alias, dimensions in aliases.items()
+                    if label == alias
+                    or (
+                        label.startswith(alias)
+                        and len(label) > len(alias)
+                        and label[len(alias)] in {" ", "(", "（", ":", "："}
+                    )
+                ),
+                (),
+            )
+            for dimension in resolved:
+                if dimension in allowed_dimensions and dimension not in matches:
+                    matches.append(dimension)
+        return matches
+
+    async def project_tutor_answer(
+        self,
+        _root_input: dict[str, Any],
+        state: dict[str, Any],
+        _context: ExecutionContext,
+    ) -> dict[str, Any]:
+        """Expose only the accepted learner answer as a tutor workflow terminal value."""
+        answer = dict((state.get("answer") or {}).get("output") or {})
+        content = answer.get("content")
+        if not isinstance(content, str) or not content.strip():
+            raise ValueError("accepted tutor answer is missing learner-facing content")
+        resources = answer.get("resources")
+        return {
+            "content": content.strip(),
+            "resources": resources if isinstance(resources, list) else [],
+            "quality_score": self._as_float(answer.get("quality_score")),
+        }
 
     async def persist_generated_resource(
         self,
@@ -163,11 +313,17 @@ class WorkflowActionService:
         context: ExecutionContext,
     ) -> dict[str, Any]:
         """Persist each quality-approved branch as a distinct typed ArtifactRef."""
+        # v1 contains four branches; v2 adds mindmap and video.  Persist only
+        # producer nodes present in the recorded state so old v1 roots retain
+        # their exact four-artifact behaviour.
         resource_types = {
             "resource_doc": "doc",
             "resource_ppt": "ppt",
+            "resource_mindmap": "mindmap",
             "resource_quiz": "quiz",
             "resource_lab": "lab",
+            "resource_video": "video",
+            "resource_readings": "readings",
         }
         resources: list[dict[str, Any]] = []
         quality = state.get("quality_check") or {}
@@ -214,6 +370,13 @@ class WorkflowActionService:
             "dimensions": dict(row.dimensions or {}),
             "quality_score": self._as_float(output.get("quality_score")),
         }
+        # Keep the learner-facing reply in the durable terminal output.  The
+        # profile row remains the source of truth for dimensions, while a
+        # reconnecting UI can recover the associated follow-up question.
+        for key in ("content", "next_question"):
+            value = output.get(key)
+            if isinstance(value, str) and value.strip():
+                persisted[key] = value.strip()
         # Assessment workflows end by persisting the persona. Preserve the
         # independently persisted assessment/capability result in that final
         # action output so the synchronous compatibility adapter has one
@@ -290,6 +453,277 @@ class WorkflowActionService:
             persisted.append({"dimension": str(dimension), "score": row.score, "confidence": row.confidence})
         await self.session.flush()
         return {"user_id": str(user_id), "updated_capabilities": persisted}
+
+    async def persist_assessment_feedback(
+        self,
+        root_input: dict[str, Any],
+        state: dict[str, Any],
+        context: ExecutionContext,
+    ) -> dict[str, Any]:
+        """Atomically apply an accepted assessment's capability and persona effects.
+
+        The savepoint is intentional: RuntimeEngine commits every action step
+        after it settles the durable step attempt. A nested transaction keeps
+        a validation or profile failure from leaking the capability mutation
+        into that failure commit.
+        """
+        from sqlalchemy import select
+
+        from app.db.models.identity.user_capability import UserCapability
+        from app.db.models.identity.user_profile import UserProfile
+
+        user_id = self._required_uuid(root_input.get("user_id"))
+        assessment = dict((state.get("run_assessment") or {}).get("output") or {})
+        capability = dict((state.get("update_capability") or {}).get("output") or {})
+        persona = dict((state.get("update_persona") or {}).get("output") or {})
+        proposed_delta = capability.get("capability_delta") or capability.get("delta") or assessment.get("capability_delta")
+        if not isinstance(proposed_delta, dict) or not proposed_delta:
+            raise ValueError("accepted assessment did not produce a capability delta")
+        persona_patch = persona.get("dimensions") or persona.get("updated_dimensions") or {}
+        if not isinstance(persona_patch, dict):
+            raise ValueError("persona update did not produce a dimensions patch")
+        allowed_capability_dimensions = {
+            str(value).strip()
+            for value in root_input.get("capability_dimensions", [])
+            if isinstance(value, str) and value.strip()
+        }
+        allowed_persona_dimension_keys = {
+            str(value).strip()
+            for value in root_input.get("persona_dimension_keys", [])
+            if isinstance(value, str) and value.strip()
+        }
+        evidence_snapshot_ids = [
+            str(value)
+            for value in ((state.get("run_assessment") or {}).get("evidence_snapshot_ids") or [])
+            if self._optional_uuid(value) is not None
+        ]
+        if not evidence_snapshot_ids:
+            raise ValueError("accepted assessment is missing evidence snapshots")
+
+        async with self.session.begin_nested():
+            changes: list[dict[str, Any]] = []
+            for dimension, delta, source_dimensions in self._normalise_assessment_capability_deltas(
+                proposed_delta,
+                allowed_capability_dimensions=allowed_capability_dimensions,
+                domain=str(root_input.get("domain") or ""),
+            ):
+                row = await self.session.scalar(
+                    select(UserCapability).where(
+                        UserCapability.user_id == user_id,
+                        UserCapability.dimension == str(dimension),
+                    )
+                )
+                # A model cannot create an unassessed capability baseline.
+                # The product seed/profile flow owns first-row creation.
+                if row is None:
+                    continue
+                before_score = float(row.score)
+                row.score = max(0.0, min(1.0, before_score + delta))
+                row.evidence_count = int(row.evidence_count) + len(evidence_snapshot_ids)
+                changes.append(
+                    {
+                        "dimension": str(dimension),
+                        "before_score": before_score,
+                        "after_score": float(row.score),
+                        "delta": float(row.score) - before_score,
+                        "confidence": float(row.confidence),
+                        "evidence_count": int(row.evidence_count),
+                        "source_dimensions": source_dimensions,
+                    }
+                )
+            if not changes:
+                raise ValueError("accepted assessment did not target an existing capability")
+
+            profile = await self.session.get(UserProfile, user_id)
+            before_dimensions = dict(profile.dimensions or {}) if profile is not None else {}
+            persona_projection = "model"
+            if allowed_persona_dimension_keys:
+                # The assessment agent may describe a learner gap, but it
+                # cannot replace a profile field. V2 writes only a bounded,
+                # append-only review item derived from the accepted feedback.
+                persona_patch = self._assessment_persona_fallback(
+                    before_dimensions,
+                    assessment=assessment,
+                    allowed_keys=allowed_persona_dimension_keys,
+                )
+                persona_projection = "assessment_feedback" if persona_patch else "none"
+            unexpected_persona_keys = set(map(str, persona_patch)) - allowed_persona_dimension_keys
+            if allowed_persona_dimension_keys and unexpected_persona_keys:
+                raise ValueError("persona update included a non-profile dimension")
+            after_dimensions = {**before_dimensions, **persona_patch}
+            if profile is None:
+                profile = UserProfile(user_id=user_id, dimensions=after_dimensions)
+                self.session.add(profile)
+            else:
+                profile.dimensions = after_dimensions
+            changed_dimensions = [
+                {"dimension": str(key), "before": before_dimensions.get(key), "after": value}
+                for key, value in persona_patch.items()
+                if before_dimensions.get(key) != value
+            ]
+            if allowed_persona_dimension_keys and not changed_dimensions:
+                raise ValueError("accepted assessment did not produce a persona change")
+            await self.session.flush()
+
+        assessment_payload = {
+            key: assessment[key]
+            for key in ("score", "overall_score", "feedback", "capability_delta", "weak_kp_ids", "next_recommendation")
+            if key in assessment
+        }
+        assessment_payload["updated_capabilities"] = [
+            {
+                "dimension": item["dimension"],
+                "score": item["after_score"],
+                "confidence": item["confidence"],
+                "evidence_count": item["evidence_count"],
+            }
+            for item in changes
+        ]
+        context_payload = root_input.get("context") if isinstance(root_input.get("context"), dict) else {}
+        reasons = [
+            {
+                "dimension": item["dimension"],
+                "delta": item["delta"],
+                "effect": self._path_effect(item),
+            }
+            for item in changes
+        ]
+        recommendation = assessment.get("next_recommendation")
+        return {
+            "user_id": str(user_id),
+            "assessment": assessment_payload,
+            "updated_capabilities": assessment_payload["updated_capabilities"],
+            "assessment_audit": {
+                "schema_version": 1,
+                "root_run_id": str(context.workflow_run_id),
+                "occurred_at": datetime.now(UTC).isoformat(),
+                "quiz": {
+                    "artifact_id": root_input.get("quiz_artifact_id"),
+                    "knowledge_point_id": context_payload.get("kp_id"),
+                    "answered_count": len(root_input.get("answers") or []),
+                    "submitted_answers": self._assessment_answers_for_audit(root_input.get("answers")),
+                },
+                "evidence_snapshot_ids": evidence_snapshot_ids,
+                "capability_changes": changes,
+                "persona": {
+                    "before_dimensions": before_dimensions,
+                    "after_dimensions": after_dimensions,
+                    "changed_dimensions": changed_dimensions,
+                    "projection": persona_projection,
+                },
+                "recommendation": {
+                    "previous": None,
+                    "next": recommendation if isinstance(recommendation, str) and recommendation.strip() else None,
+                    "reasons": reasons,
+                },
+            },
+        }
+
+    @staticmethod
+    def _normalise_assessment_capability_deltas(
+        proposed_delta: dict[str, Any],
+        *,
+        allowed_capability_dimensions: set[str],
+        domain: str,
+    ) -> list[tuple[str, float, list[str]]]:
+        """Map assessment sub-concepts to an existing durable capability only.
+
+        ``RunAssessment`` evaluates concrete learning concepts, while the
+        current course profile intentionally exposes the coarser
+        ``web_security`` capability. The mapping is explicit, course-domain
+        bounded and included in the audit's ``source_dimensions`` field.
+        """
+        aggregated: dict[str, float] = {}
+        sources: dict[str, list[str]] = {}
+        for raw_dimension, raw_delta in proposed_delta.items():
+            try:
+                delta = float(raw_delta)
+            except (TypeError, ValueError):
+                continue
+            dimension = str(raw_dimension).strip()
+            if not dimension:
+                continue
+            if domain == "course_websec" and "web_security" in allowed_capability_dimensions:
+                # Course assessment evaluates sub-concepts, while its durable
+                # feedback contract owns only the Web security capability.
+                # Do not let an otherwise valid profile dimension turn this
+                # root into a cross-domain mutation.
+                target = "web_security"
+            elif not allowed_capability_dimensions or dimension in allowed_capability_dimensions:
+                target = dimension
+            else:
+                continue
+            aggregated[target] = aggregated.get(target, 0.0) + delta
+            sources.setdefault(target, []).append(dimension)
+        return [
+            (dimension, delta, sources[dimension])
+            for dimension, delta in sorted(aggregated.items())
+        ]
+
+    @staticmethod
+    def _assessment_persona_fallback(
+        before_dimensions: dict[str, Any],
+        *,
+        assessment: dict[str, Any],
+        allowed_keys: set[str],
+    ) -> dict[str, Any]:
+        """Project an accepted learner-facing gap onto an existing persona key."""
+        feedback = assessment.get("feedback")
+        if not isinstance(feedback, str) or not feedback.strip():
+            return {}
+        for key in ("weak_points", "easy_mistakes"):
+            if key not in allowed_keys:
+                continue
+            existing = before_dimensions.get(key)
+            values = [str(value) for value in existing] if isinstance(existing, list) else []
+            entry = f"评估待复盘：{feedback.strip()[:180]}"
+            return {key: list(dict.fromkeys([*values, entry]))}
+        return {}
+
+    @staticmethod
+    def _assessment_answers_for_audit(value: Any) -> list[dict[str, Any]]:
+        """Retain only bounded learner-visible answers in the terminal audit."""
+        if not isinstance(value, list):
+            return []
+        answers: list[dict[str, Any]] = []
+        for raw in value[:20]:
+            if not isinstance(raw, dict):
+                continue
+            quiz_item_id = raw.get("quiz_item_id")
+            if not isinstance(quiz_item_id, str) or not quiz_item_id.strip():
+                continue
+            answer = raw.get("answer")
+            if isinstance(answer, str):
+                projected_answer: str | list[str] = answer.strip()[:800]
+            elif isinstance(answer, list):
+                projected_answer = [
+                    item.strip()[:400]
+                    for item in answer[:8]
+                    if isinstance(item, str) and item.strip()
+                ]
+            else:
+                continue
+            prompt = raw.get("question")
+            answers.append(
+                {
+                    "quiz_item_id": quiz_item_id.strip()[:160],
+                    "prompt": prompt.strip()[:800] if isinstance(prompt, str) and prompt.strip() else None,
+                    "answer": projected_answer,
+                }
+            )
+        return answers
+
+    @staticmethod
+    def _path_effect(change: dict[str, Any]) -> str:
+        if change["dimension"] != "web_security":
+            return "下一次推荐会使用这项已持久化能力变化。"
+        before_score = float(change["before_score"])
+        after_score = float(change["after_score"])
+        if before_score < 0.7 <= after_score:
+            return "已达到加速先修路径阈值，下一次课程路径会优先解锁后续主题。"
+        if before_score >= 0.7 > after_score:
+            return "低于加速先修路径阈值，下一次课程路径会先巩固基础主题。"
+        return "下一次课程路径会按更新后的 Web 安全能力重新排序。"
 
     @staticmethod
     def _required_uuid(value: Any) -> UUID:

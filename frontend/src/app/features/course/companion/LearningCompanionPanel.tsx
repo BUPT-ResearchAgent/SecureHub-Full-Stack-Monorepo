@@ -1,165 +1,186 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Bot, PanelRightOpen } from 'lucide-react';
 import { toast } from 'sonner';
 import { useEvidence } from '@/app/components/EvidenceDrawer';
 import { cn } from '@/app/components/ui/utils';
 import { useAgentTraceDispatch } from '@/app/features/agents/store';
 import { analyzeImage } from '@/lib/api';
-import { isMockMode } from '@/lib/mock';
-import { getMockEvidenceForCourse } from '@/lib/mock/courses.mock';
-import { useRafTokenBuffer } from '@/lib/raf-token-buffer';
 import type { AgentRunDTO } from '@/lib/sse.types';
 import {
-  isWorkflowDraftReplacement,
   type WorkflowEvent,
   type WorkflowRunStartResponse,
 } from '@/lib/workflow-run.types';
 import type { CourseCatalogItem } from '../catalog/courseCatalog.types';
-import { streamPersonaChat } from '../api';
+import { resumeCourseTask, startCourseTask, tutorAnswerFromWorkflowStatus } from '../api';
+import { useCourseDispatch, useCourseState } from '../store';
+import { createCourseTaskLifecycle } from '../workflow/courseTaskLifecycle';
 import { CompanionComposer } from './CompanionComposer';
 import { CompanionMessageList } from './CompanionMessageList';
 import { getCompanionPreset } from './companionPresets';
 import type { CompanionAttachment, CompanionMessage } from './types';
 
-const userId = '00000000-0000-0000-0000-000000000001';
-
 function messageId(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
-function splitTokens(content: string): string[] {
-  const size = Math.max(1, Math.ceil(content.length / 72));
-  return Array.from({ length: Math.ceil(content.length / size) }, (_, index) =>
-    content.slice(index * size, (index + 1) * size),
-  );
+function initialMessages(courseId: string, greeting: string): CompanionMessage[] {
+  return [{
+    id: `assistant-intro-${courseId}`,
+    role: 'assistant',
+    content: greeting,
+    status: 'done',
+    evidence: [],
+  }];
 }
 
 export function LearningCompanionPanel({
   course,
-  onMockWorkflowRun,
-  onExternalWorkflowBegin,
   onWorkflowTrace,
   onWorkflowStart,
   onWorkflowEvent,
   onShowWorkflow,
   onImageWorkflowRun,
+  presenterMode = false,
   workflowCollapsed,
   className,
 }: {
   course: CourseCatalogItem;
-  onMockWorkflowRun: () => void;
-  onExternalWorkflowBegin: () => void;
   onWorkflowTrace: (run: AgentRunDTO) => void;
   onWorkflowStart: (start: WorkflowRunStartResponse) => void;
   onWorkflowEvent: (event: WorkflowEvent) => void;
   /** Chat-first：右侧编排图折叠时，header 显示「显示编排图」入口。 */
   onShowWorkflow?: () => void;
   onImageWorkflowRun?: () => void;
+  /** Fixtures are only available when CourseStudy explicitly enables PresenterMode. */
+  presenterMode?: boolean;
   workflowCollapsed?: boolean;
   className?: string;
 }) {
   const preset = useMemo(() => getCompanionPreset(course), [course]);
+  const { taskContext, companionSessions } = useCourseState();
+  const courseDispatch = useCourseDispatch();
   const [draft, setDraft] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
   const evidence = useEvidence();
   const traceDispatch = useAgentTraceDispatch();
   const streamCancelRef = useRef<(() => void) | undefined>();
-  const timersRef = useRef<number[]>([]);
+  const recoveryAttemptedRef = useRef<string | null>(null);
   const objectUrlsRef = useRef<string[]>([]);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const [attachments, setAttachments] = useState<CompanionAttachment[]>([]);
-  const [messages, setMessages] = useState<CompanionMessage[]>(() => [
-    {
-      id: 'assistant-intro',
-      role: 'assistant',
-      content: preset.greeting,
-      status: 'done',
-      evidence: [],
-    },
-  ]);
+  const [conversationState, setConversationState] = useState(() => ({
+    courseId: course.id,
+    messages: companionSessions[course.id] ?? initialMessages(course.id, preset.greeting),
+  }));
+  const messages = conversationState.messages;
 
-  const updateAssistant = (
-    assistantId: string,
-    update: (message: CompanionMessage) => CompanionMessage,
-  ) => {
-    setMessages((current) =>
-      current.map((message) => (message.id === assistantId ? update(message) : message)),
-    );
+  const updateMessages = (update: (current: CompanionMessage[]) => CompanionMessage[]) => {
+    setConversationState((current) => ({ ...current, messages: update(current.messages) }));
   };
 
-  const flushTokenBuffer = useCallback((assistantId: string, content: string) => {
-    updateAssistant(assistantId, (message) => ({
-      ...message,
-      content: `${message.content}${content}`,
-    }));
-  }, []);
-  const tokenBuffer = useRafTokenBuffer(flushTokenBuffer);
+  const updateAssistant = (assistantId: string, update: (message: CompanionMessage) => CompanionMessage) => {
+    updateMessages((current) => current.map((message) => (message.id === assistantId ? update(message) : message)));
+  };
 
-  // 课程切换：重置消息流 + 清理已排程的 mock 步骤。
+  // Keep each course's durable conversation separate while allowing a page
+  // switch or reload to restore its last terminal/pending tutor root.
   useEffect(() => {
+    if (conversationState.courseId === course.id) return;
     streamCancelRef.current?.();
-    tokenBuffer.cancel();
-    timersRef.current.forEach((timer) => window.clearTimeout(timer));
-    timersRef.current = [];
+    recoveryAttemptedRef.current = null;
     setIsGenerating(false);
     setDraft('');
     setAttachments([]);
     objectUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
     objectUrlsRef.current = [];
-    setMessages([
-      {
-        id: `assistant-intro-${course.id}`,
-        role: 'assistant',
-        content: preset.greeting,
-        status: 'done',
-        evidence: [],
-      },
-    ]);
-  }, [course.id, preset.greeting, tokenBuffer]);
+    setConversationState({
+      courseId: course.id,
+      messages: companionSessions[course.id] ?? initialMessages(course.id, preset.greeting),
+    });
+  }, [companionSessions, conversationState.courseId, course.id, preset.greeting]);
+
+  useEffect(() => {
+    courseDispatch({
+      type: 'setCompanionSession',
+      courseId: conversationState.courseId,
+      messages: conversationState.messages,
+    });
+  }, [conversationState, courseDispatch]);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
   }, [messages, isGenerating]);
 
-  useEffect(
-    () => () => {
-      streamCancelRef.current?.();
-      tokenBuffer.cancel();
-      timersRef.current.forEach((timer) => window.clearTimeout(timer));
-      objectUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
-    },
-    [tokenBuffer],
-  );
+  useEffect(() => () => {
+    streamCancelRef.current?.();
+    objectUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
+  }, []);
 
-  const streamAssistantText = (assistantId: string, content: string, startAt = 1900) => {
-    const tokens = splitTokens(content);
-    tokens.forEach((token, index) => {
-      const timer = window.setTimeout(() => {
-        updateAssistant(assistantId, (message) => ({
-          ...message,
-          content: `${message.content}${token}`,
-          status: index === tokens.length - 1 ? 'done' : 'generating',
-        }));
-        if (index === tokens.length - 1) setIsGenerating(false);
-      }, startAt + index * 140);
-      timersRef.current.push(timer);
-    });
+  const completeAssistant = (assistantId: string, status: Parameters<typeof tutorAnswerFromWorkflowStatus>[0]) => {
+    if (status.status !== 'succeeded') {
+      setIsGenerating(false);
+      updateAssistant(assistantId, (message) => ({
+        ...message,
+        status: 'error',
+        content: status.error?.message ?? `辅导任务终态为 ${status.status}`,
+      }));
+      return;
+    }
+    try {
+      updateAssistant(assistantId, (message) => ({
+        ...message,
+        content: tutorAnswerFromWorkflowStatus(status),
+        status: 'done',
+      }));
+    } catch (error) {
+      updateAssistant(assistantId, (message) => ({
+        ...message,
+        status: 'error',
+        content: error instanceof Error ? error.message : '辅导结果无法展示，请重试该问题。',
+      }));
+    } finally {
+      setIsGenerating(false);
+    }
   };
 
-  const runMockAnswer = (assistantId: string) => {
-    timersRef.current.forEach((timer) => window.clearTimeout(timer));
-    timersRef.current = [];
-    onMockWorkflowRun();
-
-    const courseEvidence = getMockEvidenceForCourse(course.id);
-    const evidenceTimer = window.setTimeout(() => {
-      evidence.pushEvidence(courseEvidence);
-      updateAssistant(assistantId, (message) => ({ ...message, evidence: courseEvidence }));
-    }, 1400);
-    timersRef.current.push(evidenceTimer);
-
-    streamAssistantText(assistantId, preset.mockAnswer);
-  };
+  useEffect(() => {
+    const pending = [...messages].reverse().find((message) => (
+      message.role === 'assistant' && message.status === 'generating' && message.workflowRunId
+    ));
+    if (!pending?.workflowRunId || recoveryAttemptedRef.current === pending.workflowRunId) return undefined;
+    recoveryAttemptedRef.current = pending.workflowRunId;
+    setIsGenerating(true);
+    streamCancelRef.current = resumeCourseTask(
+      pending.workflowRunId,
+      createCourseTaskLifecycle('ask_tutor', courseDispatch, {
+        onWorkflowEvent,
+        onEvidence(chunk) {
+          evidence.pushEvidence([chunk]);
+          updateAssistant(pending.id, (message) => ({
+            ...message,
+            evidence: message.evidence.some((item) => item.chunk_id === chunk.chunk_id)
+              ? message.evidence
+              : [...message.evidence, chunk],
+          }));
+        },
+        onTrace(run) {
+          traceDispatch({ type: 'upsertRun', run });
+          onWorkflowTrace(run);
+        },
+        onWorkflowTerminal(status) {
+          completeAssistant(pending.id, status);
+        },
+        onError(error) {
+          if (error.recoverable) return;
+          setIsGenerating(false);
+          updateAssistant(pending.id, (message) => ({ ...message, status: 'error', content: error.message }));
+        },
+      }),
+    );
+    return () => streamCancelRef.current?.();
+    // Recovery is keyed to one durable root, not a transient stream event.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [courseDispatch, evidence, messages, onWorkflowEvent, onWorkflowTrace, traceDispatch]);
 
   const runImageAnswer = (assistantId: string, imageAttachments: CompanionAttachment[]) => {
     onImageWorkflowRun?.();
@@ -171,7 +192,8 @@ export function LearningCompanionPanel({
           updateAssistant(assistantId, (message) => ({ ...message, evidence: task.evidence ?? message.evidence }));
         }
         const content = task.result ?? `截图分析任务已提交，任务编号：${task.task_id}。`;
-        streamAssistantText(assistantId, content, 1200);
+        setIsGenerating(false);
+        updateAssistant(assistantId, (message) => ({ ...message, content, status: 'done' }));
       })
       .catch((error) => {
         setIsGenerating(false);
@@ -224,15 +246,12 @@ export function LearningCompanionPanel({
     const imageAttachments = attachments;
     if ((!question && imageAttachments.length === 0) || isGenerating) return;
     streamCancelRef.current?.();
-    tokenBuffer.cancel();
-    timersRef.current.forEach((timer) => window.clearTimeout(timer));
-    timersRef.current = [];
 
     const assistantId = messageId('assistant');
     setDraft('');
     setAttachments([]);
     setIsGenerating(true);
-    setMessages((current) => [
+    updateMessages((current) => [
       ...current,
       {
         id: messageId('user'),
@@ -250,19 +269,18 @@ export function LearningCompanionPanel({
       return;
     }
 
-    if (isMockMode()) {
-      runMockAnswer(assistantId);
-      return;
-    }
-
-    onExternalWorkflowBegin();
-    streamCancelRef.current = streamPersonaChat(userId, question, [], {
-      onWorkflowStart,
+    streamCancelRef.current = startCourseTask({
+      intent: 'ask_tutor',
+      context: taskContext,
+      payload: { question },
+    }, createCourseTaskLifecycle('ask_tutor', courseDispatch, {
+      onWorkflowStart(start) {
+        onWorkflowStart(start);
+        recoveryAttemptedRef.current = start.run_id;
+        updateAssistant(assistantId, (message) => ({ ...message, workflowRunId: start.run_id }));
+      },
       onWorkflowEvent(event) {
         onWorkflowEvent(event);
-        if (!isWorkflowDraftReplacement(event)) return;
-        tokenBuffer.cancel();
-        updateAssistant(assistantId, (message) => ({ ...message, content: '' }));
       },
       onEvidence(chunk) {
         evidence.pushEvidence([chunk]);
@@ -273,20 +291,15 @@ export function LearningCompanionPanel({
             : [...message.evidence, chunk],
         }));
       },
-      onToken(token) {
-        tokenBuffer.push(assistantId, token.content);
-      },
       onTrace(run) {
         traceDispatch({ type: 'upsertRun', run });
         onWorkflowTrace(run);
       },
-      onDone() {
-        tokenBuffer.flush();
-        setIsGenerating(false);
-        updateAssistant(assistantId, (message) => ({ ...message, status: 'done' }));
+      onWorkflowTerminal(status) {
+        completeAssistant(assistantId, status);
       },
       onError(error) {
-        tokenBuffer.flush();
+        if (error.recoverable) return;
         setIsGenerating(false);
         updateAssistant(assistantId, (message) => ({
           ...message,
@@ -294,16 +307,13 @@ export function LearningCompanionPanel({
           content: error.message || '学习助手暂时无法完成本次回答。',
         }));
       },
-    });
+    }), { mode: presenterMode ? 'fixture' : 'real' });
   };
 
   const stop = () => {
     streamCancelRef.current?.();
-    tokenBuffer.cancel();
-    timersRef.current.forEach((timer) => window.clearTimeout(timer));
-    timersRef.current = [];
     setIsGenerating(false);
-    setMessages((current) =>
+    updateMessages((current) =>
       current.map((message) =>
         message.status === 'generating'
           ? { ...message, status: 'stopped', content: message.content || '已停止生成。' }

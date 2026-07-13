@@ -1133,10 +1133,15 @@ class RuntimeEngine:
                 requested_model=run.requested_model,
                 policy_version=run.provider_policy_version,
             ),
+            provider_credential_id=run.credential_id,
             lease_epoch=run.lease_epoch,
             course_id=(run.input_payload or {}).get("course_id"),
             persona_summary=str((run.input_payload or {}).get("persona_summary") or ""),
-            stream=True,
+            # QualityCheck remains an explicit durable node, but its strict
+            # JSON verdict is not a learner-facing stream. Keeping it
+            # non-streaming prevents internal decision payloads from entering
+            # resource previews and avoids an unnecessary stream boundary.
+            stream=node.node_id != "quality_check",
             emit=emit,
             cancellation_requested=cancelled,
             extras={"provider_attempt": step.attempt, "max_tokens": int(max_tokens)},

@@ -25,7 +25,9 @@ from app.db.seeds._constants import (
     COURSE_WEBSEC_CODE,
     COURSE_WEBSEC_DESCRIPTION,
     COURSE_WEBSEC_ID,
+    COURSE_WEBSEC_MANIFEST_ID,
     COURSE_WEBSEC_TITLE,
+    WEBSEC_CHAPTER_BY_SLUG,
     WEBSEC_EDGES,
     WEBSEC_NODES,
     chunk_id,
@@ -325,6 +327,7 @@ async def _seed(session: AsyncSession) -> dict[str, int]:
     }
     seed_node_ids = {}
     for slug, name, level in WEBSEC_NODES:
+        chapter_code, chapter_title = WEBSEC_CHAPTER_BY_SLUG[slug]
         nid = node_id(slug)
         existing_node = await graph.get_node(nid)
         if existing_node is None:
@@ -338,7 +341,12 @@ async def _seed(session: AsyncSession) -> dict[str, int]:
                 description=f"《Web 安全基础》知识点：{name}",
                 node_type="concept",
                 level=level,
-                metadata={"slug": slug},
+                metadata={
+                    "slug": slug,
+                    "chapter_code": chapter_code,
+                    "chapter_title": chapter_title,
+                    "source_manifest": COURSE_WEBSEC_MANIFEST_ID,
+                },
             )
             node_count += 1
         else:
@@ -347,7 +355,12 @@ async def _seed(session: AsyncSession) -> dict[str, int]:
             existing_node.description = existing_node.description or f"《Web 安全基础》知识点：{name}"
             existing_node.node_type = existing_node.node_type or "concept"
             existing_node.level = existing_node.level or level
-            existing_node.metadata_ = dict(existing_node.metadata_ or {}) | {"slug": slug}
+            existing_node.metadata_ = dict(existing_node.metadata_ or {}) | {
+                "slug": slug,
+                "chapter_code": chapter_code,
+                "chapter_title": chapter_title,
+                "source_manifest": COURSE_WEBSEC_MANIFEST_ID,
+            }
             await session.flush()
         seed_node_ids[slug] = existing_node.id
 
@@ -371,6 +384,7 @@ async def _seed(session: AsyncSession) -> dict[str, int]:
     # ---- documents + assets + chunks ----
     fetched_at = datetime(2026, 6, 1, tzinfo=timezone.utc)
     for slug, name, level in WEBSEC_NODES:
+        chapter_code, chapter_title = WEBSEC_CHAPTER_BY_SLUG[slug]
         did = document_id(slug)
         profile = _source_profile(slug)
         document_url = f"https://demo.securehub.local/websec/{slug}.md"
@@ -409,6 +423,9 @@ async def _seed(session: AsyncSession) -> dict[str, int]:
             "kp_slug": slug,
             "level": level,
             "type": "概念",
+            "chapter_code": chapter_code,
+            "chapter_title": chapter_title,
+            "source_manifest": COURSE_WEBSEC_MANIFEST_ID,
         }
         existing_document = await documents.get_by_id(did)
         if existing_document is None:
@@ -466,6 +483,9 @@ async def _seed(session: AsyncSession) -> dict[str, int]:
                     "course_code": COURSE_WEBSEC_CODE,
                     "course_aliases": COURSE_RETRIEVAL_ALIASES,
                     "kp_slug": slug,
+                    "chapter_code": chapter_code,
+                    "chapter_title": chapter_title,
+                    "source_manifest": COURSE_WEBSEC_MANIFEST_ID,
                     "kp_ids": [str(seed_node_ids[slug])],
                     "section": i + 1,
                     "platform": profile["platform"],
@@ -501,6 +521,9 @@ async def _seed(session: AsyncSession) -> dict[str, int]:
                         "course_code": COURSE_WEBSEC_CODE,
                         "course_aliases": COURSE_RETRIEVAL_ALIASES,
                         "kp_slug": slug,
+                        "chapter_code": chapter_code,
+                        "chapter_title": chapter_title,
+                        "source_manifest": COURSE_WEBSEC_MANIFEST_ID,
                         "kp_ids": [str(seed_node_ids[slug])],
                         "section": i + 1,
                         "platform": profile["platform"],

@@ -3,7 +3,6 @@ import { withMockFallback } from '@/lib/mock';
 import {
   mockCompareItems,
   mockFundItems,
-  mockFundRecommendations,
   mockHotTrendEvents,
   mockInnovationItems,
   mockLabItems,
@@ -14,7 +13,7 @@ import {
 import type {
   CompareItem,
   DetailResponse,
-  FundRecommendation,
+  FundRecommendationCommand,
   FundItem,
   HotTrendEvent,
   InnovationItem,
@@ -27,6 +26,7 @@ import type {
   ResearchItemType,
   ToggleResponse,
 } from './types';
+import type { WorkflowRunStartResponse } from '@/lib/workflow-run.types';
 
 function params(filters: ResearchFilters): string {
   const search = new URLSearchParams();
@@ -104,14 +104,21 @@ export function fetchResearchDetail(itemType: ResearchItemType, itemId: string) 
   );
 }
 
-export function recommendFunds(userId: string, topic: string) {
-  return withMockFallback(
-    () => apiPost<FundRecommendation[], { user_id: string; topic: string }>(
-      '/api/v1/research/funds/recommend',
-      { user_id: userId, topic },
-    ),
-    () => mockFundRecommendations,
+/**
+ * Real-only product adapter. The server obtains the trusted owner and profile
+ * from CurrentUserDep; this browser command has no user_id field to forge.
+ */
+export function startFundRecommendation(command: FundRecommendationCommand = {}) {
+  return apiPost<WorkflowRunStartResponse, FundRecommendationCommand>(
+    '/api/v1/research/fund-recommendations',
+    command,
+    { headers: { 'Idempotency-Key': newIdempotencyKey() } },
   );
+}
+
+function newIdempotencyKey(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') return crypto.randomUUID();
+  return `fund-${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
 }
 
 export function fetchHotTrendEvents() {

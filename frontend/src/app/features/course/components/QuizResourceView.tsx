@@ -7,11 +7,11 @@ export interface QuizResourceViewProps {
   resource: ResourceItem;
 }
 
-type QuizQuestionType = 'single' | 'multiple' | 'short';
+export type CourseQuizQuestionType = 'single' | 'multiple' | 'short';
 
-type QuizQuestion = {
+export type CourseQuizQuestion = {
   id: string;
-  type: QuizQuestionType;
+  type: CourseQuizQuestionType;
   prompt: string;
   options: string[];
   answer: string | string[];
@@ -30,11 +30,11 @@ function normalize(value: string): string {
   return value.trim().replace(/\s+/g, '').toLowerCase();
 }
 
-function parseQuiz(content: string): QuizQuestion[] {
+export function parseCourseQuiz(content: string): CourseQuizQuestion[] {
   try {
     const parsed: unknown = JSON.parse(content);
     if (!isRecord(parsed) || !Array.isArray(parsed.questions)) return [];
-    return parsed.questions.flatMap((item, index): QuizQuestion[] => {
+    return parsed.questions.flatMap((item, index): CourseQuizQuestion[] => {
       if (!isRecord(item)) return [];
       const type = item.type === 'multiple' || item.type === 'short' ? item.type : 'single';
       const prompt = typeof item.prompt === 'string' ? item.prompt : `第 ${index + 1} 题`;
@@ -53,7 +53,7 @@ function parseQuiz(content: string): QuizQuestion[] {
   }
 }
 
-function isCorrect(question: QuizQuestion, answer: string | string[] | undefined): boolean {
+function isCorrect(question: CourseQuizQuestion, answer: string | string[] | undefined): boolean {
   if (question.type === 'multiple') {
     const expected = Array.isArray(question.answer) ? question.answer.map(normalize).sort() : [normalize(question.answer)].sort();
     const actual = Array.isArray(answer) ? answer.map(normalize).sort() : [];
@@ -68,7 +68,7 @@ function isCorrect(question: QuizQuestion, answer: string | string[] | undefined
 }
 
 export function QuizResourceView({ resource }: QuizResourceViewProps) {
-  const questions = useMemo(() => parseQuiz(resource.content), [resource.content]);
+  const questions = useMemo(() => parseCourseQuiz(resource.content), [resource.content]);
   const storageKey = `securehub-course-quiz-${resource.id}`;
   const [answers, setAnswers] = useState<Record<string, string | string[]>>({});
   const [submitted, setSubmitted] = useState(false);

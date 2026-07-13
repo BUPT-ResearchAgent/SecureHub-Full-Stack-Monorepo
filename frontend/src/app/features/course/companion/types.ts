@@ -15,5 +15,7 @@ export type CompanionMessage = {
   content: string;
   status: 'done' | 'generating' | 'error' | 'stopped';
   evidence: EvidenceChunkDTO[];
+  /** Durable root used to recover an interrupted real tutor response. */
+  workflowRunId?: string;
   attachments?: CompanionAttachment[];
 };

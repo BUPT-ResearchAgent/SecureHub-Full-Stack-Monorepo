@@ -19,6 +19,7 @@ import { PptResourceView } from './PptResourceView';
 import { QuizResourceView } from './QuizResourceView';
 import { ReadingsResourceView } from './ReadingsResourceView';
 import { VideoResourceView } from './VideoResourceView';
+import { useRealResourceArtifact } from '../resources/realResourceArtifact';
 
 const resourceBadges: Array<{ type: ResourceType; label: string; icon: string }> = [
   { type: 'doc', label: '文档', icon: '📄' },
@@ -43,13 +44,32 @@ function fallbackResource(type: ResourceType): ResourceItem {
 }
 
 function ResourcePreview({ resource }: { resource: ResourceItem }) {
-  if (resource.type === 'doc') return <DocResourceView resource={resource} />;
-  if (resource.type === 'ppt') return <PptResourceView resource={resource} />;
-  if (resource.type === 'mindmap') return <MindmapResourceView resource={resource} />;
-  if (resource.type === 'quiz') return <QuizResourceView resource={resource} />;
-  if (resource.type === 'lab') return <LabResourceView resource={resource} />;
-  if (resource.type === 'video') return <VideoResourceView resource={resource} />;
-  return <ReadingsResourceView resource={resource} />;
+  const projection = useRealResourceArtifact(resource);
+  if (projection.isLoading) {
+    return <div className="py-12 text-center text-sm text-slate-500">正在读取已持久化的资源产物…</div>;
+  }
+  if (projection.error) {
+    return (
+      <div className="space-y-3 py-12 text-center text-sm text-slate-500">
+        <p>无法读取已持久化的资源产物。</p>
+        <button
+          type="button"
+          onClick={projection.refresh}
+          className="rounded-md border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+        >
+          重新读取
+        </button>
+      </div>
+    );
+  }
+  const persistedResource = projection.resource;
+  if (persistedResource.type === 'doc') return <DocResourceView resource={persistedResource} />;
+  if (persistedResource.type === 'ppt') return <PptResourceView resource={persistedResource} />;
+  if (persistedResource.type === 'mindmap') return <MindmapResourceView resource={persistedResource} />;
+  if (persistedResource.type === 'quiz') return <QuizResourceView resource={persistedResource} />;
+  if (persistedResource.type === 'lab') return <LabResourceView resource={persistedResource} />;
+  if (persistedResource.type === 'video') return <VideoResourceView resource={persistedResource} />;
+  return <ReadingsResourceView resource={persistedResource} />;
 }
 
 /**

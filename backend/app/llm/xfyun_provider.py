@@ -34,11 +34,13 @@ class XunfeiSparkProvider(BaseLLMProvider):
 
     provider_name = "xfyun"
 
-    def __init__(self, settings: Any | None = None) -> None:
+    def __init__(self, settings: Any | None = None, *, api_key: str | None = None) -> None:
         from app.core.config import get_settings
 
         cfg = settings or get_settings()
-        self.api_key: str = cfg.XFYUN_API_KEY
+        # The value can be a user credential resolved for one durable root;
+        # never write it back to Settings.
+        self.api_key: str = cfg.XFYUN_API_KEY if api_key is None else api_key
         self.model_name = getattr(cfg, "XFYUN_MODEL", _DEFAULT_MODEL)
         self.timeout = httpx.Timeout(60.0, read=120.0)
         self.retry = 1

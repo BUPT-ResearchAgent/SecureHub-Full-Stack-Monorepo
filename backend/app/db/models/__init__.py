@@ -1,7 +1,7 @@
 # Status: [planned]
 
 from app.db.models.agent import Agent, AgentMessage, AgentRun, AgentSkill
-from app.db.models.identity import User, UserCapability, UserProfile
+from app.db.models.identity import ProviderCredential, User, UserCapability, UserProfile
 from app.db.models.knowledge import (
     Chunk,
     Course,
@@ -54,6 +54,7 @@ __all__ = [
     "QuizItem",
     "ResourceVersion",
     "StorageObject",
+    "ProviderCredential",
     "User",
     "UserCapability",
     "UserProfile",

@@ -6,22 +6,27 @@
 //   3) 弹 toast「正在更新能力维度 …」
 //   4) 1.5s 后跳转 /profile?tab=persona&highlight=<dim>，让雷达图脉冲
 //
-// 真后端没准备前由 replayAssessment() 兜底，mock 模式下整段闭环 4 秒内跑完。
+// 评估提交只观察 durable assessment_update_v2 root；本组件不会把失败
+// 降级为前端评分或 fixture completion。
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
-import { Activity, Award, CheckCircle2, Sparkles } from 'lucide-react';
+import { Activity, CheckCircle2, ListChecks, Route, Sparkles } from 'lucide-react';
 import { toast } from 'sonner';
 import { Card } from '@/app/components/PageShell';
 import { ErrorState } from '@/app/components/StateView';
 import { CapabilityRadarCard } from '@/app/features/profile/components/CapabilityRadarCard';
 import { useSelectedCourse } from '@/app/features/course/catalog/useSelectedCourse';
 import { getMockQuizItemsForCourse } from '@/lib/mock/courses.mock';
+import { isMockMode } from '@/lib/mock';
 import { normalizePersonaDimension } from '@/lib/persona-dimension-map';
 import type { CapabilityDTO } from '@/lib/sse.types';
-import { runAssessment } from '../api';
+import { assessmentReportFromWorkflowStatus, recordCourseProgress, startCourseTask, workflowRunClient } from '../api';
 import { useCourseDispatch, useCourseState } from '../store';
+import { createCourseTaskLifecycle } from '../workflow/courseTaskLifecycle';
+import { parseCourseQuiz, type CourseQuizQuestion } from './QuizResourceView';
+import { useRealResourceArtifact } from '../resources/realResourceArtifact';
 import { ImplicitAssessmentCard } from '../assessment/ImplicitAssessmentCard';
 import { WeaknessDiagnosisDrawer } from '../assessment/WeaknessDiagnosisDrawer';
 import { PeerComparisonCard } from '../assessment/PeerComparisonCard';
@@ -33,9 +38,12 @@ import {
   buildWeaknessDiagnosis,
 } from '@/lib/mock/assessment-product.mock';
 import { Stethoscope } from 'lucide-react';
-
-const userId = '00000000-0000-0000-0000-000000000001';
-const courseId = '00000000-0000-0000-0000-000000000101';
+import {
+  assessmentAuditFromStatus,
+  auditedCapabilities,
+  type AssessmentSubmittedAnswer,
+  type AssessmentAuditProjection,
+} from './assessmentAudit';
 
 type LoopEvent = {
   id: string;
@@ -43,44 +51,105 @@ type LoopEvent = {
   text: string;
 };
 
+type AssessmentQuestion = Pick<CourseQuizQuestion, 'id' | 'type' | 'prompt' | 'options'>;
+type AssessmentAnswer = string | string[];
+type SubmittedAnswer = AssessmentSubmittedAnswer;
+
+const EMPTY_QUIZ_RESOURCE = {
+  id: 'assessment-quiz-placeholder',
+  type: 'quiz' as const,
+  title: '练习题',
+  status: 'idle' as const,
+  content: '',
+  evidenceRefs: [],
+};
+
+function hasAnswer(value: AssessmentAnswer | undefined): boolean {
+  return Array.isArray(value) ? value.length > 0 : Boolean(value?.trim());
+}
+
 export function AssessmentPanel() {
   const navigate = useNavigate();
-  const { assessment, currentKpId } = useCourseState();
+  const { assessment, taskContext, resources, workflowRoots } = useCourseState();
   const dispatch = useCourseDispatch();
   const { course } = useSelectedCourse();
-  const questions = useMemo(
-    () =>
-      getMockQuizItemsForCourse(course.id).map((item) => ({
+  const presenterMode = isMockMode();
+  const quizResource = useMemo(
+    () => resources.find((resource) => resource.type === 'quiz' && resource.status === 'ready') ?? null,
+    [resources],
+  );
+  const quizArtifact = useRealResourceArtifact(quizResource ?? EMPTY_QUIZ_RESOURCE);
+  const realQuestions = useMemo<AssessmentQuestion[]>(
+    () => parseCourseQuiz(quizArtifact.resource.content).map(({ id, type, prompt, options }) => ({ id, type, prompt, options })),
+    [quizArtifact.resource.content],
+  );
+  const questions = useMemo<AssessmentQuestion[]>(
+    () => presenterMode && course ? getMockQuizItemsForCourse(course.id).map((item) => ({
         id: item.id,
-        title: item.prompt,
-        correct: item.answer,
+        type: 'single' as const,
+        prompt: item.prompt,
         kp: item.kp,
         options: item.options,
-      })),
-    [course.id],
+      })) : realQuestions,
+    [course?.id, presenterMode, realQuestions],
   );
-  const [answers, setAnswers] = useState<Record<string, string>>({});
+  const [answers, setAnswers] = useState<Record<string, AssessmentAnswer>>({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [events, setEvents] = useState<LoopEvent[]>([]);
   const [animatedScore, setAnimatedScore] = useState(0);
-  const [xpBurst, setXpBurst] = useState(false);
-  const [badgeReveal, setBadgeReveal] = useState(false);
   const [diagnosisOpen, setDiagnosisOpen] = useState(false);
-  const timersRef = useRef<number[]>([]);
+  const [assessmentAudit, setAssessmentAudit] = useState<AssessmentAuditProjection | null>(null);
+  const [submittedAnswers, setSubmittedAnswers] = useState<SubmittedAnswer[]>([]);
+  const [courseNextRecommendation, setCourseNextRecommendation] = useState('');
+  const latestAssessmentRoot = useMemo(
+    () => Object.values(workflowRoots)
+      .filter((root) => root.intent === 'run_assessment' && root.status === 'succeeded')
+      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0],
+    [workflowRoots],
+  );
 
   // 切换课程时清掉旧答题状态。
   useEffect(() => {
     setAnswers({});
     setEvents([]);
     setAnimatedScore(0);
-    setXpBurst(false);
-    setBadgeReveal(false);
-  }, [course.id]);
+    setAssessmentAudit(null);
+    setSubmittedAnswers([]);
+    setCourseNextRecommendation('');
+  }, [course?.id]);
+
+  // The durable terminal output is the only source used to restore the full
+  // audit after a refresh; the persisted client store merely retains the root.
+  useEffect(() => {
+    if (!latestAssessmentRoot || assessmentAudit?.rootRunId === latestAssessmentRoot.runId) return;
+    let disposed = false;
+    void workflowRunClient.status(latestAssessmentRoot.runId)
+      .then((status) => {
+        if (disposed || status.status !== 'succeeded') return;
+        const audit = assessmentAuditFromStatus(status);
+        const report = assessmentReportFromWorkflowStatus(status);
+        const audited = auditedCapabilities(audit.capabilityChanges);
+        if (audited.length > 0) report.updatedCapabilities = audited;
+        setAssessmentAudit(audit);
+        setSubmittedAnswers(audit.submittedAnswers);
+        setCourseNextRecommendation(audit.nextRecommendation ?? '');
+        dispatch({ type: 'setAssessment', assessment: report });
+      })
+      .catch(() => {
+        // The already-persisted result remains visible if its audit fetch is temporarily unavailable.
+      });
+    return () => {
+      disposed = true;
+    };
+  }, [assessmentAudit?.rootRunId, dispatch, latestAssessmentRoot]);
 
   const selectedCapabilities = useMemo<CapabilityDTO[]>(
-    () => assessment?.updatedCapabilities ?? [],
-    [assessment?.updatedCapabilities],
+    () => {
+      const audited = auditedCapabilities(assessmentAudit?.capabilityChanges ?? []);
+      return audited.length > 0 ? audited : assessment?.updatedCapabilities ?? [];
+    },
+    [assessment?.updatedCapabilities, assessmentAudit?.capabilityChanges],
   );
 
   // 提交完拿到 score 后，把 0 → score 做 1.2s 的缓动（同步喂给圆环 SVG）。
@@ -101,122 +170,143 @@ export function AssessmentPanel() {
     return () => window.cancelAnimationFrame(raf);
   }, [assessment]);
 
-  // 组件卸载时清理 setTimeout 链，避免离开页面后还在跳转。
-  useEffect(() => () => {
-    timersRef.current.forEach((timer) => window.clearTimeout(timer));
-  }, []);
-
   const pushEvent = (event: LoopEvent) => {
     setEvents((current) => [...current, event]);
   };
 
   const submit = async () => {
     if (loading) return;
-    timersRef.current.forEach((timer) => window.clearTimeout(timer));
-    timersRef.current = [];
     setLoading(true);
     setError('');
     setEvents([]);
     setAnimatedScore(0);
-    setXpBurst(false);
-    setBadgeReveal(false);
+    setAssessmentAudit(null);
+    setCourseNextRecommendation('');
+    const submitted = questions
+      .filter((question) => hasAnswer(answers[question.id]))
+      .map((question) => ({ id: question.id, prompt: question.prompt, answer: answers[question.id]! }));
+    setSubmittedAnswers(submitted);
 
-    // 1. 评分前先把每题的判分事件流出去（更像「学习日志」）。
-    const correctCount = questions.reduce((sum, question) => {
-      const picked = answers[question.id];
-      const ok = picked && picked === question.correct;
-      return sum + (ok ? 1 : 0);
-    }, 0);
-
-    questions.forEach((question, index) => {
-      const picked = answers[question.id];
-      const ok = picked && picked === question.correct;
-      const text = ok
-        ? `✅ 第 ${index + 1} 题答对，知识点「${question.kp}」掌握度 +5%`
-        : `⚠️ 第 ${index + 1} 题未答对，知识点「${question.kp}」需要再过一遍`;
-      const timer = window.setTimeout(() => {
-        pushEvent({ id: `event-${question.id}`, tone: 'event', text });
-      }, 320 + index * 260);
-      timersRef.current.push(timer);
-    });
-
-    try {
-      const report = await runAssessment(
-        userId,
-        courseId,
-        Object.entries(answers).map(([quiz_item_id, answer]) => ({
-          quiz_item_id,
-          answer,
-          kp_id: currentKpId,
-        })),
-      );
-      dispatch({ type: 'setAssessment', assessment: report });
-
-      // 2. evidence_floor 通过 → 3. 触发 outcome_evaluator.UpdateCapability
-      const firstDim = normalizePersonaDimension(report.updatedCapabilities?.[0]?.dimension) ?? 'Web 安全';
-      const gateTimer = window.setTimeout(() => {
+    startCourseTask({
+      intent: 'run_assessment',
+      context: taskContext,
+      payload: {
+        answers: submitted
+          .map((question) => ({
+            quiz_item_id: question.id,
+            answer: question.answer,
+            kp_id: taskContext.kpId,
+            question: question.prompt,
+            options: questions.find((candidate) => candidate.id === question.id)?.options ?? [],
+            question_type: questions.find((candidate) => candidate.id === question.id)?.type ?? 'single',
+          })),
+        quizArtifactId: quizArtifact.resource.id,
+      },
+    }, createCourseTaskLifecycle('run_assessment', dispatch, {
+      onProgress(progress) {
         pushEvent({
-          id: 'gate-evidence',
-          tone: 'gate',
-          text: `🛡 evidence_floor 通过：本次答题命中 ${correctCount} 题，触发 outcome_evaluator.QualityCheck`,
+          id: `progress-${Date.now()}-${progress.node_name}`,
+          tone: progress.node_name === 'quality_check' ? 'gate' : 'event',
+          text: `${progress.node_name}：${progress.status}`,
         });
-      }, 1100);
-      timersRef.current.push(gateTimer);
-
-      const capabilityTimer = window.setTimeout(() => {
-        pushEvent({
-          id: 'capability-update',
-          tone: 'capability',
-          text: `🔄 outcome_evaluator.UpdateCapability：正在更新能力维度「${firstDim}」`,
-        });
-        toast.success(`正在更新能力维度 ${firstDim}…`, { duration: 1800 });
-        toast.success('+50 XP · 学习效果评估', { duration: 1600 });
-        setXpBurst(true);
-        if (report.score >= 0.8) setBadgeReveal(true);
-      }, 1800);
-      timersRef.current.push(capabilityTimer);
-
-      const xpTimer = window.setTimeout(() => setXpBurst(false), 3000);
-      const badgeTimer = window.setTimeout(() => setBadgeReveal(false), 3300);
-      timersRef.current.push(xpTimer, badgeTimer);
-
-      // 4. 1.5s 后跳到 /profile?tab=persona&highlight=<dim>。
-      const navigateTimer = window.setTimeout(() => {
-        pushEvent({
-          id: 'navigate',
-          tone: 'navigate',
-          text: `📡 评估闭环完成，跳转到个人画像并高亮「${firstDim}」`,
-        });
-      }, 2600);
-      timersRef.current.push(navigateTimer);
-
-      const finalTimer = window.setTimeout(() => {
-        navigate(`/profile?tab=persona&highlight=${encodeURIComponent(firstDim)}`);
-      }, 3400);
-      timersRef.current.push(finalTimer);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : '评估提交失败');
-    } finally {
-      setLoading(false);
-    }
+      },
+      onWorkflowTerminal(status) {
+        if (status.status !== 'succeeded') {
+          setLoading(false);
+          setError(status.error?.message ?? `评估任务终态为 ${status.status}`);
+          return;
+        }
+        try {
+          const audit = assessmentAuditFromStatus(status);
+          const report = assessmentReportFromWorkflowStatus(status);
+          const audited = auditedCapabilities(audit.capabilityChanges);
+          if (audited.length > 0) report.updatedCapabilities = audited;
+          setAssessmentAudit(audit);
+          dispatch({ type: 'setAssessment', assessment: report });
+          if (!presenterMode) {
+            void recordCourseProgress(taskContext.courseId, {
+              knowledge_point_id: taskContext.kpId,
+              activity_type: 'assessment',
+              activity_id: status.run_id,
+              workflow_run_id: status.run_id,
+            }).then((progress) => {
+              dispatch({ type: 'setProgress', progress: progress.progress_percent });
+              setCourseNextRecommendation(progress.next_recommendation ?? '');
+              if (progress.next_recommendation) {
+                pushEvent({
+                  id: `recommendation-${status.run_id}`,
+                  tone: 'navigate',
+                  text: `已按更新后的能力画像刷新路径：${progress.next_recommendation}`,
+                });
+              }
+            }).catch((cause: unknown) => {
+              setError(cause instanceof Error ? `评估完成，但进度同步失败：${cause.message}` : '评估完成，但进度同步失败。');
+            });
+          }
+          const firstDim = normalizePersonaDimension(audited[0]?.dimension ?? report.updatedCapabilities?.[0]?.dimension) ?? 'Web 安全';
+          pushEvent({
+            id: `capability-${status.run_id}`,
+            tone: 'capability',
+            text: `已持久化能力维度「${firstDim}」，课程进度将据此更新。`,
+          });
+          toast.success(`能力维度 ${firstDim} 已更新`);
+          pushEvent({
+            id: `navigate-${status.run_id}`,
+            tone: 'navigate',
+            text: '评估结果已保留在本页；可继续查看反馈，或前往画像页查看能力变化。',
+          });
+        } catch (err) {
+          setError(err instanceof Error ? err.message : '评估结果映射失败');
+        } finally {
+          setLoading(false);
+        }
+      },
+      onError(workflowError) {
+        if (workflowError.recoverable) return;
+        setLoading(false);
+        setError(workflowError.message);
+      },
+    }));
   };
 
   const hasSubmitted = Boolean(assessment);
   const score = Math.round((assessment?.score ?? 0) * 100);
+  const canSubmit = !loading && questions.length > 0 && questions.every((question) => hasAnswer(answers[question.id]));
 
   return (
     <>
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_420px]">
       <Card title="学习效果评估" subtitle="完成题目后回流 outcome_evaluator 更新能力画像">
         <div className="space-y-4">
+          {!presenterMode && (
+            <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">
+              {!quizResource && (
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span>请先在资源工作台生成真实测验资源；非 PresenterMode 不显示固定题目或本地评分。</span>
+                  <button
+                    type="button"
+                    onClick={() => navigate(`/course?courseId=${encodeURIComponent(taskContext.courseId)}&view=structured&tab=workbench`)}
+                    className="rounded-md border border-brand-blue-200 bg-white px-2.5 py-1 text-xs font-medium text-brand-blue-700 hover:bg-brand-blue-50"
+                  >
+                    前往生成测验
+                  </button>
+                </div>
+              )}
+              {quizResource && quizArtifact.isLoading && '正在读取已生成的真实测验资源...'}
+              {quizResource && quizArtifact.error && `测验资源读取失败：${quizArtifact.error}`}
+              {quizResource && !quizArtifact.isLoading && !quizArtifact.error && !realQuestions.length && '测验资源内容无法解析，请在资源工作台重新生成练习题。'}
+            </div>
+          )}
           {questions.map((question, index) => (
             <div key={question.id} className="rounded-lg border border-slate-100 p-4">
               <p className="text-sm font-semibold text-slate-900">
-                {index + 1}. {question.title}
+                {index + 1}. {question.prompt}
               </p>
-              <div className="mt-3 grid gap-2">
+              {question.type !== 'short' && <div className="mt-3 grid gap-2">
                 {question.options.map((option) => {
-                  const picked = answers[question.id] === option;
+                  const picked = question.type === 'multiple'
+                    ? Array.isArray(answers[question.id]) && answers[question.id].includes(option)
+                    : answers[question.id] === option;
                   return (
                     <label
                       key={option}
@@ -227,16 +317,34 @@ export function AssessmentPanel() {
                       }`}
                     >
                       <input
-                        type="radio"
+                        type={question.type === 'multiple' ? 'checkbox' : 'radio'}
                         name={question.id}
                         checked={picked}
-                        onChange={() => setAnswers((current) => ({ ...current, [question.id]: option }))}
+                        onChange={(event) => setAnswers((current) => {
+                          if (question.type !== 'multiple') return { ...current, [question.id]: option };
+                          const existing = current[question.id];
+                          const previous = Array.isArray(existing) ? existing : [];
+                          return {
+                            ...current,
+                            [question.id]: event.target.checked
+                              ? [...previous, option]
+                              : previous.filter((item) => item !== option),
+                          };
+                        })}
                       />
                       {option}
                     </label>
                   );
                 })}
-              </div>
+              </div>}
+              {question.type === 'short' && (
+                <textarea
+                  value={typeof answers[question.id] === 'string' ? answers[question.id] : ''}
+                  onChange={(event) => setAnswers((current) => ({ ...current, [question.id]: event.target.value }))}
+                  className="mt-3 min-h-[96px] w-full rounded-md border border-slate-200 px-3 py-2 text-sm outline-none focus:border-brand-blue-500"
+                  placeholder="请输入你的判断理由"
+                />
+              )}
             </div>
           ))}
 
@@ -245,7 +353,7 @@ export function AssessmentPanel() {
           <button
             type="button"
             onClick={submit}
-            disabled={loading || Object.keys(answers).length === 0}
+            disabled={!canSubmit}
             className="inline-flex items-center gap-2 rounded-lg bg-brand-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
           >
             <CheckCircle2 className="h-4 w-4" />
@@ -299,9 +407,28 @@ export function AssessmentPanel() {
               </p>
             ))}
           </div>
+          {assessmentAudit && (
+            <AssessmentOutcomeDetails
+              audit={assessmentAudit}
+              submittedAnswers={submittedAnswers.length > 0 ? submittedAnswers : assessmentAudit.submittedAnswers}
+              courseNextRecommendation={courseNextRecommendation}
+            />
+          )}
+          {hasSubmitted && (
+            <button
+              type="button"
+              onClick={() => {
+                const firstDim = normalizePersonaDimension(assessment?.updatedCapabilities?.[0]?.dimension) ?? 'Web 安全';
+                navigate(`/profile?tab=persona&highlight=${encodeURIComponent(firstDim)}`);
+              }}
+              className="mt-4 inline-flex w-full items-center justify-center rounded-md border border-brand-blue-200 bg-white px-3 py-2 text-sm font-medium text-brand-blue-700 hover:bg-brand-blue-50"
+            >
+              查看更新后的学习画像
+            </button>
+          )}
         </Card>
         <CapabilityRadarCard capabilities={selectedCapabilities} />
-        {hasSubmitted && (
+        {presenterMode && hasSubmitted && (
           <button
             type="button"
             onClick={() => setDiagnosisOpen(true)}
@@ -313,7 +440,7 @@ export function AssessmentPanel() {
         )}
       </div>
       </div>
-      {hasSubmitted && (
+      {presenterMode && hasSubmitted && (
         <>
           <ImplicitAssessmentCard
             assessment={buildImplicitAssessment(assessment?.score ?? 0)}
@@ -325,68 +452,163 @@ export function AssessmentPanel() {
           </div>
         </>
       )}
-      <WeaknessDiagnosisDrawer
-        diagnosis={buildWeaknessDiagnosis()}
-        open={diagnosisOpen}
-        onClose={() => setDiagnosisOpen(false)}
-      />
-      <AnimatePresence>
-        {xpBurst && (
-          <motion.div
-            initial={{ opacity: 0, y: 18, scale: 0.94 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 12, scale: 0.96 }}
-            transition={{ duration: 0.28, ease: 'easeOut' }}
-            className="fixed bottom-8 right-8 z-50 rounded-2xl border border-amber-200 bg-white px-4 py-3 text-sm font-semibold text-amber-700 shadow-2xl"
-          >
-            <Sparkles className="mr-1.5 inline h-4 w-4" />
-            +50 XP
-          </motion.div>
-        )}
-      </AnimatePresence>
-      <AnimatePresence>
-        {badgeReveal && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-40 grid place-items-center bg-slate-950/35 backdrop-blur-sm"
-          >
-            <div className="pointer-events-none absolute inset-0 overflow-hidden">
-              {Array.from({ length: 18 }, (_, index) => (
-                <motion.span
-                  key={index}
-                  initial={{ opacity: 0, y: -20, x: 0, rotate: 0 }}
-                  animate={{
-                    opacity: [0, 1, 0],
-                    y: [0, 180 + (index % 5) * 18],
-                    x: (index - 9) * 22,
-                    rotate: 160 + index * 18,
-                  }}
-                  transition={{ duration: 1.7, delay: index * 0.025, ease: 'easeOut' }}
-                  className="absolute left-1/2 top-1/3 h-2.5 w-2.5 rounded-sm bg-amber-300"
-                />
-              ))}
-            </div>
-            <motion.div
-              initial={{ y: 18, scale: 0.9 }}
-              animate={{ y: 0, scale: 1 }}
-              exit={{ y: 12, scale: 0.95 }}
-              transition={{ duration: 0.3, ease: 'easeOut' }}
-              className="relative w-[320px] rounded-3xl border border-amber-100 bg-white p-6 text-center shadow-2xl"
-            >
-              <div className="mx-auto grid h-16 w-16 place-items-center rounded-2xl bg-amber-50 text-amber-600">
-                <Award className="h-8 w-8" />
-              </div>
-              <p className="mt-4 text-xs font-medium text-amber-600">徽章解锁</p>
-              <h3 className="mt-1 text-xl font-semibold text-slate-950">满分荣耀</h3>
-              <p className="mt-2 text-sm text-slate-500">评估表现优秀，能力画像已回流更新。</p>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+      {presenterMode && (
+        <WeaknessDiagnosisDrawer
+          diagnosis={buildWeaknessDiagnosis()}
+          open={diagnosisOpen}
+          onClose={() => setDiagnosisOpen(false)}
+        />
+      )}
     </>
   );
+}
+
+function AssessmentOutcomeDetails({
+  audit,
+  submittedAnswers,
+  courseNextRecommendation,
+}: {
+  audit: AssessmentAuditProjection;
+  submittedAnswers: SubmittedAnswer[];
+  courseNextRecommendation: string;
+}) {
+  const nextRecommendation = courseNextRecommendation || audit.nextRecommendation;
+  return (
+    <section className="mt-4 space-y-3 border-t border-slate-100 pt-4" aria-label="评估审计结果">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="flex items-center gap-1.5 text-sm font-semibold text-slate-900">
+            <ListChecks className="h-4 w-4 text-brand-blue-700" />
+            评估审计
+          </p>
+          <p className="mt-1 break-all text-xs text-slate-500">root {audit.rootRunId}</p>
+          {audit.occurredAt && <p className="mt-0.5 text-xs text-slate-500">完成时间 {audit.occurredAt}</p>}
+        </div>
+        <span className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium ${
+          audit.qualityPassed === true
+            ? 'bg-emerald-50 text-emerald-700'
+            : audit.qualityPassed === false
+              ? 'bg-rose-50 text-rose-700'
+              : 'bg-slate-100 text-slate-600'
+        }`}>
+          {audit.qualityPassed === true ? 'QualityCheck 已通过' : audit.qualityPassed === false ? 'QualityCheck 未通过' : 'QualityCheck 未标注'}
+        </span>
+      </div>
+
+      {!audit.auditAvailable && (
+        <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-900">
+          该历史 v1 root 未投影能力与画像的前后快照；页面仅展示其已持久化的结果字段，不以默认值补齐审计信息。
+        </p>
+      )}
+
+      {submittedAnswers.length > 0 && (
+        <section>
+          <p className="text-xs font-medium text-slate-700">本次真实作答</p>
+          <ul className="mt-2 space-y-2">
+            {submittedAnswers.map((answer) => (
+              <li key={answer.id} className="rounded-md bg-slate-50 px-3 py-2 text-xs leading-5 text-slate-600">
+                <p className="font-medium text-slate-800">{answer.prompt}</p>
+                <p className="mt-0.5">作答：{formatAnswer(answer.answer)}</p>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      {(audit.quizArtifactId || typeof audit.answeredCount === 'number') && (
+        <p className="text-xs text-slate-500">
+          测验 Artifact：{audit.quizArtifactId ?? '未标注'}
+          {typeof audit.answeredCount === 'number' ? ` · 已提交 ${audit.answeredCount} 题` : ''}
+        </p>
+      )}
+
+      <OutcomeList title="薄弱知识点" values={audit.weakKpIds} emptyText="未标注" />
+
+      <section>
+        <p className="text-xs font-medium text-slate-700">能力变化</p>
+        {audit.capabilityChanges.length > 0 ? (
+          <ul className="mt-2 space-y-2">
+            {audit.capabilityChanges.map((change) => (
+              <li key={change.dimension} className="rounded-md border border-slate-100 px-3 py-2 text-xs text-slate-600">
+                <p className="font-medium text-slate-800">{change.dimension}</p>
+                <p className="mt-0.5">{formatCapabilityChange(change)}</p>
+              </li>
+            ))}
+          </ul>
+        ) : <p className="mt-1 text-xs text-slate-500">未标注</p>}
+      </section>
+
+      <section>
+        <p className="text-xs font-medium text-slate-700">画像变化</p>
+        {audit.personaChanges.length > 0 ? (
+          <ul className="mt-2 space-y-2">
+            {audit.personaChanges.map((change) => (
+              <li key={change.dimension} className="rounded-md border border-slate-100 px-3 py-2 text-xs leading-5 text-slate-600">
+                <span className="font-medium text-slate-800">{change.dimension}</span>
+                <span>：{formatValue(change.before)} → {formatValue(change.after)}</span>
+              </li>
+            ))}
+          </ul>
+        ) : Object.keys(audit.personaAfter).length > 0 ? (
+          <p className="mt-1 text-xs text-slate-500">已写入画像字段：{Object.keys(audit.personaAfter).join('、')}</p>
+        ) : <p className="mt-1 text-xs text-slate-500">未标注</p>}
+      </section>
+
+      {audit.evidenceSnapshotIds.length > 0 && (
+        <p className="text-xs text-slate-500">Evidence Snapshot：{audit.evidenceSnapshotIds.join('、')}</p>
+      )}
+
+      <section className="rounded-md bg-brand-blue-50 px-3 py-2 text-xs leading-5 text-brand-blue-900">
+        <p className="flex items-center gap-1 font-medium"><Route className="h-3.5 w-3.5" />下一次路径或推荐</p>
+        <p className="mt-0.5">{nextRecommendation ?? '未标注'}</p>
+        {audit.recommendationReasons.length > 0 && (
+          <ul className="mt-2 space-y-1 border-t border-brand-blue-100 pt-2">
+            {audit.recommendationReasons.map((reason) => (
+              <li key={`${reason.dimension}-${reason.effect}`}>
+                {reason.dimension}{typeof reason.delta === 'number' ? ` ${reason.delta >= 0 ? '+' : ''}${reason.delta.toFixed(2)}` : ''}：{reason.effect}
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+    </section>
+  );
+}
+
+function OutcomeList({ title, values, emptyText }: { title: string; values: string[]; emptyText: string }) {
+  return (
+    <section>
+      <p className="text-xs font-medium text-slate-700">{title}</p>
+      {values.length > 0
+        ? <p className="mt-1 text-xs text-slate-600">{values.join('、')}</p>
+        : <p className="mt-1 text-xs text-slate-500">{emptyText}</p>}
+    </section>
+  );
+}
+
+function formatCapabilityChange(change: AssessmentAuditProjection['capabilityChanges'][number]): string {
+  const pieces: string[] = [];
+  if (typeof change.beforeScore === 'number' && typeof change.afterScore === 'number') {
+    pieces.push(`${percent(change.beforeScore)}% → ${percent(change.afterScore)}%`);
+  }
+  if (typeof change.delta === 'number') pieces.push(`变化 ${change.delta >= 0 ? '+' : ''}${change.delta.toFixed(2)}`);
+  if (typeof change.confidence === 'number') pieces.push(`置信度 ${percent(change.confidence)}%`);
+  if (typeof change.evidenceCount === 'number') pieces.push(`证据 ${change.evidenceCount} 条`);
+  return pieces.join(' · ') || '未标注';
+}
+
+function formatAnswer(answer: AssessmentAnswer): string {
+  return Array.isArray(answer) ? answer.join('、') : answer;
+}
+
+function formatValue(value: unknown): string {
+  if (Array.isArray(value)) return value.map(formatValue).join('、');
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') return String(value);
+  return '未标注';
+}
+
+function percent(value: number): number {
+  return Math.round(Math.max(0, Math.min(1, value)) * 100);
 }
 
 function ScoreRing({ score }: { score: number }) {

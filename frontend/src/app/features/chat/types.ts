@@ -63,6 +63,8 @@ export type ChatMessage = {
   citations: ChatCitation[];
   actions: ChatAction[];
   structuredCards: StructuredAnswerCard[];
+  /** Durable course workflow that owns this reply, when the message came from one. */
+  workflowRunId?: string;
   helpful?: boolean;
   favorited?: boolean;
 };

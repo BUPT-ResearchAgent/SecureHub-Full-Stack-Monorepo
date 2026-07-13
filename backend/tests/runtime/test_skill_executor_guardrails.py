@@ -4,12 +4,13 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from uuid import uuid4
 
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
-from app.runtime.contracts import ErrorCode, ExecutionMode
+from app.runtime.contracts import ErrorCode, ExecutionMode, ProviderSelection
 from app.runtime.harness.contracts import SkillDefinition
 from app.runtime.harness.context import ExecutionContext
 from app.runtime.harness.executor import SkillExecutionError, SkillExecutor
@@ -181,3 +182,46 @@ async def test_observed_empty_provider_stream_is_completed_not_unknown() -> None
     assert exc_info.value.code == ErrorCode.PROVIDER_UNAVAILABLE
     assert calls.completed[0]["outcome"] == "unavailable"
     assert calls.unknown == []
+
+
+@pytest.mark.anyio
+async def test_deepseek_direct_policy_never_attempts_spark_fallback_after_provider_failure() -> None:
+    calls = _CallJournal()
+    fallback_calls: list[str] = []
+    executor = SkillExecutor(
+        retriever=_ValidRetriever(),
+        provider_resolver=lambda _context: _EmptyStreamProvider(),
+        fallback_provider_resolver=lambda provider, _context: (
+            fallback_calls.append(provider),
+            (_ for _ in ()).throw(AssertionError("direct DeepSeek must not call a fallback")),
+        )[1],
+        evidence_snapshot_store=_SnapshotStore(),
+        provider_call_store=calls,
+    )
+    context = replace(
+        _context(mode=ExecutionMode.REAL),
+        provider_selection=ProviderSelection(
+            requested_provider="deepseek",
+            requested_model="deepseek-v4-pro",
+            policy_version="deepseek-direct-v1",
+        ),
+    )
+
+    with pytest.raises(SkillExecutionError) as exc_info:
+        await executor.execute(_definition(), {"query": "Explain parameterized queries."}, context)
+
+    assert exc_info.value.code == ErrorCode.PROVIDER_UNAVAILABLE
+    assert fallback_calls == []
+    assert calls.completed[0]["outcome"] == "unavailable"
+
+
+def test_strict_parse_diagnostic_is_field_only_and_does_not_retain_input() -> None:
+    try:
+        _Output.model_validate({"answer": 7})
+    except ValidationError as exc:
+        summary = SkillExecutor._validation_error_summary(exc)
+    else:  # pragma: no cover - documents the expected strict Pydantic contract.
+        raise AssertionError("invalid provider payload unexpectedly validated")
+
+    assert summary == [{"location": "answer", "type": "string_type"}]
+    assert "7" not in str(summary)

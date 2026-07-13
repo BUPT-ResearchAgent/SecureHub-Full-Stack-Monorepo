@@ -4,6 +4,10 @@ frontend/node_modules/
 frontend/dist/
 *.tsbuildinfo
 
+# Locally generated runtime artifacts
+backend/data/.pytest-storage/
+backend/data/storage/
+
 # Python / uv
 .venv/
 backend/.venv/

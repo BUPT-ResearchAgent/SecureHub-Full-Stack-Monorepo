@@ -90,6 +90,7 @@ export const navItems: SearchItem[] = [
   { id: 'nav-tasks-team', title: '协作分工', summary: '团队协作分工', url: '/tasks?tab=team', category: 'nav', parent: '计划任务' },
 
   { id: 'nav-profile-persona', title: '用户画像', summary: '个人用户画像', url: '/profile?tab=persona', category: 'nav', parent: '个人中心' },
+  { id: 'nav-profile-models', title: '模型与密钥', summary: '管理 DeepSeek 与讯飞星火的个人密钥池', url: '/profile?tab=models', category: 'nav', parent: '个人中心' },
   { id: 'nav-profile-vault', title: '个人资产库', summary: '个人资产存储', url: '/profile?tab=vault', category: 'nav', parent: '个人中心' },
   { id: 'nav-profile-docs', title: '文档资产', summary: '个人文档资产', url: '/profile?tab=docs', category: 'nav', parent: '个人中心' },
   { id: 'nav-profile-slides', title: '演示资产', summary: '演示文稿资产', url: '/profile?tab=slides', category: 'nav', parent: '个人中心' },
@@ -110,7 +111,7 @@ export const pageItems: SearchItem[] = [
   { id: 'page-forum', title: '交流论坛', summary: '安全论坛、话题讨论、问答互助', url: '/forum', category: 'page' },
   { id: 'page-careers', title: '就业招聘', summary: '招聘速递、岗位分析、简历优化', url: '/careers', category: 'page' },
   { id: 'page-tasks', title: '计划任务', summary: '看板视图、时间线、里程碑', url: '/tasks', category: 'page' },
-  { id: 'page-profile', title: '个人中心', summary: '用户画像、个人资产库、账户设置', url: '/profile', category: 'page' },
+  { id: 'page-profile', title: '个人中心', summary: '用户画像、模型密钥、个人资产库、账户设置', url: '/profile', category: 'page' },
 ];
 
 export const allSearchItems: SearchItem[] = [...navItems, ...pageItems];

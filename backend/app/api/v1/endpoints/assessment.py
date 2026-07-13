@@ -1,6 +1,6 @@
 # Status: real
 
-"""Assessment HTTP adapter for the durable ``assessment_update_v1`` root."""
+"""Assessment HTTP adapter for the atomic ``assessment_update_v2`` root."""
 
 from __future__ import annotations
 
@@ -82,6 +82,11 @@ def _assessment_response(result: dict[str, Any]) -> AssessmentRunResponse:
         score=score,
         feedback=feedback,
         updated_capabilities=updated_capabilities,
+        assessment_audit=(
+            result.get("assessment_audit")
+            if isinstance(result.get("assessment_audit"), dict)
+            else None
+        ),
     )
 
 
@@ -99,11 +104,12 @@ async def assessment_run(
     service = _service(request)
     start = await start_product_workflow(
         service,
-        workflow="assessment_update_v1",
+        workflow="assessment_update_v2",
         actor_user_id=current_user_id,
         course_id=payload.course_id,
         input_payload={
             "answers": payload.answers,
+            "quiz_artifact_id": payload.quiz_artifact_id,
             "domain": "course_websec",
         },
         mode=payload.mode,

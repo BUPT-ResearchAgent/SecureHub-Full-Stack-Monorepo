@@ -10,6 +10,7 @@ import type { CourseCatalogItem } from './courseCatalog.types';
 export const courseCatalog: CourseCatalogItem[] = [
   {
     id: 'web-security-foundation',
+    code: 'WEBSEC-101',
     title: 'Web 安全基础',
     subtitle: 'OWASP Top 10 与实操化讲解',
     description:
@@ -18,12 +19,17 @@ export const courseCatalog: CourseCatalogItem[] = [
     difficulty: '入门',
     estimatedHours: 18,
     progressPercent: 35,
+    chapterCount: 5,
+    knowledgePointCount: 17,
+    resourceCount: 0,
+    coreCoveragePercent: 0,
     tags: ['Web 攻防', 'OWASP', '案例驱动'],
     coverTone: 'blue',
     defaultWorkflowId: 'course_learning',
   },
   {
     id: 'crypto-foundation',
+    code: 'CRYPTO-101',
     title: '密码学基础',
     subtitle: '从经典到现代密码学',
     description:
@@ -32,12 +38,17 @@ export const courseCatalog: CourseCatalogItem[] = [
     difficulty: '进阶',
     estimatedHours: 22,
     progressPercent: 12,
+    chapterCount: 6,
+    knowledgePointCount: 0,
+    resourceCount: 0,
+    coreCoveragePercent: 0,
     tags: ['密码学', '协议', 'TLS'],
     coverTone: 'violet',
     defaultWorkflowId: 'course_learning',
   },
   {
     id: 'network-attack-defense',
+    code: 'NET-SEC-201',
     title: '网络攻防实训',
     subtitle: '面向 CTF 与红蓝对抗的实战训练',
     description:
@@ -46,12 +57,17 @@ export const courseCatalog: CourseCatalogItem[] = [
     difficulty: '实战',
     estimatedHours: 28,
     progressPercent: 8,
+    chapterCount: 10,
+    knowledgePointCount: 0,
+    resourceCount: 0,
+    coreCoveragePercent: 0,
     tags: ['CTF', '红蓝对抗', '流量分析'],
     coverTone: 'amber',
     defaultWorkflowId: 'tutor_routing',
   },
   {
     id: 'secure-development-audit',
+    code: 'SDL-201',
     title: '安全开发与代码审计',
     subtitle: 'SDL、依赖治理与白盒审计',
     description:
@@ -60,6 +76,10 @@ export const courseCatalog: CourseCatalogItem[] = [
     difficulty: '挑战',
     estimatedHours: 24,
     progressPercent: 0,
+    chapterCount: 8,
+    knowledgePointCount: 0,
+    resourceCount: 0,
+    coreCoveragePercent: 0,
     tags: ['SDL', '审计', '依赖治理'],
     coverTone: 'green',
     defaultWorkflowId: 'resource_generate',

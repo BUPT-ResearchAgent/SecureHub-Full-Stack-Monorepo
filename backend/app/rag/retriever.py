@@ -37,6 +37,11 @@ class EvidenceHit(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+def _course_evidence_allowed(domain: str, metadata: dict[str, Any]) -> bool:
+    """Keep retained supplementary imports out of the Web Security course."""
+    return domain != "course_websec" or metadata.get("course_eligible") is not False
+
+
 async def retrieve(
     query: str,
     *,
@@ -111,6 +116,11 @@ async def retrieve(
                 if combined <= 0:
                     continue
                 metadata = chunk.metadata_ if hasattr(chunk, "metadata_") else {}
+                # Imported PDFs may remain in the unified knowledge tables for
+                # later domains, while only course-eligible evidence may serve
+                # the Web Security Basics product path.
+                if not _course_evidence_allowed(domain, metadata):
+                    continue
                 if filter:
                     skip = False
                     for fk, fv in filter.items():

@@ -1,11 +1,10 @@
-import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
+import { useEffect, useState, type KeyboardEvent } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   ClipboardList,
   MessageCircle,
   MoreHorizontal,
-  Play,
   Sparkles,
 } from 'lucide-react';
 import { ErrorBoundary } from '@/app/components/ErrorBoundary';
@@ -29,22 +28,35 @@ import { useSelectedCourse } from '@/app/features/course/catalog/useSelectedCour
 import { AssessmentPanel } from '@/app/features/course/components/AssessmentPanel';
 import { CourseEntryCard } from '@/app/features/course/components/CourseEntryCard';
 import { CourseDialogueMode } from '@/app/features/course/components/CourseDialogueMode';
+import { CourseWorkflowRecovery } from '@/app/features/course/workflow/CourseWorkflowRecovery';
 import { LearningPathDAG } from '@/app/features/course/components/LearningPathDAG';
 import { PersonaBuilder } from '@/app/features/course/components/PersonaBuilder';
 import { ResourceTabs } from '@/app/features/course/components/ResourceTabs';
 import { TutorDialog } from '@/app/features/course/components/TutorDialog';
-import { CourseProvider, useCourseDispatch } from '@/app/features/course/store';
-import { isMockMode, setMockMode } from '@/lib/mock';
-import { courseDemoStoryline, demoCurrentKpId } from '@/lib/mock/storyline';
+import {
+  CourseProvider,
+  DEFAULT_COURSE_TASK_CONTEXT,
+  useCourseDispatch,
+  useCourseState,
+} from '@/app/features/course/store';
+import { setMockMode } from '@/lib/mock';
 
 function EntryTab() {
+  const { course } = useSelectedCourse();
+  const { activeWorkflowRootId, workflowRoots } = useCourseState();
+  if (!course) return null;
+  const activeRoot = activeWorkflowRootId ? workflowRoots[activeWorkflowRootId] : undefined;
   return (
     <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_420px]">
       <div className="space-y-4">
-        <CourseEntryCard courseId="00000000-0000-0000-0000-000000000101" />
+        <CourseEntryCard course={course} />
         <PersonaBuilder userId="00000000-0000-0000-0000-000000000001" />
       </div>
-      <AgentTracePanel workflow="course_learning" userId="00000000-0000-0000-0000-000000000001" />
+      <AgentTracePanel
+        rootRunId={activeRoot?.runId}
+        workflow="course_learning"
+        userId="00000000-0000-0000-0000-000000000001"
+      />
     </div>
   );
 }
@@ -158,6 +170,7 @@ export function CourseStudy() {
   return (
     <AgentTraceProvider>
       <CourseProvider>
+        <CourseWorkflowRecovery />
         <ErrorBoundary resetKey="course-study">
           <CourseStudyShell />
         </ErrorBoundary>
@@ -192,22 +205,43 @@ function CourseStudyInner() {
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
   const dispatch = useCourseDispatch();
-  const { course, fellBackToDefault, selectCourse } = useSelectedCourse();
+  const courseState = useCourseState();
+  const {
+    course,
+    courses,
+    catalogStatus,
+    catalogError,
+    fellBackToDefault,
+    selectCourse,
+  } = useSelectedCourse();
   const [initialView] = useState<CourseView>(() => readStoredCourseView());
-  const [mockEnabled, setMockEnabled] = useState(() => isMockMode());
-  const [demoRunning, setDemoRunning] = useState(false);
-  const demoTimersRef = useRef<number[]>([]);
   const rawView = params.get('view');
+  const presenterMode = import.meta.env.DEV && params.get('presenter') === '1';
   const activeView: CourseView = isCourseView(rawView) ? normalizeCourseView(rawView) : initialView;
   const rawTab = params.get('tab');
   const activeTab: CourseTabKey = isCourseTab(rawTab) ? rawTab : 'entry';
 
-  const clearDemoTimers = () => {
-    demoTimersRef.current.forEach((timer) => window.clearTimeout(timer));
-    demoTimersRef.current = [];
-  };
+  useEffect(() => {
+    // Fixture roots are opt-in and confined to the explicit local PresenterMode
+    // route. Normal course use always creates `mode=real` durable roots.
+    setMockMode(presenterMode);
+  }, [presenterMode]);
 
-  useEffect(() => clearDemoTimers, []);
+  useEffect(() => {
+    if (!course) return;
+    const currentPathNodeIds = courseState.path?.nodes
+      .filter((node) => node.status === 'active' || node.status === 'done')
+      .map((node) => node.id) ?? [];
+    dispatch({
+      type: 'setTaskContext',
+      context: {
+        ...DEFAULT_COURSE_TASK_CONTEXT,
+        courseId: course.id,
+        kpId: courseState.currentKpId || DEFAULT_COURSE_TASK_CONTEXT.kpId,
+        currentPathNodeIds,
+      },
+    });
+  }, [course, courseState.currentKpId, courseState.path, dispatch]);
 
   useEffect(() => {
     window.localStorage.setItem(courseViewStorageKey, activeView);
@@ -237,34 +271,19 @@ function CourseStudyInner() {
     setParams(next, { replace });
   };
 
-  const toggleMock = () => {
-    const next = !mockEnabled;
-    setMockMode(next);
-    setMockEnabled(next);
-  };
+  const activeRoot = courseState.activeWorkflowRootId
+    ? courseState.workflowRoots[courseState.activeWorkflowRootId]
+    : undefined;
 
-  const startDemo = () => {
-    clearDemoTimers();
-    setMockMode(true);
-    setMockEnabled(true);
-    setDemoRunning(true);
-    setCourseView('structured', true);
-    dispatch({ type: 'setCurrentKp', kpId: demoCurrentKpId });
-
-    courseDemoStoryline.forEach((stage, index) => {
-      const timer = window.setTimeout(() => {
-        window.dispatchEvent(new CustomEvent('securehub-course-demo-stage', { detail: stage }));
-        if (stage.targetPath) {
-          setDemoRunning(false);
-          navigate(stage.targetPath);
-          return;
-        }
-        setActiveTab(stage.tab, true);
-        if (index === courseDemoStoryline.length - 1) setDemoRunning(false);
-      }, index * 3000);
-      demoTimersRef.current.push(timer);
-    });
-  };
+  if (!course) {
+    return (
+      <div className="flex min-h-52 items-center justify-center rounded-lg border border-slate-200 bg-white px-5 text-sm text-slate-500">
+        {catalogStatus === 'error'
+          ? `课程目录加载失败：${catalogError?.message ?? '请检查后端课程服务。'}`
+          : '正在加载真实课程目录...'}
+      </div>
+    );
+  }
 
   const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
@@ -302,13 +321,13 @@ function CourseStudyInner() {
             <button
               type="button"
               onClick={openBackendStatusLLMTab}
-              title="查看 LLM 健康状态；真实模式以讯飞星火为主链，DeepSeek 仅在显式 real fallback 时接替草稿"
+              title="查看 LLM 健康状态；当前课程 real 工作流使用已签收的 DeepSeek 链路，Spark Gate 延后处理"
               className="inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[11px] font-medium text-emerald-700 transition-colors hover:bg-emerald-100"
             >
               <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-              讯飞星火主链
+              DeepSeek 真实链路
             </button>
-            <CourseSwitcher course={course} onSelect={(id) => selectCourse(id)} />
+            <CourseSwitcher course={course} courses={courses} onSelect={(id) => selectCourse(id)} />
             <Popover>
               <PopoverTrigger asChild>
                 <button
@@ -328,41 +347,10 @@ function CourseStudyInner() {
                   <CourseViewSwitch value={activeView} onChange={(view) => setCourseView(view)} />
                 </div>
 
-                {import.meta.env.DEV && (
-                  <>
-                    <div className="space-y-1.5 border-t border-slate-100 pt-3">
-                      <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">
-                        演示开关
-                      </p>
-                      <button
-                        type="button"
-                        onClick={toggleMock}
-                        className="flex w-full items-center justify-between rounded-md border border-slate-200 bg-white px-2 py-1.5 text-slate-700 hover:bg-slate-50"
-                      >
-                        <span>{mockEnabled ? '使用真后端' : '使用演示数据'}</span>
-                        <span className="text-[10px] text-slate-400">
-                          {mockEnabled ? 'mock on' : 'mock off'}
-                        </span>
-                      </button>
-                      {mockEnabled && (
-                        <button
-                          type="button"
-                          onClick={startDemo}
-                          disabled={demoRunning}
-                          className="flex w-full items-center justify-between rounded-md bg-brand-blue-600 px-2 py-1.5 text-white hover:bg-brand-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
-                        >
-                          <span className="flex items-center gap-1.5">
-                            <Play className="h-3 w-3" />
-                            {demoRunning ? '演示进行中' : '演示开始'}
-                          </span>
-                          <span className="text-[10px] opacity-80">5 阶段</span>
-                        </button>
-                      )}
-                    </div>
-                    <p className="text-[10px] leading-relaxed text-slate-400">
-                      Planner / Docs / Quality 等智能体状态已收敛到右侧编排图，节点点击展开详情。
-                    </p>
-                  </>
+                {presenterMode && (
+                  <p className="border-t border-amber-100 pt-3 text-[11px] leading-relaxed text-amber-700">
+                    PresenterMode 已通过 URL 显式开启；该模式仅允许 fixture root，与 real root 状态隔离。
+                  </p>
                 )}
               </PopoverContent>
             </Popover>
@@ -396,6 +384,20 @@ function CourseStudyInner() {
             URL 中的 courseId 无效，已回退到默认课程「{course.title}」。
           </p>
         )}
+        {activeRoot && (
+          <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-500">
+            <span className="rounded-full border border-slate-200 bg-white px-2 py-1">
+              Root {activeRoot.runId}
+            </span>
+            <span>{activeRoot.workflow}</span>
+            <span>{activeRoot.provider ?? 'provider 待确认'}</span>
+            <span>证据 {activeRoot.evidenceCount}</span>
+            <span>产物 {activeRoot.artifactIds.length}</span>
+            <span className={activeRoot.error ? 'text-rose-600' : 'text-emerald-700'}>
+              {activeRoot.error ? activeRoot.error.message : activeRoot.status}
+            </span>
+          </div>
+        )}
       </header>
 
       <AnimatePresence mode="wait">
@@ -407,7 +409,7 @@ function CourseStudyInner() {
             exit={{ opacity: 0, x: 8 }}
             transition={{ duration: 0.3, ease: 'easeOut' }}
           >
-            <CourseDialogueMode key={course.id} course={course} />
+            <CourseDialogueMode key={course.id} course={course} presenterMode={presenterMode} />
           </motion.div>
         ) : (
           <motion.div

@@ -53,6 +53,8 @@ export type WorkflowRunClientOptions = {
 export type WorkflowSubscriptionOptions = {
   eventsUrl?: string;
   initialState?: WorkflowRunViewState;
+  /** Rebuild an audit view from the durable event log, ignoring its UI cursor. */
+  replayFromStart?: boolean;
   onEvent?: (event: WorkflowEvent) => void;
   onState?: (state: WorkflowRunViewState) => void;
   onConnection?: (state: 'connecting' | 'live' | 'reconnecting' | 'closed') => void;
@@ -98,7 +100,10 @@ export class WorkflowRunClient {
 
   constructor(options: WorkflowRunClientOptions = {}) {
     this.apiBaseUrl = options.apiBaseUrl ?? API_BASE_URL;
-    this.fetchImpl = options.fetchImpl ?? fetch;
+    // Calling an extracted native fetch as this.fetchImpl(...) loses Window's
+    // WebIDL receiver. Keep injected test fetches intact, but invoke the
+    // browser implementation through globalThis for the production default.
+    this.fetchImpl = options.fetchImpl ?? ((input, init) => globalThis.fetch(input, init));
     this.getAuthToken = options.getAuthToken ?? getStoredAuthToken;
     this.storage = options.storage ?? safeStorage();
     this.reconnectDelayMs = options.reconnectDelayMs ?? DEFAULT_RECONNECT_DELAY_MS;
@@ -142,6 +147,26 @@ export class WorkflowRunClient {
     return this.control(runId, 'retry', payload);
   }
 
+  /** Start one lineage-linked retry for an owned generated artifact. */
+  async retryResource(
+    resourceId: string,
+    payload: Record<string, unknown> = {},
+    options: WorkflowRunStartOptions = {},
+  ): Promise<WorkflowRunStartResponse> {
+    const idempotencyKey = options.idempotencyKey ?? createIdempotencyKey();
+    return this.requestJson<WorkflowRunStartResponse>(
+      `/api/v1/resources/${encodeURIComponent(resourceId)}/retry`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Idempotency-Key': idempotencyKey,
+        },
+        body: JSON.stringify(payload),
+      },
+    );
+  }
+
   async decideApproval(
     runId: string,
     approvalId: string,
@@ -162,7 +187,7 @@ export class WorkflowRunClient {
     let active = true;
     let controller: AbortController | undefined;
     let state = options.initialState ?? createWorkflowRunViewState(runId);
-    const restoredCursor = this.restoreCursor(runId);
+    const restoredCursor = options.replayFromStart ? 0 : this.restoreCursor(runId);
     if (restoredCursor > state.lastSequence) {
       state = { ...state, lastSequence: restoredCursor };
     }
@@ -170,7 +195,9 @@ export class WorkflowRunClient {
     let pipeline = Promise.resolve();
 
     const publishState = () => {
-      this.persistCursor(runId, state.lastSequence);
+      // An audit replay must never move the interactive task stream's cursor
+      // backwards while it reconstructs historical lineage from sequence 0.
+      if (!options.replayFromStart) this.persistCursor(runId, state.lastSequence);
       options.onState?.(state);
     };
 
