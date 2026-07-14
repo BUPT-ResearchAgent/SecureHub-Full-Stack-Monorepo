@@ -111,6 +111,38 @@ async def test_pdf_mineru_import_creates_chapter_assets_end_to_end(
 
 
 @pytest.mark.anyio
+async def test_off_course_mineru_book_is_retained_but_marked_ineligible_for_websec_retrieval(
+    sqlite_session,
+    tmp_path: Path,
+) -> None:
+    pdf_path = tmp_path / "crypto-basics.pdf"
+    pdf_path.write_bytes(b"%PDF-1.4\n% crypto fixture\n")
+    mineru_dir = tmp_path / "crypto-basics"
+    mineru_dir.mkdir()
+    (mineru_dir / "full.md").write_text(
+        "# 现代密码学教程\n\n## 第1章 概论\n\nRSA 与分组密码。",
+        encoding="utf-8",
+    )
+
+    result = await pdf_mineru_import(
+        pdf_path,
+        session=sqlite_session,
+        mineru_output_dir=mineru_dir,
+        storage_local_root=tmp_path / "storage",
+    )
+    await sqlite_session.commit()
+
+    document = await sqlite_session.get(Document, result.document_ids[0])
+    chunks = (
+        await sqlite_session.execute(select(Chunk).where(Chunk.document_id == result.document_ids[0]))
+    ).scalars().all()
+    assert document is not None
+    assert document.metadata_["course_eligible"] is False
+    assert chunks
+    assert all(chunk.metadata_["course_eligible"] is False for chunk in chunks)
+
+
+@pytest.mark.anyio
 async def test_pdf_mineru_import_is_idempotent_via_pdf_hash(
     sqlite_session,
     tmp_path: Path,

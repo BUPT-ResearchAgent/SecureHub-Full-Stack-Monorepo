@@ -9,7 +9,7 @@ import ReactFlow, {
   type Node,
 } from 'reactflow';
 import 'reactflow/dist/style.css';
-import { ChevronsRight, MoreHorizontal, Pause, Play, RotateCcw } from 'lucide-react';
+import { Check, ChevronsRight, MoreHorizontal, Pause, Play, RefreshCw, RotateCcw, X } from 'lucide-react';
 import {
   Popover,
   PopoverContent,
@@ -45,6 +45,11 @@ export function ReactFlowWorkflowCanvas({
   onWorkflowChange,
   onRun,
   onPause,
+  onResume,
+  onRetry,
+  onCancel,
+  onApprove,
+  onReject,
   onReset,
   mockControlsEnabled = true,
   compact = false,
@@ -55,6 +60,11 @@ export function ReactFlowWorkflowCanvas({
   onWorkflowChange: (workflowId: WorkflowDefinition['id']) => void;
   onRun: () => void;
   onPause: () => void;
+  onResume: () => void;
+  onRetry: () => void;
+  onCancel: () => void;
+  onApprove: () => void;
+  onReject: () => void;
   onReset: () => void;
   mockControlsEnabled?: boolean;
   compact?: boolean;
@@ -143,6 +153,16 @@ export function ReactFlowWorkflowCanvas({
 
   const qualityText =
     runState.overallQuality == null ? '待评估' : `${Math.round(runState.overallQuality * 100)}%`;
+  const durableControls = Boolean(runState.durableRun && runState.currentRunId);
+  const canPause = (mockControlsEnabled || durableControls) && runState.phase === 'running';
+  const canResume = (mockControlsEnabled || durableControls) && runState.phase === 'paused';
+  const canRetry = durableControls
+    && runState.rootStatus === 'waiting_approval'
+    && runState.approvalKind === 'provider_retry';
+  const needsApproval = durableControls
+    && Boolean(runState.approvalId)
+    && runState.approvalKind !== 'provider_retry';
+  const canCancel = durableControls && runState.phase !== 'done';
 
   const heightClass = compact ? 'h-[440px]' : 'min-h-[640px]';
 
@@ -180,13 +200,68 @@ export function ReactFlowWorkflowCanvas({
           <button
             type="button"
             onClick={onPause}
-            disabled={!mockControlsEnabled || runState.phase !== 'running'}
-            aria-label="暂停"
+            disabled={!canPause}
+            aria-label="暂停工作流"
+            title="暂停工作流"
             className={`inline-flex ${compact ? 'h-6' : 'h-7'} items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 text-xs text-slate-700 hover:bg-slate-50 active:scale-95 transition-transform disabled:cursor-not-allowed disabled:opacity-50`}
           >
             <Pause className="h-3 w-3" />
             暂停
           </button>
+          <button
+            type="button"
+            onClick={onResume}
+            disabled={!canResume}
+            aria-label="恢复工作流"
+            title="恢复工作流"
+            className={`inline-flex ${compact ? 'h-6 w-6' : 'h-7 w-7'} items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50`}
+          >
+            <Play className="h-3 w-3" />
+          </button>
+          {canRetry && (
+            <button
+              type="button"
+              onClick={onRetry}
+              aria-label="重试工作流"
+              title="重试工作流"
+              className={`inline-flex ${compact ? 'h-6 w-6' : 'h-7 w-7'} items-center justify-center rounded-lg border border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100`}
+            >
+              <RefreshCw className="h-3 w-3" />
+            </button>
+          )}
+          {needsApproval && (
+            <>
+              <button
+                type="button"
+                onClick={onApprove}
+                aria-label="批准工作流操作"
+                title="批准工作流操作"
+                className={`inline-flex ${compact ? 'h-6 w-6' : 'h-7 w-7'} items-center justify-center rounded-lg border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100`}
+              >
+                <Check className="h-3.5 w-3.5" />
+              </button>
+              <button
+                type="button"
+                onClick={onReject}
+                aria-label="拒绝工作流操作"
+                title="拒绝工作流操作"
+                className={`inline-flex ${compact ? 'h-6 w-6' : 'h-7 w-7'} items-center justify-center rounded-lg border border-red-200 bg-red-50 text-red-700 hover:bg-red-100`}
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </>
+          )}
+          {canCancel && (
+            <button
+              type="button"
+              onClick={onCancel}
+              aria-label="取消工作流"
+              title="取消工作流"
+              className={`inline-flex ${compact ? 'h-6 w-6' : 'h-7 w-7'} items-center justify-center rounded-lg border border-red-200 bg-white text-red-600 hover:bg-red-50`}
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          )}
           <button
             type="button"
             onClick={onReset}

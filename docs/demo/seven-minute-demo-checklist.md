@@ -15,6 +15,11 @@ Status: real
 | 5:50-6:30 | 多源采集证据 | Evidence 展示 platform、source_url、author、rights_note |
 | 6:30-7:00 | 架构总结 | 统一进入 documents / document_assets / chunks / storage_objects |
 
+演示时还应展示：资源 fan-out 的 typed Evidence/Artifact lineage、QualityCheck
+返工上限、暂停/恢复控件、SSE reconnect/replay 以及“讯飞星火主链”状态。未持有
+双 Provider 与 RAG 凭据时，使用显式 fixture 演示并口头说明真实 fallback gate
+为 pending；不得把 fixture 文本描述为 Spark 或 DeepSeek 的真实输出。
+
 ## C 负责状态
 
 | Gate | 状态 | 说明 |

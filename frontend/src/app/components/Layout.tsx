@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { Fragment, useState } from 'react';
 import { NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom';
 import { toast } from 'sonner';
 import {
@@ -36,7 +36,7 @@ import {
 import { useAuth } from '@/app/features/auth/store';
 import { RoleSwitcher } from '@/app/features/teacher/RoleSwitcher';
 
-export type NavChild = { key: string; label: string; to?: string };
+export type NavChild = { key: string; label: string; to?: string; group?: string };
 export type NavItem = {
   path: string;
   icon: any;
@@ -55,7 +55,10 @@ function activeChildKey(item: NavItem, location: ReturnType<typeof useLocation>)
     if (matched) return matched.key;
   }
   const search = new URLSearchParams(location.search);
-  return search.get('tab') || item.children[0].key;
+  const requested = search.get('tab');
+  return item.children.some((child) => child.key === requested)
+    ? requested!
+    : item.children[0].key;
 }
 
 export const navItems: NavItem[] = [
@@ -189,16 +192,17 @@ export const navItems: NavItem[] = [
     icon: UserCircle,
     label: '个人中心',
     children: [
-      { key: 'persona', label: '用户画像' },
-      { key: 'resources', label: '资源历史' },
-      { key: 'vault', label: '个人资产库' },
-      { key: 'docs', label: '文档资产' },
-      { key: 'slides', label: '演示资产' },
-      { key: 'code', label: '代码资产' },
-      { key: 'proof', label: '证明材料' },
-      { key: 'submit', label: '提交清单' },
-      { key: 'notice', label: '通知设置' },
-      { key: 'account', label: '账户与合规' },
+      { key: 'persona', label: '用户画像', group: '个人成长' },
+      { key: 'models', label: '模型与密钥', group: '个人成长' },
+      { key: 'resources', label: '资源历史', group: '个人成长' },
+      { key: 'vault', label: '个人资产库', group: '资产沉淀' },
+      { key: 'docs', label: '文档资产', group: '资产沉淀' },
+      { key: 'slides', label: '演示资产', group: '资产沉淀' },
+      { key: 'code', label: '代码资产', group: '资产沉淀' },
+      { key: 'proof', label: '证明材料', group: '资产沉淀' },
+      { key: 'submit', label: '提交清单', group: '提交与设置' },
+      { key: 'notice', label: '通知设置', group: '提交与设置' },
+      { key: 'account', label: '账户与合规', group: '提交与设置' },
     ],
   },
 ];
@@ -277,56 +281,60 @@ function LayoutFrame() {
               const isOpen = expanded.includes(item.path);
               return (
                 <li key={item.path}>
-                  <button
-                    onClick={() => {
-                      if (collapsed) {
-                        navigate(item.path);
-                      } else {
-                        toggle(item.path);
-                        navigate(navTargetForChild(item, item.children[0]));
-                      }
-                    }}
-                    className={`w-full flex items-center gap-2.5 px-2.5 py-2 rounded-md transition-colors ${
-                      isActive
-                        ? 'bg-[#003399]/10 text-[#003399]'
-                        : 'text-slate-500 hover:bg-slate-100 hover:text-slate-700'
-                    }`}
-                    title={collapsed ? item.label : ''}
-                  >
-                    <item.icon className={`w-5 h-5 shrink-0 ${isActive ? 'text-[#003399]' : ''}`} />
+                  <div className={`flex items-center rounded-md transition-colors ${
+                    isActive
+                      ? 'bg-[#003399]/10 text-[#003399]'
+                      : 'text-slate-500 hover:bg-slate-100 hover:text-slate-700'
+                  }`}>
+                    <button
+                      onClick={() => navigate(navTargetForChild(item, item.children[0]))}
+                      className="flex min-w-0 flex-1 items-center gap-2.5 px-2.5 py-2 text-left"
+                      title={collapsed ? item.label : ''}
+                    >
+                      <item.icon className={`w-5 h-5 shrink-0 ${isActive ? 'text-[#003399]' : ''}`} />
+                      {!collapsed && <span className="text-sm flex-1 text-left">{item.label}</span>}
+                    </button>
                     {!collapsed && (
-                      <>
-                        <span className="text-sm flex-1 text-left">{item.label}</span>
-                        {isOpen ? (
-                          <ChevronDown className="w-4 h-4 opacity-50" />
-                        ) : (
-                          <ChevronRight className="w-4 h-4 opacity-50" />
-                        )}
-                      </>
+                      <button
+                        type="button"
+                        aria-label={`${isOpen ? '收起' : '展开'}${item.label}子菜单`}
+                        aria-expanded={isOpen}
+                        onClick={() => toggle(item.path)}
+                        className="mr-1 rounded p-1.5 text-slate-400 transition-colors hover:bg-white/70 hover:text-slate-700"
+                      >
+                        {isOpen ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+                      </button>
                     )}
-                  </button>
+                  </div>
                   {!collapsed && (
                     <div
                       className="overflow-hidden transition-all duration-300 ease-in-out"
-                      style={{ maxHeight: isOpen ? `${item.children.length * 40}px` : '0px' }}
+                      style={{ maxHeight: isOpen ? '1000px' : '0px' }}
                     >
                       <ul className="mt-0.5 mb-1 ml-5 pl-2 border-l border-slate-200 space-y-0.5">
-                        {item.children.map((child) => {
+                        {item.children.map((child, index) => {
                           const activeTab = activeChildKey(item, location);
                           const childActive = isActive && activeTab === child.key;
                           return (
-                            <li key={child.key}>
-                              <NavLink
-                                to={navTargetForChild(item, child)}
-                                className={`block px-2 py-1.5 rounded-md text-sm transition-colors ${
-                                  childActive
-                                    ? 'bg-[#003399]/10 text-[#003399]'
-                                    : 'text-slate-400 hover:text-slate-700 hover:bg-slate-100'
-                                }`}
-                              >
-                                {child.label}
-                              </NavLink>
-                            </li>
+                            <Fragment key={child.key}>
+                              {child.group && child.group !== item.children[index - 1]?.group && (
+                                <li className="px-2 pb-1 pt-2 text-[10px] font-medium tracking-wide text-slate-400">
+                                  {child.group}
+                                </li>
+                              )}
+                              <li>
+                                <NavLink
+                                  to={navTargetForChild(item, child)}
+                                  className={`block px-2 py-1.5 rounded-md text-sm transition-colors ${
+                                    childActive
+                                      ? 'bg-[#003399]/10 text-[#003399]'
+                                      : 'text-slate-400 hover:text-slate-700 hover:bg-slate-100'
+                                  }`}
+                                >
+                                  {child.label}
+                                </NavLink>
+                              </li>
+                            </Fragment>
                           );
                         })}
                       </ul>

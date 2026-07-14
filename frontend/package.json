@@ -6,7 +6,10 @@
   "scripts": {
     "build": "vite build",
     "dev": "vite",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "brand:generate": "tsc --project ../design/brand/tsconfig.json && node ../design/brand/.build/scripts/generate-logo-assets.js",
+    "brand:validate": "tsc --project ../design/brand/tsconfig.json && node ../design/brand/.build/scripts/validate-logo-assets.js",
+    "brand:preview": "npm run brand:generate"
   },
   "dependencies": {
     "@emotion/react": "11.14.0",

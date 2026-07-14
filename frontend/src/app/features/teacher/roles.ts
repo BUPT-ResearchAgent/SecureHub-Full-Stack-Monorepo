@@ -1,9 +1,18 @@
-// Status: mock
+// Status: real
 //
-// 教师身份系统：4 种角色定义 + 与"学生"互斥的全局 mock 角色。
-// 实际后端落地后，角色字段会从 /api/v1/teacher/me 拉取，本文件保留作为类型与色板基准。
+// 教师身份系统：角色由 /api/v1/auth/me 的服务端字段签发；本文件只维护
+// 前端显示元数据与教师端主题色。
 
-export type AppRole = 'student' | TeacherRole;
+import {
+  BriefcaseBusiness,
+  FlaskConical,
+  GraduationCap,
+  Layers3,
+  type LucideIcon,
+} from 'lucide-react';
+import type { AppRole } from '@/app/features/auth/types';
+
+export type { AppRole } from '@/app/features/auth/types';
 
 export type TeacherRole =
   | 'course_teacher'
@@ -28,7 +37,7 @@ export type RoleMeta = {
   /** 单色徽章背景（chip / badge / sidebar 激活态）。 */
   badge: string;
   badgeText: string;
-  emoji: string;
+  icon: LucideIcon;
 };
 
 export const ROLE_META: Record<AppRole, RoleMeta> = {
@@ -40,7 +49,7 @@ export const ROLE_META: Record<AppRole, RoleMeta> = {
     accent: 'linear-gradient(90deg, #003399 0%, #1d4ed8 100%)',
     badge: 'bg-brand-blue-50',
     badgeText: 'text-brand-blue-700',
-    emoji: '🎓',
+    icon: GraduationCap,
   },
   course_teacher: {
     id: 'course_teacher',
@@ -50,7 +59,7 @@ export const ROLE_META: Record<AppRole, RoleMeta> = {
     accent: 'linear-gradient(90deg, #003399 0%, #2563eb 100%)',
     badge: 'bg-brand-blue-50',
     badgeText: 'text-brand-blue-700',
-    emoji: '👨‍🏫',
+    icon: GraduationCap,
   },
   research_mentor: {
     id: 'research_mentor',
@@ -60,7 +69,7 @@ export const ROLE_META: Record<AppRole, RoleMeta> = {
     accent: 'linear-gradient(90deg, #6d28d9 0%, #a855f7 100%)',
     badge: 'bg-violet-50',
     badgeText: 'text-violet-700',
-    emoji: '👩‍🔬',
+    icon: FlaskConical,
   },
   career_mentor: {
     id: 'career_mentor',
@@ -70,7 +79,7 @@ export const ROLE_META: Record<AppRole, RoleMeta> = {
     accent: 'linear-gradient(90deg, #c2410c 0%, #f97316 100%)',
     badge: 'bg-orange-50',
     badgeText: 'text-orange-700',
-    emoji: '💼',
+    icon: BriefcaseBusiness,
   },
   hybrid: {
     id: 'hybrid',
@@ -81,7 +90,7 @@ export const ROLE_META: Record<AppRole, RoleMeta> = {
       'linear-gradient(90deg, #003399 0%, #6d28d9 50%, #f97316 100%)',
     badge: 'bg-gradient-to-r from-brand-blue-50 via-violet-50 to-orange-50',
     badgeText: 'text-slate-800',
-    emoji: '🧑‍🏫',
+    icon: Layers3,
   },
 };
 

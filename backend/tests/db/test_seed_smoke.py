@@ -11,12 +11,17 @@ from app.auth.security import verify_password
 from app.db import models  # noqa: F401
 from app.db.base import Base
 from app.db.models.agent.agent import Agent
+from app.db.models.agent.agent_skill import AgentSkill
 from app.db.models.identity.user import User
 from app.db.models.identity.user_capability import UserCapability
 from app.db.models.knowledge.chunk import Chunk
 from app.db.models.knowledge.knowledge_node import KnowledgeNode
 from app.db.seeds._constants import DEMO_USER_EMAIL, DEMO_USER_PASSWORD
 from app.db.seeds.seed_smoke import USER_DEMO_ID, seed_smoke
+from app.runtime.skill_catalog import (
+    EXPECTED_PRODUCTION_SKILL_COUNT,
+    assert_persisted_catalog_integrity,
+)
 
 
 @compiles(JSONB, "sqlite")
@@ -53,6 +58,7 @@ async def test_seed_smoke_is_idempotent_and_has_core_counts() -> None:
         await session.commit()
 
         agents = (await session.execute(select(Agent))).scalars().all()
+        skills = (await session.execute(select(AgentSkill))).scalars().all()
         capabilities = (
             await session.execute(
                 select(UserCapability).where(UserCapability.user_id == USER_DEMO_ID)
@@ -64,10 +70,12 @@ async def test_seed_smoke_is_idempotent_and_has_core_counts() -> None:
             await session.execute(select(User).where(User.email == DEMO_USER_EMAIL))
         ).scalar_one_or_none()
         smoke_user = await session.get(User, USER_DEMO_ID)
+        await assert_persisted_catalog_integrity(session)
 
     await engine.dispose()
 
     assert len(agents) == 9
+    assert len(skills) == EXPECTED_PRODUCTION_SKILL_COUNT
     assert len(capabilities) == 6
     assert len(nodes) == 3
     assert len(chunks) == 10

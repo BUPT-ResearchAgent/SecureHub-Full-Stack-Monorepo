@@ -13,10 +13,16 @@ import { LLMErrorState, LoadingState } from '@/app/components/StateView';
 import { useEvidence } from '@/app/components/EvidenceDrawer';
 import { useAgentTraceDispatch } from '@/app/features/agents/store';
 import { isMockMode } from '@/lib/mock';
-import { streamPersonaChat } from '../api';
-import { mockPersona } from '../mockData';
-import { useCourseDispatch } from '../store';
+import { isWorkflowDraftReplacement } from '@/lib/workflow-run.types';
+import {
+  learningPersonaFromWorkflowStatus,
+  personaDialogueFromOutput,
+  personaDialogueFromWorkflowStatus,
+  startCourseTask,
+} from '../api';
+import { useCourseDispatch, useCourseState } from '../store';
 import type { LearningPersona, PersonaDimensionKey } from '../types';
+import { createCourseTaskLifecycle } from '../workflow/courseTaskLifecycle';
 import { PersonaTreeCanvas } from '../persona/PersonaTreeCanvas';
 import { PersonaNarrative } from '../persona/PersonaNarrative';
 import { PersonaDimensionDrawer } from '../persona/PersonaDimensionDrawer';
@@ -108,11 +114,13 @@ function buildPersona(
   };
 }
 
-export function PersonaBuilder({ userId = mockPersona.userId }: PersonaBuilderProps) {
+export function PersonaBuilder({ userId = '00000000-0000-0000-0000-000000000001' }: PersonaBuilderProps) {
   const evidence = useEvidence();
   const traceDispatch = useAgentTraceDispatch();
   const courseDispatch = useCourseDispatch();
+  const { taskContext } = useCourseState();
   const cancelRef = useRef<() => void>();
+  const personaDraftRef = useRef('');
   const [input, setInput] = useState('我学过一点 Python，想入门 Web 安全');
   const [turns, setTurns] = useState<DialogueTurn[]>([initialTurn]);
   const [streaming, setStreaming] = useState(false);
@@ -225,6 +233,14 @@ export function PersonaBuilder({ userId = mockPersona.userId }: PersonaBuilderPr
     setInput('');
     setError(undefined);
     setStreaming(true);
+    personaDraftRef.current = '';
+    const history = turns
+      .filter((turn) => (
+        turn.id !== initialTurn.id &&
+        (turn.role === 'user' || turn.role === 'assistant') &&
+        turn.content.trim().length > 0
+      ))
+      .map((turn) => ({ role: turn.role, content: turn.content }));
     setTurns((current) => [
       ...current,
       { id: `live-user-${current.length}`, role: 'user', content: message },
@@ -232,15 +248,61 @@ export function PersonaBuilder({ userId = mockPersona.userId }: PersonaBuilderPr
     ]);
 
     cancelRef.current?.();
-    cancelRef.current = streamPersonaChat(userId, message, [], {
-      onToken(token) {
-        setTurns((current) =>
-          current.map((turn, index) =>
-            index === current.length - 1
-              ? { ...turn, content: `${turn.content}${token.content}` }
-              : turn,
-          ),
-        );
+    cancelRef.current = startCourseTask({
+      intent: 'build_persona',
+      context: { ...taskContext, userId },
+      payload: { message, history },
+    }, createCourseTaskLifecycle('build_persona', courseDispatch, {
+      onWorkflowEvent(event) {
+        if (isWorkflowDraftReplacement(event)) {
+          if (event.event_type !== 'trace' || event.payload.node_id !== 'build_persona') return;
+          personaDraftRef.current = '';
+          setTurns((current) =>
+            current.map((turn, index) => (
+              index === current.length - 1 && turn.role === 'assistant' ? { ...turn, content: '' } : turn
+            )),
+          );
+          return;
+        }
+        // A profile root also streams QualityCheck JSON. Only the
+        // BuildLearningPersona node is learner-facing dialogue.
+        if (event.event_type !== 'token' || event.payload.node_id !== 'build_persona') return;
+        personaDraftRef.current += event.payload.content;
+      },
+      onWorkflowTerminal(status) {
+        if (status.status !== 'succeeded') return;
+        try {
+          const persona = learningPersonaFromWorkflowStatus(status, userId);
+          const streamedDialogue = parsePersonaDialogue(personaDraftRef.current);
+          const dialogue = personaDialogueFromWorkflowStatus(status) ?? streamedDialogue;
+          setIdentified(persona.dimensions);
+          courseDispatch({ type: 'setPersona', persona });
+          setTurns((current) =>
+            current.map((turn, index) => (
+              index === current.length - 1 && turn.role === 'assistant'
+                ? {
+                    ...turn,
+                    content: dialogue
+                      ? formatPersonaDialogue(dialogue)
+                      : '画像已持久化，但本轮对话文本未通过展示校验。',
+                  }
+                : turn
+            )),
+          );
+          if (!dialogue) {
+            setError({
+              code: 'WORKFLOW_OUTPUT_INVALID',
+              message: '画像已保存，但缺少可展示的 content 或 next_question。',
+            });
+          }
+        } catch (error) {
+          setError({
+            code: 'WORKFLOW_OUTPUT_INVALID',
+            message: error instanceof Error ? error.message : '画像结果映射失败',
+          });
+        } finally {
+          setStreaming(false);
+        }
       },
       onEvidence(chunk) {
         evidence.pushEvidence([chunk]);
@@ -249,15 +311,17 @@ export function PersonaBuilder({ userId = mockPersona.userId }: PersonaBuilderPr
         traceDispatch({ type: 'upsertRun', run });
       },
       onDone() {
-        const fullDimensions = requiredDimensions.reduce<Partial<Record<PersonaDimensionKey, string>>>(
-          (next, key) => ({ ...next, [key]: demoDimensions[key] }),
-          {},
-        );
-        setIdentified(fullDimensions);
         setStreaming(false);
-        courseDispatch({ type: 'setPersona', persona: buildPersona(userId, fullDimensions) });
-        const pick = pickChallengeForClaim(message);
-        if (pick) setChallengeQueue((current) => [...current, pick]);
+        if (isMockMode()) {
+          const fullDimensions = requiredDimensions.reduce<Partial<Record<PersonaDimensionKey, string>>>(
+            (next, key) => ({ ...next, [key]: demoDimensions[key] }),
+            {},
+          );
+          setIdentified(fullDimensions);
+          courseDispatch({ type: 'setPersona', persona: buildPersona(userId, fullDimensions) });
+          const pick = pickChallengeForClaim(message);
+          if (pick) setChallengeQueue((current) => [...current, pick]);
+        }
       },
       onError(event) {
         if (event.code === 'sse_reconnecting') {
@@ -267,7 +331,7 @@ export function PersonaBuilder({ userId = mockPersona.userId }: PersonaBuilderPr
         setStreaming(false);
         setError({ code: event.code, message: event.message });
       },
-    });
+    }));
   };
 
   const finishChallenge = (answer: string) => {
@@ -297,7 +361,7 @@ export function PersonaBuilder({ userId = mockPersona.userId }: PersonaBuilderPr
   };
 
   return (
-    <div className="grid gap-4 xl:grid-cols-[minmax(0,1.2fr)_minmax(420px,1fr)]">
+    <div className="grid gap-4 xl:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)]">
       <Card title="画像对话" subtitle={`用户：${userId}`}>
         <div className="space-y-4">
           <PersonaNarrative segment={narrative} />
@@ -375,7 +439,7 @@ export function PersonaBuilder({ userId = mockPersona.userId }: PersonaBuilderPr
         </div>
       </Card>
 
-      <Card title="画像树" subtitle="径向布局 · 节点状态实时随对话刷新">
+      <Card title="画像树" subtitle="径向布局 · 节点状态实时随对话刷新" className="min-w-0">
         <PersonaTreeCanvas
           studentName="小李"
           studentInitial="李"
@@ -415,6 +479,20 @@ function turnTone(role: DialogueTurn['role']): string {
     default:
       return 'bg-white text-slate-700';
   }
+}
+
+function parsePersonaDialogue(draft: string) {
+  try {
+    return personaDialogueFromOutput(JSON.parse(draft));
+  } catch {
+    return undefined;
+  }
+}
+
+function formatPersonaDialogue(dialogue: { content: string; nextQuestion?: string }): string {
+  return dialogue.nextQuestion
+    ? `${dialogue.content}\n\n${dialogue.nextQuestion}`
+    : dialogue.content;
 }
 
 function labelOf(dim: string): string {

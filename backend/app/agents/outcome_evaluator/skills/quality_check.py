@@ -1,16 +1,29 @@
 # Status: real
+# Declarative Skill: SkillExecutor owns ctx.log_run for this contract.
+# Declarative Skill: SkillExecutor owns ctx.log_run for this contract.
 
-from app.agents.base import BaseSkill, SkillContext
-from app.agents.planned_skill import PlannedSkillInput, PlannedSkillOutput, prepare_planned_skill_output
+from pydantic import Field, model_validator
+
+from app.agents.base import BaseSkill
+from app.agents.skill_contracts import SkillInput, SkillOutput
+from app.runtime.contracts import QualityDefect
 
 
-class QualityCheckInput(PlannedSkillInput):
-    artifact: dict[str, object] = {}
+class QualityCheckInput(SkillInput):
+    artifact: dict[str, object] = Field(default_factory=dict)
 
 
-class QualityCheckOutput(PlannedSkillOutput):
+class QualityCheckOutput(SkillOutput):
     accept: bool = False
-    defects: list[dict[str, str]] = []
+    defects: list[QualityDefect] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def require_a_consistent_decision(self) -> "QualityCheckOutput":
+        if self.accept and self.defects:
+            raise ValueError("accepted QualityCheck output cannot include defects")
+        if not self.accept and not self.defects:
+            raise ValueError("rejected QualityCheck output requires at least one defect")
+        return self
 
 
 PROMPT_TEMPLATE = """
@@ -28,12 +41,20 @@ You are outcome_evaluator checking generated output against evidence.
 [Generated artifacts to evaluate]
 {artifact_text}
 
-Evaluate the generated artifacts above against the evidence. The artifact must
-contain a non-empty learning path, course document, and quiz. Check factual
-support, internal consistency, instructional relevance, and safety. The server
-owns evidence_chunk_ids; use their presence as citation linkage and do not
-invent or rewrite them. Set accept=true only when there are no critical
-defects. Otherwise set accept=false and describe each defect structurally.
+Evaluate the generated artifact above against the evidence and the requested
+workflow task. Check only the artifact types that are actually present: a
+persona, tutor answer, assessment, learning path, course document, quiz, lab,
+or reading list may each be valid on its own. Do not require an unrelated
+learning path, document, or quiz. Check factual support, internal consistency,
+instructional relevance, and safety. The server owns evidence_chunk_ids; use
+their presence as citation linkage and do not invent or rewrite them. Set
+accept=true with defects=[] when there are no critical defects. Otherwise set
+accept=false and return a non-empty defects list. Each defect must use exactly
+the schema's code/message fields: code is one of evidence_missing,
+fact_conflict, schema_invalid, instructional_mismatch, citation_mismatch, or
+safety_violation; message is a concise explanation. Optional target_node and
+resource_type may identify the affected producer. Do not use alternate keys
+such as type, detail, issue, or reason.
 
 Return JSON matching:
 {output_schema_hint}
@@ -42,23 +63,7 @@ Return JSON matching:
 
 class QualityCheck(BaseSkill):
     name = "QualityCheck"
-    applicable_domains = ["course_websec"]
+    # This remains the frozen QualityCheck binding. Fund recommendation roots
+    # use the same evidence snapshot and strict-parse contract.
+    applicable_domains = ["course_websec", "fund"]
     output_schema = QualityCheckOutput
-
-    async def run(self, inp: QualityCheckInput, ctx: SkillContext) -> QualityCheckOutput:
-        out = await prepare_planned_skill_output(
-            self,
-            inp,
-            ctx,
-            prompt_template=PROMPT_TEMPLATE,
-            output_model=QualityCheckOutput,
-        )
-        await ctx.log_run(
-            agent_id=self.agent_id,
-            skill_id=self.skill_id,
-            input_summary=inp.model_dump(),
-            output_summary=out.model_dump(),
-            evidence_chunk_ids=out.evidence_chunk_ids,
-            quality_score=out.quality_score,
-        )
-        return out

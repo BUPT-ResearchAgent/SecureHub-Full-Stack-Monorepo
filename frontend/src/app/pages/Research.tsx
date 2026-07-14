@@ -39,7 +39,7 @@ import { tabToItemType } from '../features/research/utils';
 const tabKeys: ResearchTab[] = ['recommend', 'fund', 'news', 'innovation', 'hot', 'patent', 'lab', 'compare'];
 
 const tabMeta: Omit<TabDef, 'render'>[] = [
-  { key: 'recommend', label: '个性化推荐', description: '基于课程画像与 SQL 注入主线推荐科研立项机会' },
+  { key: 'recommend', label: '个性化推荐', description: '基于已认证用户的能力画像与官方来源证据生成科研机会推荐' },
   { key: 'fund', label: '基金项目', description: '国家自然科学基金、省部级课题等科研立项信息，按匹配度与截止日期聚合' },
   { key: 'news', label: '科研动态', description: '网络安全领域顶会录用动态、机构前沿资讯与学术组织要闻' },
   { key: 'innovation', label: '学术创新', description: '近期高被引创新方法与算法突破方向速览，识别论文价值高地' },
@@ -72,6 +72,7 @@ export function Research() {
   const [detail, setDetail] = useState<DetailResponse | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const fromCourseSqli = params.get('from') === 'course-sqli';
+  const courseContext = courseContextFromParams(params);
 
   const loadItems = async () => {
     if (activeTab === 'recommend' || activeTab === 'hot' || activeItemType === 'compare') return;
@@ -150,7 +151,7 @@ export function Research() {
 
   const content = () => {
     if (activeTab === 'recommend') {
-      return <FundRecommendationPanel />;
+      return <FundRecommendationPanel courseContext={courseContext} />;
     }
 
     if (activeTab === 'hot') {
@@ -227,7 +228,7 @@ export function Research() {
     <>
       {fromCourseSqli && (
         <div className="mb-4 rounded-xl border border-brand-blue-100 bg-brand-blue-50/70 px-4 py-3 text-sm text-brand-blue-800">
-          同一画像驱动的延展示范：这里复用 SQL 注入课程画像，演示 Research / Fund 推荐入口；当前仍按科研页面既有 mock / partial-real 数据展示。
+          已从课程学习上下文进入：推荐会使用当前已认证用户的持久化画像；课程只提供知识点上下文，不会复用课程工作流 root。
         </div>
       )}
       <PageShell
@@ -256,6 +257,19 @@ export function Research() {
       <ResearchDetailDrawer detail={detail} onClose={() => setDetail(null)} />
     </>
   );
+}
+
+function courseContextFromParams(params: URLSearchParams) {
+  const courseId = params.get('course_id');
+  const knowledgePointId = params.get('kp_id');
+  return {
+    ...(isUuid(courseId) ? { course_id: courseId } : {}),
+    ...(isUuid(knowledgePointId) ? { knowledge_point_id: knowledgePointId } : {}),
+  };
+}
+
+function isUuid(value: string | null): value is string {
+  return Boolean(value && /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(value));
 }
 
 async function fetchByTab(tab: ResearchTab, filters: ResearchFilters): Promise<ResearchItem[]> {

@@ -4,22 +4,12 @@
 
 from __future__ import annotations
 
-import asyncio
-import json
+from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 
+from app.llm.provider import HealthStatus
 from app.main import app
-from app.schemas.agent import AgentTraceDTO
-from app.schemas.assessment import AssessmentRunResponse
-from app.schemas.course import CoursePlanResponse
-from app.schemas.evidence import EvidenceChunkDTO
-from app.services.agent import (
-    build_learning_persona,
-    generate_learning_path,
-    generate_resource,
-    run_assessment,
-)
 
 USER_ID = "00000000-0000-0000-0000-000000000001"
 COURSE_ID = "00000000-0000-0000-0000-000000000101"
@@ -52,19 +42,9 @@ def test_agents_manifest():
     }
 
 
-def test_rag_search_returns_fixture(monkeypatch):
-    import importlib
-
-    rag_service = importlib.import_module("app.rag.search")
-
-    async def fixture_retrieve(*_args, **_kwargs):
-        return []
-
-    # Keep this endpoint test on the explicit fallback branch even when a
-    # developer's PostgreSQL already contains ready Qwen rows.
-    monkeypatch.setattr(rag_service, "retrieve", fixture_retrieve)
+def test_rag_search_returns_explicit_fixture_mode():
     client = TestClient(app)
-    payload = {"domain": "course_websec", "query": "SQL injection", "top_k": 3}
+    payload = {"domain": "course_websec", "query": "SQL injection", "top_k": 3, "mode": "fixture"}
     response = client.post(
         "/api/v1/rag/search",
         json=payload,
@@ -73,184 +53,180 @@ def test_rag_search_returns_fixture(monkeypatch):
     body = response.json()
     assert "hits" in body
     assert len(body["hits"]) >= 3
-    assert body["fallback"] is True
+    assert body["mode"] == "fixture"
 
     repeated = client.post("/api/v1/rag/search", json=payload)
     assert repeated.status_code == 200
     assert repeated.json() == body
 
 
-def test_fixture_rag_search_never_reports_real_mode_with_seeded_rows(monkeypatch):
+def test_real_rag_search_fails_closed_without_evidence(monkeypatch):
     import importlib
 
     rag_service = importlib.import_module("app.rag.search")
 
-    async def fixture_retrieve(*_args, **_kwargs):
-        # The real database may contain ready rows; this test deliberately
-        # selects the fixture retriever and asserts its wire label.
+    async def empty_retrieve(*_args, **_kwargs):
         return []
 
-    monkeypatch.setattr(rag_service, "retrieve", fixture_retrieve)
+    monkeypatch.setattr(rag_service, "retrieve", empty_retrieve)
     response = TestClient(app).post(
         "/api/v1/rag/search",
-        json={"domain": "course_websec", "query": "SQL injection", "top_k": 3},
+        json={"domain": "course_websec", "query": "SQL injection", "top_k": 3, "mode": "real"},
     )
-    assert response.status_code == 200
-    body = response.json()
-    assert body["fallback"] is True
-    assert body.get("mode") != "real"
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "RAG_UNAVAILABLE"
 
 
-def test_courses_list():
+def test_real_rag_search_sanitises_embedding_dependency_failure(monkeypatch):
+    import importlib
+
+    from app.llm.embeddings.errors import EmbeddingConfigurationError
+
+    rag_service = importlib.import_module("app.rag.search")
+
+    async def unavailable_retrieve(*_args, **_kwargs):
+        raise EmbeddingConfigurationError("DASHSCOPE_API_KEY is not set")
+
+    monkeypatch.setattr(rag_service, "retrieve", unavailable_retrieve)
+    response = TestClient(app).post(
+        "/api/v1/rag/search",
+        json={"domain": "course_websec", "query": "SQL injection", "top_k": 3, "mode": "real"},
+    )
+    assert response.status_code == 503
+    assert response.json()["detail"] == {
+        "code": "RAG_UNAVAILABLE",
+        "message": "real RAG embedding dependency is unavailable",
+    }
+
+
+def test_courses_list_uses_catalog_projection(monkeypatch):
+    from app.api.v1.endpoints import courses as courses_endpoint
+    from app.db.seeds._constants import COURSE_PRODUCTS
+    from app.schemas.course_product import CourseCatalogItemDTO
+
+    class CatalogService:
+        async def list_catalog(self, *, user_id):
+            return [
+                CourseCatalogItemDTO(
+                    id=product.id,
+                    code=product.code,
+                    title=product.title,
+                    domain=product.domain,
+                    description=product.description,
+                    content_status=product.content_status,
+                    unavailable_reason=product.unavailable_reason,
+                    chapter_count=0,
+                    knowledge_point_count=0,
+                    resource_count=0,
+                    progress_percent=0,
+                    core_coverage_percent=0,
+                )
+                for product in COURSE_PRODUCTS
+            ]
+
+    monkeypatch.setattr(courses_endpoint, "_course_catalog_service", lambda _session: CatalogService())
     client = TestClient(app)
     response = client.get("/api/v1/courses")
     assert response.status_code == 200
     body = response.json()
-    assert any(c["code"] == "WEB-SEC-101" for c in body)
+    assert [course["code"] for course in body] == ["WEBSEC-101", "CRYPTO-101", "NET-SEC-201", "SDL-201"]
 
 
-def test_course_plan_endpoint():
-    client = TestClient(app)
-    response = client.post(
-        "/api/v1/courses/course-websec/plan",
-        json={"user_id": USER_ID, "target_node_id": KP_ID, "options": {"depth": 3}},
+def test_llm_health_endpoint_uses_health_service(monkeypatch):
+    from app.api.v1.endpoints import llm as llm_endpoint
+
+    async def available_health() -> HealthStatus:
+        return HealthStatus(
+            provider="deepseek",
+            model="deepseek-v4-pro",
+            mode="real",
+            live_enabled=True,
+            status="available",
+            rate_limit_state={"used": 2, "limit": 10},
+        )
+
+    monkeypatch.setattr(llm_endpoint, "get_llm_health", available_health)
+    monkeypatch.setattr(
+        llm_endpoint,
+        "get_settings",
+        lambda: SimpleNamespace(
+            AGENT_RUN_REAL_ENABLED=True,
+            LLM_PROVIDER="deepseek",
+            DEEPSEEK_MODEL="deepseek-v4-pro",
+            XFYUN_MODEL="spark-v4",
+        ),
     )
-    assert response.status_code == 200
-    body = response.json()
-    assert body["course_id"] == COURSE_ID
-    assert "path" in body
 
-
-def test_profile_chat_endpoint_sse():
-    client = TestClient(app)
-    response = client.post(
-        "/api/v1/profile/chat",
-        json={"user_id": "demo", "message": "I want to learn web security."},
-    )
-    assert response.status_code == 200
-    assert response.headers["content-type"].startswith("text/event-stream")
-    assert "event: " in response.text
-
-
-def test_tutor_ask_endpoint_sse():
-    client = TestClient(app)
-    response = client.post(
-        "/api/v1/tutor/ask",
-        json={"user_id": USER_ID, "course_id": COURSE_ID, "question": "Why use parameterized queries?"},
-    )
-    assert response.status_code == 200
-    assert response.headers["content-type"].startswith("text/event-stream")
-    assert "event: " in response.text
-
-
-def test_resource_generate_endpoint_sse():
-    client = TestClient(app)
-    response = client.post(
-        "/api/v1/courses/course-websec/resources/generate?type=readings",
-        json={"type": "readings", "user_id": USER_ID, "kp_id": KP_ID},
-    )
-    assert response.status_code == 200
-    assert response.headers["content-type"].startswith("text/event-stream")
-    assert "event: " in response.text
-
-
-def test_assessment_run_endpoint():
-    client = TestClient(app)
-    response = client.post(
-        "/api/v1/assessment/run",
-        json={"user_id": USER_ID, "course_id": COURSE_ID, "answers": [{"quiz_item_id": "q1", "answer": "A"}]},
-    )
-    assert response.status_code == 200
-    body = response.json()
-    assert "score" in body
-    assert "feedback" in body
-    assert "updated_capabilities" in body
-
-
-def test_llm_health_endpoint_fixture_mode():
     client = TestClient(app)
     response = client.get("/api/v1/llm/health")
     assert response.status_code == 200
     assert response.json() == {
-        "provider": "fixture",
-        "model": "fixture-canned",
-        "mode": "fixture",
-        "live_enabled": False,
+        "provider": "deepseek",
+        "model": "deepseek-v4-pro",
+        "mode": "real",
+        "live_enabled": True,
         "status": "available",
         "last_error": None,
+        "rate_limit_state": {"used": 2, "limit": 10},
+    }
+
+
+def test_llm_health_endpoint_does_not_probe_when_real_execution_is_disabled(monkeypatch):
+    from app.api.v1.endpoints import llm as llm_endpoint
+
+    async def unexpected_probe() -> HealthStatus:
+        raise AssertionError("disabled health endpoint must not probe a provider")
+
+    monkeypatch.setattr(llm_endpoint, "get_llm_health", unexpected_probe)
+    monkeypatch.setattr(
+        llm_endpoint,
+        "get_settings",
+        lambda: SimpleNamespace(
+            AGENT_RUN_REAL_ENABLED=False,
+            LLM_PROVIDER="xfyun",
+            DEEPSEEK_MODEL="deepseek-v4-pro",
+            XFYUN_MODEL="spark-v4",
+        ),
+    )
+
+    response = TestClient(app).get("/api/v1/llm/health")
+    assert response.status_code == 200
+    assert response.json() == {
+        "provider": "xfyun",
+        "model": "spark-v4",
+        "mode": "real",
+        "live_enabled": False,
+        "status": "unknown",
+        "last_error": "real execution is disabled",
         "rate_limit_state": {"used": 0, "limit": 0},
     }
 
 
-def test_agent_fixture_services_match_frozen_dtos():
-    async def collect() -> tuple[dict, dict, list[dict], list[dict]]:
-        plan = await generate_learning_path(
-            user_id=USER_ID,
-            course_id=COURSE_ID,
-            target_node_id=KP_ID,
+def test_llm_health_endpoint_sanitizes_provider_error(monkeypatch):
+    from app.api.v1.endpoints import llm as llm_endpoint
+
+    async def unavailable_health() -> HealthStatus:
+        return HealthStatus(
+            provider="deepseek",
+            model="deepseek-v4-pro",
+            mode="real",
+            live_enabled=True,
+            status="error",
+            last_error="upstream error with implementation details",
         )
-        assessment = await run_assessment(
-            user_id=USER_ID,
-            course_id=COURSE_ID,
-            answers=[],
-        )
-        persona_events = [
-            event
-            async for event in build_learning_persona(
-                user_id=USER_ID,
-                message="I want to learn SQL injection.",
-                dialogue_turns=[],
-            )
-        ]
-        resource_events = [
-            event
-            async for event in generate_resource(
-                user_id=USER_ID,
-                course_id=COURSE_ID,
-                kp_id=KP_ID,
-                type="doc",
-            )
-        ]
-        return plan, assessment, persona_events, resource_events
 
-    plan, assessment, persona_events, resource_events = asyncio.run(collect())
-
-    CoursePlanResponse(**plan)
-    AssessmentRunResponse(**assessment)
-
-    evidence = next(event for event in resource_events if event["event"] == "evidence")
-    EvidenceChunkDTO(**{key: value for key, value in evidence.items() if key != "event"})
-
-    trace = next(event for event in persona_events if event["event"] == "trace")
-    AgentTraceDTO(**{key: value for key, value in trace.items() if key != "event"})
-    assert trace["provider"] == "fixture"
-    assert trace["model"] == "fixture-canned"
-
-    assert {event["event"] for event in resource_events} >= {
-        "progress",
-        "evidence",
-        "token",
-        "artifact",
-        "trace",
-        "done",
-    }
-
-
-def test_resource_generate_sse_contains_contract_payloads():
-    client = TestClient(app)
-    response = client.post(
-        "/api/v1/courses/course-websec/resources/generate?type=doc",
-        json={"type": "doc", "user_id": USER_ID, "kp_id": KP_ID},
+    monkeypatch.setattr(llm_endpoint, "get_llm_health", unavailable_health)
+    monkeypatch.setattr(
+        llm_endpoint,
+        "get_settings",
+        lambda: SimpleNamespace(
+            AGENT_RUN_REAL_ENABLED=True,
+            LLM_PROVIDER="deepseek",
+            DEEPSEEK_MODEL="deepseek-v4-pro",
+            XFYUN_MODEL="spark-v4",
+        ),
     )
-    assert response.status_code == 200
-    assert "event: evidence" in response.text
-    assert "event: artifact" in response.text
-    assert "event: trace" in response.text
 
-    payloads = [
-        json.loads(line.removeprefix("data: "))
-        for line in response.text.splitlines()
-        if line.startswith("data: ")
-    ]
-    assert any(payload.get("platform") == "owasp" for payload in payloads)
-    assert any(payload.get("provider") == "fixture" for payload in payloads)
+    response = TestClient(app).get("/api/v1/llm/health")
+    assert response.status_code == 200
+    assert response.json()["last_error"] == "provider health check failed"

@@ -153,6 +153,37 @@ export type FundRecommendation = {
   evidence_chunks: EvidenceChunkDTO[];
 };
 
+/** Real terminal projection from the independent fund_recommendation_v1 root. */
+export type FundWorkflowRecommendation = {
+  fund_name: string;
+  source_name: string;
+  source_url: string;
+  deadline: string;
+  level: string;
+  direction: string;
+  fit_score: number;
+  matched_profile_dimensions: string[];
+  reason: string;
+  gaps_or_risks: string[];
+  next_action: string;
+  evidence_snapshot_ids: string[];
+};
+
+export type FundWorkflowResult = {
+  recommendations: FundWorkflowRecommendation[];
+  landscape_summary: string;
+  profile_dimensions_used: string[];
+  evidence_snapshot_ids: string[];
+};
+
+export type FundRecommendationCommand = {
+  query?: string;
+  course_context?: {
+    course_id?: string;
+    knowledge_point_id?: string;
+  };
+};
+
 export type HotTrendPoint = {
   date: string;
   heat: number;

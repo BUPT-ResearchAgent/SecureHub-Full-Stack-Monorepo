@@ -1,60 +1,183 @@
-# Status: partial-real
+"""HTTP contract tests for the durable Workflow Run control plane."""
 
 from __future__ import annotations
 
-import time
-import re
-from types import SimpleNamespace
+from datetime import datetime, timezone
+from uuid import UUID, uuid4
 
+import pytest
 from fastapi.testclient import TestClient
 
+from app.api.v1.endpoints import agent_control
+from app.db.seeds._constants import DEMO_USER_ID
 from app.main import app
+from app.runtime.contracts import EventEnvelope, EventType
+from app.schemas.agent_control import (
+    WorkflowRunCancelResponse,
+    WorkflowRunControlResponse,
+    WorkflowRunResponse,
+    WorkflowRunStartRequest,
+    WorkflowRunStartResponse,
+)
 
 
-USER_ID = "00000000-0000-0000-0000-000000000001"
+class RecordingWorkflowService:
+    """Durable-service double; no Skill, queue, or in-memory executor."""
+
+    def __init__(self) -> None:
+        self.requests: list[tuple[WorkflowRunStartRequest, str | None, UUID | str | None]] = []
+        self.replay_cursors: list[int] = []
+        self.actions: list[tuple[str, UUID, UUID | str | None]] = []
+        self._starts: dict[tuple[str, str | None], WorkflowRunStartResponse] = {}
+        self._runs: dict[UUID, WorkflowRunResponse] = {}
+        self._events: dict[UUID, list[EventEnvelope]] = {}
+
+    async def start(
+        self,
+        request: WorkflowRunStartRequest,
+        *,
+        idempotency_key: str | None = None,
+        actor_user_id: UUID | str | None = None,
+    ) -> WorkflowRunStartResponse:
+        self.requests.append((request, idempotency_key, actor_user_id))
+        key = (request.workflow, idempotency_key)
+        if idempotency_key and key in self._starts:
+            return self._starts[key]
+        run_id = uuid4()
+        start = WorkflowRunStartResponse(
+            run_id=run_id,
+            workflow=request.workflow,
+            status="queued",
+            events_url=f"/api/v1/workflow-runs/{run_id}/events",
+            cancel_url=f"/api/v1/workflow-runs/{run_id}/cancel",
+            mode=request.mode,
+            requested_provider=request.provider,
+            requested_model=request.model,
+            provider=request.provider,
+            model=request.model,
+        )
+        self._starts[key] = start
+        self._runs[run_id] = WorkflowRunResponse(
+            run_id=run_id,
+            workflow=request.workflow,
+            workflow_version="1",
+            status="succeeded",
+            mode=request.mode,
+            requested_provider=request.provider,
+            requested_model=request.model,
+            provider=request.provider,
+            model=request.model,
+            created_at=datetime.now(timezone.utc),
+            final_output={"output": {}},
+        )
+        self._events[run_id] = [
+            EventEnvelope(
+                workflow_run_id=run_id,
+                sequence=1,
+                event_type=EventType.PROGRESS,
+                payload={"root_status": "queued", "status": "queued", "mode": request.mode},
+            ),
+            EventEnvelope(
+                workflow_run_id=run_id,
+                sequence=2,
+                event_type=EventType.DONE,
+                payload={"status": "succeeded", "final_output_ref": None},
+            ),
+        ]
+        return start
+
+    async def get(
+        self, run_id: UUID | str, *, actor_user_id: UUID | str | None = None
+    ) -> WorkflowRunResponse:
+        return self._runs[UUID(str(run_id))]
+
+    async def replay(
+        self,
+        run_id: UUID | str,
+        *,
+        after_sequence: int = 0,
+        until_sequence: int | None = None,
+        actor_user_id: UUID | str | None = None,
+    ) -> list[EventEnvelope]:
+        self.replay_cursors.append(after_sequence)
+        return [
+            event
+            for event in self._events[UUID(str(run_id))]
+            if event.sequence > after_sequence
+            and (until_sequence is None or event.sequence <= until_sequence)
+        ]
+
+    async def cancel(
+        self, run_id: UUID | str, *, actor_user_id: UUID | str | None = None
+    ) -> WorkflowRunCancelResponse:
+        parsed = UUID(str(run_id))
+        self.actions.append(("cancel", parsed, actor_user_id))
+        return WorkflowRunCancelResponse(run_id=parsed, status="cancelling", cancel_requested=True)
+
+    async def pause(
+        self, run_id: UUID | str, *, actor_user_id: UUID | str | None = None
+    ) -> WorkflowRunControlResponse:
+        return self._action("pause", run_id, actor_user_id)
+
+    async def resume(
+        self, run_id: UUID | str, *, actor_user_id: UUID | str | None = None
+    ) -> WorkflowRunControlResponse:
+        return self._action("resume", run_id, actor_user_id)
+
+    async def retry(
+        self, run_id: UUID | str, *, actor_user_id: UUID | str | None = None
+    ) -> WorkflowRunControlResponse:
+        return self._action("retry", run_id, actor_user_id)
+
+    def _action(
+        self, name: str, run_id: UUID | str, actor_user_id: UUID | str | None
+    ) -> WorkflowRunControlResponse:
+        parsed = UUID(str(run_id))
+        self.actions.append((name, parsed, actor_user_id))
+        return WorkflowRunControlResponse(run_id=parsed, status="queued", compatibility="compatible")
 
 
-def _event_ids(sse_text: str) -> list[int]:
-    return [int(value) for value in re.findall(r"^id: (\d+)$", sse_text, re.MULTILINE)]
+@pytest.fixture
+def service(monkeypatch: pytest.MonkeyPatch) -> RecordingWorkflowService:
+    fake = RecordingWorkflowService()
+    monkeypatch.setattr(agent_control, "_service", lambda _request=None: fake)
+    return fake
 
 
-def _start_fixture_run(client: TestClient) -> dict[str, object]:
+@pytest.fixture
+def client() -> TestClient:
+    # Lifespan is intentionally not entered: this suite exercises the HTTP
+    # contract around the application service, not a Worker process.
+    return TestClient(app)
+
+
+def _start_fixture_run(client: TestClient, *, idempotency_key: str | None = None) -> dict[str, object]:
+    headers = {"Idempotency-Key": idempotency_key} if idempotency_key else {}
     response = client.post(
         "/api/v1/workflow-runs",
         json={
-            "workflow": "course_learning_minimal",
-            "user_id": USER_ID,
-            "course_id": "course-websec",
-            "topic": "SQL 注入",
-            "goal": "为初学者生成 SQL 注入学习路径和入门资源",
+            "workflow": "resource_generate_v1",
+            "user_id": "00000000-0000-0000-0000-000000000999",
+            "course_id": "5f63a7c3-1c76-513c-88a5-f335d6190816",
+            "input": {"resource_type": "doc", "query": "SQL injection"},
             "mode": "fixture",
             "provider": "fixture",
             "stream": True,
         },
+        headers=headers,
     )
     assert response.status_code == 202, response.text
     return response.json()
 
 
-def _wait_for_terminal(client: TestClient, run_id: str, timeout_seconds: float = 2.0) -> dict[str, object]:
-    deadline = time.monotonic() + timeout_seconds
-    while time.monotonic() < deadline:
-        response = client.get(f"/api/v1/workflow-runs/{run_id}")
-        assert response.status_code == 200, response.text
-        body = response.json()
-        if body["status"] in {"succeeded", "failed", "blocked", "cancelled"}:
-            return body
-        time.sleep(0.02)
-    raise AssertionError(f"workflow run {run_id} did not reach a terminal state")
+def test_manifest_exposes_exactly_nine_agents_and_frozen_catalog() -> None:
+    client = TestClient(app)
+    response = client.get("/api/v1/agents/manifest")
 
-
-def test_manifest_exposes_exactly_nine_fixed_agents():
-    with TestClient(app) as client:
-        response = client.get("/api/v1/agents/manifest")
-
-    assert response.status_code == 200
+    assert response.status_code == 200, response.text
     body = response.json()
     assert body["total"] == 9
+    assert body["catalog_version"] == "production-catalog-v1"
     assert {agent["name"] for agent in body["agents"]} == {
         "policy_interpreter",
         "hot_analyst",
@@ -66,186 +189,96 @@ def test_manifest_exposes_exactly_nine_fixed_agents():
         "task_orchestrator",
         "outcome_evaluator",
     }
+    assert sum(len(agent["skills"]) for agent in body["agents"]) == 28
+    assert all(agent["stable_id"] for agent in body["agents"])
 
 
-def test_fixture_workflow_status_and_sse_trace_are_observable():
-    with TestClient(app) as client:
-        started = _start_fixture_run(client)
-        run_id = str(started["run_id"])
-        terminal = _wait_for_terminal(client, run_id)
-        events = client.get(f"/api/v1/workflow-runs/{run_id}/events")
+def test_start_creates_one_owned_durable_root(
+    client: TestClient, service: RecordingWorkflowService
+) -> None:
+    started = _start_fixture_run(client, idempotency_key="same-root")
 
     assert started["mode"] == "fixture"
     assert started["provider"] == "fixture"
-    assert terminal["status"] == "succeeded"
-    assert terminal["child_run_count"] == 5
-    assert len({item["agent_name"] for item in terminal["child_runs"]}) >= 4
-    assert all(item["status"] == "succeeded" for item in terminal["child_runs"])
-    assert events.status_code == 200
-    assert events.headers["content-type"].startswith("text/event-stream")
-    assert "event: progress" in events.text
-    assert "event: trace" in events.text
-    assert "event: done" in events.text
-    assert '"mode": "fixture"' in events.text
-    assert '"provider": "fixture"' in events.text
-    assert '"mode": "real"' not in events.text
+    assert started["events_url"] == f"/api/v1/workflow-runs/{started['run_id']}/events"
+    request, key, actor = service.requests[-1]
+    assert request.workflow == "resource_generate_v1"
+    assert request.user_id == str(DEMO_USER_ID)
+    assert actor == DEMO_USER_ID
+    assert key == "same-root"
 
 
-def test_completed_sse_history_replays_after_last_event_id():
-    with TestClient(app) as client:
-        started = _start_fixture_run(client)
-        run_id = str(started["run_id"])
-        _wait_for_terminal(client, run_id)
-        initial = client.get(f"/api/v1/workflow-runs/{run_id}/events")
-        initial_ids = _event_ids(initial.text)
-        replay = client.get(
-            f"/api/v1/workflow-runs/{run_id}/events",
-            headers={"Last-Event-ID": str(initial_ids[0])},
-        )
+def test_idempotency_returns_the_same_root_without_a_second_execution(
+    client: TestClient, service: RecordingWorkflowService
+) -> None:
+    first = _start_fixture_run(client, idempotency_key="same-root")
+    second = _start_fixture_run(client, idempotency_key="same-root")
 
-    replay_ids = _event_ids(replay.text)
-    assert initial.status_code == 200
-    assert initial_ids
-    assert replay.status_code == 200
-    assert replay_ids
-    assert all(event_id > initial_ids[0] for event_id in replay_ids)
-    assert "event: trace" in replay.text
+    assert first["run_id"] == second["run_id"]
+    assert len(service._runs) == 1
+    assert len(service.requests) == 2
 
 
-def test_cancel_marks_active_fixture_run_cancelled(monkeypatch):
-    from app.runtime.workflows import course_learning_minimal
+def test_sse_replay_honours_last_event_id_and_keeps_fixed_event_vocabulary(
+    client: TestClient, service: RecordingWorkflowService
+) -> None:
+    started = _start_fixture_run(client)
+    run_id = str(started["run_id"])
 
-    monkeypatch.setattr(course_learning_minimal, "FIXTURE_STEP_DELAY_SECONDS", 0.2)
-    with TestClient(app) as client:
-        started = _start_fixture_run(client)
-        run_id = str(started["run_id"])
-        cancelled = client.post(f"/api/v1/workflow-runs/{run_id}/cancel")
-        terminal = _wait_for_terminal(client, run_id)
-        events = client.get(f"/api/v1/workflow-runs/{run_id}/events")
+    initial = client.get(f"/api/v1/workflow-runs/{run_id}/events")
+    replay = client.get(
+        f"/api/v1/workflow-runs/{run_id}/events",
+        headers={"Last-Event-ID": "1"},
+    )
 
-    assert cancelled.status_code == 200, cancelled.text
-    assert cancelled.json()["status"] in {"cancelling", "cancelled"}
-    assert terminal["status"] == "cancelled"
-    assert any(item["status"] in {"cancelled", "skipped"} for item in terminal["child_runs"])
-    assert "event: done" in events.text
-    assert '"status": "cancelled"' in events.text
-    assert "event: token" not in events.text
-    assert "event: artifact" not in events.text
-
-
-def test_real_request_is_rejected_when_server_side_gate_is_disabled():
-    with TestClient(app) as client:
-        response = client.post(
-            "/api/v1/workflow-runs",
-            json={
-                "workflow": "course_learning_minimal",
-                "user_id": USER_ID,
-                "course_id": "course-websec",
-                "mode": "real",
-                "provider": "deepseek",
-            },
-        )
-
-    assert response.status_code == 503
-    assert response.json()["detail"]["code"] == "REAL_MODE_DISABLED"
+    assert initial.status_code == replay.status_code == 200
+    assert initial.headers["content-type"].startswith("text/event-stream")
+    assert "id: 1" in initial.text and "event: progress" in initial.text
+    assert "id: 2" in initial.text and "event: done" in initial.text
+    assert "id: 1" not in replay.text and "id: 2" in replay.text
+    assert "event: done" in replay.text
+    assert service.replay_cursors[-1] == 1
+    assert "event: fixture" not in initial.text
 
 
-def test_real_request_rejects_any_provider_except_deepseek():
-    with TestClient(app) as client:
-        response = client.post(
-            "/api/v1/workflow-runs",
-            json={
-                "workflow": "course_learning_minimal",
-                "user_id": USER_ID,
-                "course_id": "course-websec",
-                "mode": "real",
-                "provider": "xfyun",
-            },
-        )
+def test_cursor_validation_rejects_negative_and_conflicting_values(client: TestClient) -> None:
+    negative = client.get(
+        "/api/v1/workflow-runs/00000000-0000-0000-0000-000000000001/events",
+        headers={"Last-Event-ID": "-1"},
+    )
+    conflict = client.get(
+        "/api/v1/workflow-runs/00000000-0000-0000-0000-000000000001/events?after_sequence=1",
+        headers={"Last-Event-ID": "2"},
+    )
+
+    assert negative.status_code == conflict.status_code == 422
+    assert negative.json()["detail"]["code"] == "INVALID_EVENT_CURSOR"
+    assert conflict.json()["detail"]["code"] == "INVALID_EVENT_CURSOR"
+
+
+@pytest.mark.parametrize("action", ["cancel", "pause", "resume", "retry"])
+def test_control_actions_forward_only_the_durable_root(
+    client: TestClient, service: RecordingWorkflowService, action: str
+) -> None:
+    started = _start_fixture_run(client)
+    run_id = str(started["run_id"])
+    response = client.post(f"/api/v1/workflow-runs/{run_id}/{action}")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["run_id"] == run_id
+    assert service.actions[-1] == (action, UUID(run_id), DEMO_USER_ID)
+
+
+def test_real_mode_cannot_select_fixture_provider(client: TestClient) -> None:
+    response = client.post(
+        "/api/v1/workflow-runs",
+        json={
+            "workflow": "resource_generate_v1",
+            "user_id": "00000000-0000-0000-0000-000000000999",
+            "input": {"resource_type": "doc", "query": "SQL injection"},
+            "mode": "real",
+            "provider": "fixture",
+        },
+    )
 
     assert response.status_code == 422
-    assert response.json()["detail"]["code"] == "INVALID_PROVIDER"
-
-
-def test_real_request_rejects_invalid_user_id_before_real_gate():
-    with TestClient(app) as client:
-        response = client.post(
-            "/api/v1/workflow-runs",
-            json={
-                "workflow": "course_learning_minimal",
-                "user_id": "not-a-uuid",
-                "course_id": "course-websec",
-                "mode": "real",
-                "provider": "deepseek",
-            },
-        )
-
-    assert response.status_code == 422
-    assert response.json()["detail"]["code"] == "INVALID_USER_ID"
-
-
-def test_real_endpoint_returns_202_with_enabled_gate_and_fake_provider(monkeypatch):
-    from app.api.v1.endpoints import agent_control
-    from app.runtime.run_registry import RunRegistry
-    from app.services import agent_control_service
-    from app.services.agent_control_service import AgentControlService
-
-    fake_provider = SimpleNamespace(provider_name="deepseek", model_name="fake-deepseek-v4")
-
-    async def fake_workflow(run_id, registry):
-        record = await registry.get(run_id)
-        if not await registry.mark_running(run_id):
-            return
-        await registry.mark_succeeded(run_id, {})
-        await registry.publish(
-            run_id,
-            {
-                "event": "done",
-                "workflow_run_id": str(run_id),
-                "status": "succeeded",
-                "final_output_ref": None,
-                "child_run_count": len(record.nodes),
-                "quality_score": None,
-                "mode": record.mode,
-                "provider": record.provider,
-                "model": record.model,
-            },
-        )
-
-    async def fake_preflight(_user_id):
-        return None
-
-    monkeypatch.setattr(
-        agent_control_service,
-        "get_settings",
-        lambda: SimpleNamespace(
-            AGENT_RUN_REAL_ENABLED=True,
-            AGENT_RUN_REAL_MAX_CONCURRENCY=1,
-        ),
-    )
-    monkeypatch.setattr(
-        agent_control_service,
-        "get_strict_deepseek_provider",
-        lambda: fake_provider,
-    )
-    monkeypatch.setattr(agent_control_service, "run_course_learning_minimal", fake_workflow)
-    service = AgentControlService(RunRegistry())
-    monkeypatch.setattr(service, "_validate_real_prerequisites", fake_preflight)
-    monkeypatch.setattr(agent_control, "_service", service)
-
-    with TestClient(app) as client:
-        response = client.post(
-            "/api/v1/workflow-runs",
-            json={
-                "workflow": "course_learning_minimal",
-                "user_id": USER_ID,
-                "course_id": "course-websec",
-                "mode": "real",
-                "provider": "deepseek",
-            },
-        )
-
-    assert response.status_code == 202
-    assert response.json()["mode"] == "real"
-    assert response.json()["provider"] == "deepseek"
-    assert response.json()["model"] == "fake-deepseek-v4"

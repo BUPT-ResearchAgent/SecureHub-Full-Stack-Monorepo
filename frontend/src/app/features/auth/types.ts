@@ -1,8 +1,16 @@
+export type AppRole =
+  | 'student'
+  | 'course_teacher'
+  | 'research_mentor'
+  | 'career_mentor'
+  | 'hybrid';
+
 export type AuthUser = {
   id: string;
   email: string;
   display_name: string;
   is_active: boolean;
+  role: AppRole;
 };
 
 export type LoginRequest = {

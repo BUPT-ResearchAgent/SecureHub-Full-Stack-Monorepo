@@ -930,7 +930,7 @@ function CapabilityRadarPreviewCard({ onOpen }: { onOpen: () => void }) {
 
   useEffect(() => {
     let cancelled = false;
-    getMyProfile(userId)
+    getMyProfile()
       .then((profile) => {
         if (cancelled) return;
         setCapabilities(profile.capabilities ?? []);

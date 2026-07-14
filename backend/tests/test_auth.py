@@ -15,7 +15,7 @@ from app.db.base import Base
 from app.db.models.identity.user import User
 from app.db.models.identity.user_capability import UserCapability
 from app.db.models.identity.user_profile import UserProfile
-from app.db.seeds._constants import DEMO_USER_EMAIL, DEMO_USER_PASSWORD
+from app.db.seeds._constants import DEMO_ACCOUNTS, DEMO_USER_EMAIL, DEMO_USER_PASSWORD
 from app.db.seeds.seed_demo_user import run as seed_demo_user
 from app.db.session import get_session
 from app.main import app
@@ -84,6 +84,7 @@ def test_register_success(auth_client: TestClient) -> None:
     assert body["access_token"]
     assert body["user"]["email"] == "new-user@example.com"
     assert body["user"]["display_name"] == "新同学"
+    assert body["user"]["role"] == "student"
 
 
 def test_register_duplicate_email_returns_409(auth_client: TestClient) -> None:
@@ -149,4 +150,42 @@ def test_demo_account_can_login(auth_client: TestClient) -> None:
     body = response.json()
     assert body["user"]["email"] == DEMO_USER_EMAIL
     assert body["user"]["display_name"] == "陈同学"
+    assert body["user"]["role"] == "student"
     assert body["access_token"]
+
+
+def test_teacher_demo_account_has_server_issued_role_and_context(auth_client: TestClient) -> None:
+    _, _, email, _ = next(account for account in DEMO_ACCOUNTS if account[0] == "research_mentor")
+    login = auth_client.post(
+        "/api/v1/auth/login",
+        json={"email": email, "password": DEMO_USER_PASSWORD},
+    )
+
+    assert login.status_code == 200
+    token = login.json()["access_token"]
+    assert login.json()["user"]["role"] == "research_mentor"
+
+    context = auth_client.get(
+        "/api/v1/teacher/context",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert context.status_code == 200
+    assert context.json()["role"] == "research_mentor"
+    assert "research" in context.json()["allowed_modules"]
+    assert "quiz-bank" not in context.json()["allowed_modules"]
+
+
+def test_student_demo_account_cannot_read_teacher_context(auth_client: TestClient) -> None:
+    login = auth_client.post(
+        "/api/v1/auth/login",
+        json={"email": DEMO_USER_EMAIL, "password": DEMO_USER_PASSWORD},
+    )
+
+    response = auth_client.get(
+        "/api/v1/teacher/context",
+        headers={"Authorization": f"Bearer {login.json()['access_token']}"},
+    )
+
+    assert response.status_code == 403
+    assert response.json()["detail"]["code"] == "TEACHER_ROLE_REQUIRED"

@@ -7,16 +7,19 @@ from app.api.v1.endpoints import (
     auth,
     courses,
     ctftime,
+    fund_recommendations,
     health,
     llm,
     placeholder,
     policy,
     profile,
+    provider_credentials,
     rag,
     research,
-    streaming,
+    resources,
     system,
     tutor,
+    teacher,
     uploads,
 )
 
@@ -34,6 +37,7 @@ api_router.include_router(
     prefix="/research",
     tags=["research"],
 )
+api_router.include_router(fund_recommendations.router, tags=["fund-recommendations"])
 api_router.include_router(
     ctftime.router,
     prefix="/ctftime",
@@ -45,8 +49,10 @@ api_router.include_router(
     tags=["policy"],
 )
 api_router.include_router(profile.router, tags=["profile"])
+api_router.include_router(teacher.router, tags=["teacher"])
+api_router.include_router(provider_credentials.router, tags=["provider-credentials"])
 api_router.include_router(courses.router, tags=["courses"])
-api_router.include_router(streaming.router, tags=["streaming"])
+api_router.include_router(resources.router, tags=["resources"])
 api_router.include_router(agents.router, tags=["agents"])
 api_router.include_router(agent_control.router, tags=["agent-control"])
 api_router.include_router(rag.router, tags=["rag"])

@@ -3,7 +3,7 @@
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import JSON, Float, ForeignKey, String, Text
+from sqlalchemy import JSON, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -31,6 +31,15 @@ class GeneratedResource(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         ForeignKey("agent_runs.id"),
         index=True,
     )
+    workflow_run_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("workflow_runs.id"), index=True
+    )
+    step_attempt_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("workflow_step_attempts.id"), index=True
+    )
+    parent_resource_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), index=True)
+    lineage_root_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), index=True)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
     resource_type: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
     title: Mapped[str] = mapped_column(Text, nullable=False)
     content: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, nullable=False)

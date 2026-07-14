@@ -1,4 +1,5 @@
 import type { CapabilityDTO, EvidenceChunkDTO, ResourceType as SSEResourceType } from '@/lib/sse.types';
+import type { WorkflowRunStatus } from '@/lib/workflow-run.types';
 
 export type ResourceType = SSEResourceType;
 
@@ -21,6 +22,7 @@ export type LearningPersona = {
 export type LearningPathNode = {
   id: string;
   label: string;
+  description?: string;
   status: 'locked' | 'ready' | 'active' | 'done';
   priority: number;
 };
@@ -33,6 +35,7 @@ export type LearningPathEdge = {
 
 export type LearningPath = {
   courseId: string;
+  workflowRunId?: string;
   nodes: LearningPathNode[];
   edges: LearningPathEdge[];
   milestones: Array<{ id: string; title: string; week: number }>;
@@ -62,4 +65,68 @@ export type CourseProgressEvent = {
   nodeName: string;
   status: string;
   percentage: number;
+};
+
+/**
+ * The course surface deliberately accepts only product workflows with a
+ * stable adapter.  This is not an LLM intent classifier: callers must choose
+ * one of the five supported actions before a durable root can be created.
+ */
+export const SUPPORTED_TASK_INTENTS = [
+  'build_persona',
+  'plan_course',
+  'generate_resource',
+  'ask_tutor',
+  'run_assessment',
+] as const;
+
+export type SupportedTaskIntent = (typeof SUPPORTED_TASK_INTENTS)[number];
+
+export type CourseTaskContext = {
+  userId: string;
+  courseId: string;
+  kpId: string;
+  currentPathNodeIds: string[];
+};
+
+export type CourseTaskCommand =
+  | {
+      intent: 'build_persona';
+      context: CourseTaskContext;
+      payload: { message: string; history: Array<Record<string, unknown>> };
+    }
+  | {
+      intent: 'plan_course';
+      context: CourseTaskContext;
+      payload: { targetNodeId: string; depth?: number };
+    }
+  | {
+      intent: 'generate_resource';
+      context: CourseTaskContext;
+      payload: { resourceType: ResourceType; options?: Record<string, unknown> };
+    }
+  | {
+      intent: 'ask_tutor';
+      context: CourseTaskContext;
+      payload: { question: string };
+    }
+  | {
+      intent: 'run_assessment';
+      context: CourseTaskContext;
+      payload: { answers: Array<Record<string, unknown>>; quizArtifactId?: string };
+    };
+
+export type CourseWorkflowRoot = {
+  runId: string;
+  intent: SupportedTaskIntent;
+  workflow: string;
+  status: WorkflowRunStatus;
+  mode: 'real' | 'fixture';
+  provider?: string | null;
+  model?: string | null;
+  evidenceCount: number;
+  artifactIds: string[];
+  lastSequence: number;
+  updatedAt: string;
+  error?: { code: string; message: string; recoverable?: boolean };
 };

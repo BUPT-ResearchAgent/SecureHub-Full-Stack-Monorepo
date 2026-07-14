@@ -2,14 +2,15 @@
 
 """AgentRunService — agent_runs 表的唯一写入者（规则 §3.7）。
 
-每次 skill 运行通过 HarnessContext.log_run() 调用此 service，
-记录 workflow / agent / skill / status / duration_ms / token_usage。
+RuntimeEngine 通过 AgentRunRecorder 调用此 service，记录
+workflow / agent / skill / status / duration_ms / token_usage。
 """
 
 from __future__ import annotations
 
 import logging
 from collections.abc import Sequence
+from datetime import datetime, timezone
 from time import perf_counter
 from typing import Any
 from uuid import UUID, uuid4
@@ -80,6 +81,11 @@ class AgentRunService:
         input_summary: dict[str, Any] | None = None,
         run_id: UUID | None = None,
         require_resolution: bool = False,
+        workflow_run_id: UUID | None = None,
+        step_attempt_id: UUID | None = None,
+        attempt: int | None = None,
+        provider: str | None = None,
+        model: str | None = None,
     ) -> UUID:
         """插入一条 status='running' 的 agent_runs 行，返回 run_id。"""
         from app.db.models.agent.agent_run import AgentRun
@@ -108,6 +114,12 @@ class AgentRunService:
             agent_id=agent_id,
             skill_id=skill_id,
             parent_run_id=parent_run_id,
+            workflow_run_id=workflow_run_id,
+            step_attempt_id=step_attempt_id,
+            attempt=attempt,
+            provider=provider,
+            model=model,
+            started_at=datetime.now(timezone.utc),
             input_summary=input_summary or {},
             output_summary={},
             evidence_chunk_ids=[],
@@ -144,6 +156,7 @@ class AgentRunService:
         run.quality_score = quality_score
         run.duration_ms = duration_ms
         run.token_usage = token_usage or {}
+        run.finished_at = datetime.now(timezone.utc)
         await self.session.flush()
 
     async def finish_failed(
@@ -152,6 +165,7 @@ class AgentRunService:
         *,
         error_summary: dict[str, Any],
         duration_ms: int | None = None,
+        error_code: str | None = None,
     ) -> None:
         """更新 run 状态为 failed，填充错误摘要。"""
         from app.db.models.agent.agent_run import AgentRun
@@ -163,6 +177,8 @@ class AgentRunService:
         run.status = "failed"
         run.output_summary = error_summary
         run.duration_ms = duration_ms
+        run.error_code = error_code or str(error_summary.get("code") or "INTERNAL")
+        run.finished_at = datetime.now(timezone.utc)
         await self.session.flush()
 
     async def list_runs(

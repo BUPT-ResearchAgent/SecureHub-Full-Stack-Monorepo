@@ -1,5 +1,6 @@
 import type { AgentRunDTO, ResourceType } from '@/lib/sse.types';
 import { mockEvidenceChunks } from '@/lib/mock/evidence.mock';
+import type { WorkflowEvent, WorkflowRunStartResponse, WorkflowRunStatus } from '@/lib/workflow-run.types';
 import type {
   EdgeStatus,
   NodeStatus,
@@ -13,6 +14,9 @@ import { workflowById } from './workflows';
 export type WorkflowAction =
   | { type: 'reset'; workflow: WorkflowDefinition; phase?: WorkflowRunState['phase']; runId?: string }
   | { type: 'setPhase'; phase: WorkflowRunState['phase'] }
+  | { type: 'applyWorkflowStart'; start: WorkflowRunStartResponse }
+  | { type: 'applyWorkflowControl'; status: WorkflowRunStatus }
+  | { type: 'applyWorkflowEvent'; event: WorkflowEvent }
   | { type: 'patchNode'; nodeId: string; patch: Partial<WorkflowNodeRun> }
   | { type: 'setEdge'; edgeId: string; status: EdgeStatus }
   | { type: 'setQuality'; score: number }
@@ -51,6 +55,24 @@ export function workflowRunReducer(state: WorkflowRunState, action: WorkflowActi
       return createInitialRunState(action.workflow, action.phase ?? 'idle', action.runId);
     case 'setPhase':
       return { ...state, phase: action.phase };
+    case 'applyWorkflowStart':
+      return {
+        ...state,
+        currentRunId: action.start.run_id,
+        durableRun: true,
+        rootStatus: action.start.status,
+        phase: phaseFromRootStatus(action.start.status),
+      };
+    case 'applyWorkflowControl':
+      return {
+        ...state,
+        rootStatus: action.status,
+        phase: phaseFromRootStatus(action.status),
+        approvalId: action.status === 'waiting_approval' ? state.approvalId : undefined,
+        approvalKind: action.status === 'waiting_approval' ? state.approvalKind : undefined,
+      };
+    case 'applyWorkflowEvent':
+      return applyWorkflowEventToState(state, action.event);
     case 'patchNode': {
       const previous = state.nodes[action.nodeId];
       if (!previous) return state;
@@ -108,7 +130,6 @@ function applyTraceToState(state: WorkflowRunState, run: AgentRunDTO): WorkflowR
       startedAt: status === 'running' ? Date.now() : state.nodes[node.id]?.startedAt,
       durationMs: run.duration_ms ?? undefined,
       qualityScore: run.quality_score ?? undefined,
-      evidenceChunks: status === 'success' ? mockEvidenceChunks : undefined,
       inputSummary: buildInputSummary(run.skill_name),
       outputSummary: status === 'success'
         ? { ...buildOutputSummary(run.skill_name), status: '真实 trace 已完成' }
@@ -138,11 +159,124 @@ function applyTraceToState(state: WorkflowRunState, run: AgentRunDTO): WorkflowR
   return next;
 }
 
+function applyWorkflowEventToState(state: WorkflowRunState, event: WorkflowEvent): WorkflowRunState {
+  let next = state;
+  if (event.event_type === 'progress') {
+    const payload = event.payload;
+    const nodeId = findWorkflowNodeId(state.workflowId, payload.node_id, payload.agent_name ?? payload.agent_id);
+    if (nodeId) {
+      const status = normalizeRunStatus(payload.node_status ?? payload.status ?? 'running');
+      next = workflowRunReducer(next, {
+        type: 'patchNode',
+        nodeId,
+        patch: {
+          status,
+          skillId: payload.skill_name ?? payload.skill_id,
+          startedAt: status === 'running' ? Date.now() : next.nodes[nodeId]?.startedAt,
+          interactionLogs: [{ time: currentClock(), text: `${payload.node_name ?? nodeId} ${statusLabel(status)}` }],
+        },
+      });
+    }
+  }
+
+  if (event.event_type === 'evidence') {
+    const payload = event.payload;
+    const nodeId = findWorkflowNodeId(state.workflowId, payload.node_id, payload.agent_name ?? payload.agent_id)
+      ?? activeWorkflowNodeId(next);
+    if (nodeId) {
+      next = workflowRunReducer(next, {
+        type: 'patchNode',
+        nodeId,
+        patch: { evidenceChunks: payload.items },
+      });
+    }
+  }
+
+  if (event.event_type === 'trace') {
+    next = applyTraceToState(next, {
+      id: event.payload.agent_run_id ?? event.payload.id,
+      run_id: event.payload.run_id ?? event.workflow_run_id,
+      agent_name: event.payload.agent_name ?? event.payload.agent_id ?? 'task_orchestrator',
+      skill_name: event.payload.skill_name ?? event.payload.skill_id ?? 'WorkflowNode',
+      status: event.payload.status ?? 'running',
+      duration_ms: event.payload.duration_ms,
+      quality_score: event.payload.quality_score,
+      provider: event.actual_provider ?? event.provider ?? event.payload.provider,
+      model: event.actual_model ?? event.model ?? event.payload.model,
+    });
+  }
+
+  if (event.event_type === 'artifact') {
+    next = workflowRunReducer(next, { type: 'markResources', resources: [event.payload.resource_type] });
+  }
+
+  if (event.event_type === 'done') {
+    next = workflowRunReducer(next, { type: 'setPhase', phase: 'done' });
+    if (event.payload.quality_score != null) {
+      next = workflowRunReducer(next, { type: 'setQuality', score: event.payload.quality_score });
+    }
+  }
+
+  if (event.event_type === 'error' && event.payload.terminal !== false) {
+    next = workflowRunReducer(next, { type: 'setPhase', phase: 'done' });
+  }
+
+  const rootStatus = rootStatusFromEvent(event) ?? next.rootStatus;
+  const approvalId = event.event_type === 'progress' && event.payload.approval_id
+    ? event.payload.approval_id
+    : rootStatus === 'waiting_approval'
+      ? next.approvalId
+      : undefined;
+  const approvalKind = event.event_type === 'progress' && event.payload.approval_kind
+    ? event.payload.approval_kind
+    : rootStatus === 'waiting_approval'
+      ? next.approvalKind
+      : undefined;
+  return {
+    ...next,
+    currentRunId: event.workflow_run_id,
+    durableRun: true,
+    rootStatus,
+    approvalId,
+    approvalKind,
+    phase: rootStatus ? phaseFromRootStatus(rootStatus) : next.phase,
+  };
+}
+
+function rootStatusFromEvent(event: WorkflowEvent): WorkflowRunStatus | undefined {
+  if (event.event_type === 'progress') return event.payload.root_status;
+  if (event.event_type === 'done') return event.payload.status;
+  if (event.event_type === 'error') return event.payload.status;
+  return undefined;
+}
+
+function findWorkflowNodeId(
+  workflowId: WorkflowDefinition['id'],
+  requestedNodeId?: string,
+  agentName?: string,
+): string | undefined {
+  const workflow = workflowById[workflowId];
+  if (requestedNodeId && workflow.nodes.some((node) => node.id === requestedNodeId)) return requestedNodeId;
+  if (agentName) return workflow.nodes.find((node) => node.agentId === agentName)?.id;
+  return undefined;
+}
+
+function activeWorkflowNodeId(state: WorkflowRunState): string | undefined {
+  return Object.entries(state.nodes).find(([, node]) => node.status === 'running')?.[0];
+}
+
+function phaseFromRootStatus(status: string): WorkflowRunState['phase'] {
+  if (status === 'paused' || status === 'pausing' || status === 'waiting_approval') return 'paused';
+  if (status === 'succeeded' || status === 'failed' || status === 'blocked' || status === 'cancelled') return 'done';
+  if (status === 'queued' || status === 'running' || status === 'reworking' || status === 'cancelling') return 'running';
+  return 'idle';
+}
+
 function normalizeRunStatus(status: string): NodeStatus {
-  if (status === 'success' || status === 'done') return 'success';
+  if (status === 'success' || status === 'succeeded' || status === 'done') return 'success';
   if (status === 'running') return 'running';
-  if (status === 'queued' || status === 'pending') return 'queued';
-  if (status === 'failed' || status === 'error') return 'failed';
+  if (status === 'queued' || status === 'pending' || status === 'ready') return 'queued';
+  if (status === 'failed' || status === 'blocked' || status === 'cancelled' || status === 'error') return 'failed';
   if (status === 'skipped') return 'skipped';
   return 'idle';
 }

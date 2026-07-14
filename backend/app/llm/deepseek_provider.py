@@ -35,11 +35,13 @@ class DeepSeekProvider(BaseLLMProvider):
 
     provider_name = "deepseek"
 
-    def __init__(self, settings: Any | None = None) -> None:
+    def __init__(self, settings: Any | None = None, *, api_key: str | None = None) -> None:
         from app.core.config import get_settings
 
         cfg = settings or get_settings()
-        self.api_key: str = cfg.DEEPSEEK_API_KEY
+        # A root-scoped credential is injected for this instance only. It
+        # never changes process-wide Settings or another user's provider.
+        self.api_key: str = cfg.DEEPSEEK_API_KEY if api_key is None else api_key
         self.base_url: str = getattr(cfg, "DEEPSEEK_BASE_URL", _DEFAULT_BASE_URL).rstrip("/")
         self.model_name = getattr(cfg, "DEEPSEEK_MODEL", _DEFAULT_MODEL)
         self.timeout = httpx.Timeout(60.0, read=120.0)

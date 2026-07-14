@@ -34,6 +34,11 @@ class CoursePlanRequest(BaseModel):
     user_id: UUID
     target_node_id: UUID
     options: dict[str, object] | None = None
+    # Fixture runs are explicit. The production default is real and never
+    # silently downgrades to canned content.
+    mode: Literal["fixture", "real"] = "real"
+    provider: str | None = None
+    model: str | None = None
 
 
 class CoursePlanResponse(BaseModel):

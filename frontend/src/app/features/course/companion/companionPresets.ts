@@ -88,8 +88,21 @@ const presets: Record<string, CompanionPreset> = {
   },
 };
 
-const FALLBACK: CompanionPreset = presets['web-security-foundation'];
+const PREVIEW_PRESET: CompanionPreset = {
+  greeting: '当前课程仍在内容建设中。这里展示的是只读预置内容预览，不会调用模型、创建工作流或写入学习进度。',
+  composerPlaceholder: '课程建设中，暂不支持辅导提问',
+  suggestedPrompts: ['查看预置知识点', '查看预置材料来源', '查看预置练习题'],
+  mockAnswer: '当前课程仅开放预置内容预览，真实辅导、Evidence 与学习路径将在课程内容入库后开放。',
+};
+
+const UNKNOWN_PRESET: CompanionPreset = {
+  greeting: '当前课程的展示预设不可用，已保持空白的只读状态，不会引用其他课程内容。',
+  composerPlaceholder: '课程预设不可用',
+  suggestedPrompts: [],
+  mockAnswer: '当前课程预设不可用。',
+};
 
 export function getCompanionPreset(course: CourseCatalogItem): CompanionPreset {
-  return presets[course.id] ?? FALLBACK;
+  if (course.contentStatus === 'preview') return PREVIEW_PRESET;
+  return presets[course.previewContentKey ?? course.id] ?? UNKNOWN_PRESET;
 }

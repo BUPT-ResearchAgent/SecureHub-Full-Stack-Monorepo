@@ -1,4 +1,5 @@
 import type { EvidenceChunkDTO, ResourceType } from '@/lib/sse.types';
+import type { WorkflowRunStatus } from '@/lib/workflow-run.types';
 
 export type AgentId =
   | 'policy_interpreter'
@@ -72,6 +73,10 @@ export type WorkflowRunState = {
   nodes: Record<string, WorkflowNodeRun>;
   edges: Record<string, WorkflowEdgeRun>;
   currentRunId?: string;
+  durableRun?: boolean;
+  rootStatus?: WorkflowRunStatus;
+  approvalId?: string;
+  approvalKind?: string;
   overallQuality?: number;
   producedResources: Partial<Record<ResourceType, number>>;
   phase: 'idle' | 'running' | 'paused' | 'done';

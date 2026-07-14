@@ -5,12 +5,15 @@ import { ErrorBoundary } from '@/app/components/ErrorBoundary';
 import { LLMErrorState, LoadingState } from '@/app/components/StateView';
 import { useEvidence } from '@/app/components/EvidenceDrawer';
 import { useAgentTraceDispatch } from '@/app/features/agents/store';
-import { mockResources } from '../mockData';
-import { useRafTokenBuffer } from '@/lib/raf-token-buffer';
+import { isMockMode } from '@/lib/mock';
+import { getMockEvidenceForCourse } from '@/lib/mock/courses.mock';
+import { useSelectedCourse } from '../catalog/useSelectedCourse';
+import { isWorkflowDraftReplacement } from '@/lib/workflow-run.types';
 import { useCourseDispatch, useCourseState } from '../store';
 import type { ResourceItem, ResourceType } from '../types';
 import { resourceTypeIcon, resourceTypeLabel } from '../utils';
-import { streamResourceGeneration } from '../api';
+import { recordCourseProgress, retryCourseResource, startCourseResourcePack, startCourseTask } from '../api';
+import { createCourseTaskLifecycle } from '../workflow/courseTaskLifecycle';
 import { DocResourceView } from './DocResourceView';
 import { LabResourceView } from './LabResourceView';
 import { MindmapResourceView } from './MindmapResourceView';
@@ -22,6 +25,7 @@ import { ResourceVariants } from '../resources/ResourceVariants';
 import { ResourceReplayDrawer } from '../resources/ResourceReplayDrawer';
 import { ResourceIterationCard } from '../resources/ResourceIterationCard';
 import { AgentDebatePanel } from '../resources/AgentDebatePanel';
+import { useRealResourceArtifact } from '../resources/realResourceArtifact';
 import {
   buildAgentDebate,
   buildReplayTimeline,
@@ -31,27 +35,20 @@ import {
 import type { ResourceVariantKind, ResourceVersion } from '@/lib/types/resource-variant.types';
 
 const resourceTypes: ResourceType[] = ['doc', 'ppt', 'mindmap', 'quiz', 'lab', 'video', 'readings'];
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function fallbackResource(type: ResourceType): ResourceItem {
-  const fixture = mockResources.find((resource) => resource.type === type);
-  if (fixture) {
-    return {
-      ...fixture,
-      id: `fixture-preview-${type}`,
-      title: `${fixture.title}（演示 fixture 预览）`,
-    };
-  }
   return {
-    id: `fallback-${type}`,
+    id: `pending-${type}`,
     type,
-    title: `${resourceTypeLabel(type)}演示预览`,
+    title: `${resourceTypeLabel(type)}尚未生成`,
     status: 'idle',
-    content: '当前暂无真实 artifact，展示演示 fixture 预览；点击生成后会优先请求真实 / partial-real 资源接口。',
+    content: '尚未生成真实资源。请先创建资源生成任务，系统会在 Evidence、QualityCheck 与 Artifact 均完成后展示结果。',
     evidenceRefs: [],
   };
 }
 
-function initialResourceMap(source: ResourceItem[] = mockResources): Partial<Record<ResourceType, ResourceItem>> {
+function initialResourceMap(source: ResourceItem[] = []): Partial<Record<ResourceType, ResourceItem>> {
   return Object.fromEntries(source.map((resource) => [resource.type, resource])) as Partial<Record<ResourceType, ResourceItem>>;
 }
 
@@ -97,7 +94,8 @@ function ExtensionButton({
 
 export function ResourceTabs() {
   const navigate = useNavigate();
-  const { currentKpId, resources: storedResources } = useCourseState();
+  const { resources: storedResources, taskContext } = useCourseState();
+  const { course } = useSelectedCourse();
   const courseDispatch = useCourseDispatch();
   const evidence = useEvidence();
   const traceDispatch = useAgentTraceDispatch();
@@ -113,25 +111,30 @@ export function ResourceTabs() {
   const [versionsByType, setVersionsByType] = useState<Partial<Record<ResourceType, ResourceVersion[]>>>({});
   const [activeVersionByType, setActiveVersionByType] = useState<Partial<Record<ResourceType, number>>>({});
   const [iterating, setIterating] = useState(false);
+  const [bundleGenerating, setBundleGenerating] = useState(false);
+  const presenterMode = isMockMode();
+  const isPreview = course?.contentStatus === 'preview';
+  const previewEvidence = useMemo(
+    () => isPreview ? getMockEvidenceForCourse(course?.previewContentKey ?? course?.id) : [],
+    [course?.id, course?.previewContentKey, isPreview],
+  );
   const resource = resources[active] ?? fallbackResource(active);
+  const artifactProjection = useRealResourceArtifact(resource);
+  const previewResource = artifactProjection.resource;
   const isGenerating = resource.status === 'generating';
   const isReconnecting = resource.errorCode === 'sse_reconnecting';
-  const tokenBuffer = useRafTokenBuffer((type, content) => {
-    const resourceType = type as ResourceType;
-    setResources((current) => {
-      const previous = current[resourceType] ?? fallbackResource(resourceType);
-      return {
-        ...current,
-        [resourceType]: { ...previous, content: `${previous.content}${content}` },
-      };
-    });
-  });
-
   const selectedResourceTypes = useMemo(() => resourceTypes, []);
 
   useEffect(() => {
     setResources(initialResourceMap(storedResources));
   }, [storedResources]);
+
+  // Resource state is not shared across course products; this also prevents a
+  // previously generated Web 安全 artifact from appearing in a preview course.
+  useEffect(() => {
+    setResources({});
+    setProgressText('');
+  }, [taskContext.courseId]);
 
   useEffect(() => {
     Object.values(resources).forEach((resource) => {
@@ -151,10 +154,27 @@ export function ResourceTabs() {
     });
   };
 
+  const persistResourceCompletion = (workflowRunId: string) => {
+    if (presenterMode || isPreview) return;
+    void recordCourseProgress(taskContext.courseId, {
+      knowledge_point_id: taskContext.kpId,
+      activity_type: 'resource',
+      activity_id: workflowRunId,
+      workflow_run_id: workflowRunId,
+    })
+      .then((progress) => courseDispatch({ type: 'setProgress', progress: progress.progress_percent }))
+      .catch((cause: unknown) => {
+        setProgressText(cause instanceof Error ? `资源已生成，但进度同步失败：${cause.message}` : '资源已生成，但进度同步失败。');
+      });
+  };
+
   const startGeneration = (targetType: ResourceType = active) => {
+    if (isPreview) {
+      setProgressText('当前课程仅开放预置内容预览，资源生成尚未就绪，不会创建工作流。');
+      return;
+    }
     cancelRef.current?.();
     activeStreamTypeRef.current = targetType;
-    tokenBuffer.cancel();
     setProgressText('正在校验输入');
     updateResource(targetType, (previous) => ({
       ...previous,
@@ -165,15 +185,15 @@ export function ResourceTabs() {
       errorMessage: undefined,
     }));
 
-    cancelRef.current = streamResourceGeneration(
-      '00000000-0000-0000-0000-000000000101',
-      targetType,
-      {
-        user_id: '00000000-0000-0000-0000-000000000001',
-        kp_id: currentKpId,
-        options: { tone: 'case_driven' },
-      },
-      {
+    cancelRef.current = startCourseTask({
+      intent: 'generate_resource',
+      context: taskContext,
+      payload: { resourceType: targetType, options: { tone: 'case_driven' } },
+    }, createCourseTaskLifecycle('generate_resource', courseDispatch, {
+        onWorkflowEvent(event) {
+          if (!isWorkflowDraftReplacement(event)) return;
+          updateResource(targetType, (previous) => ({ ...previous, content: '' }));
+        },
         onProgress(progress) {
           setProgressText(`${progress.node_name} · ${progress.percentage ?? 0}%`);
         },
@@ -186,9 +206,10 @@ export function ResourceTabs() {
               : [...previous.evidenceRefs, chunk],
           }));
         },
-        onToken(token) {
-          tokenBuffer.push(targetType, token.content);
-        },
+        // Producer streams are strict JSON for the durable artifact. The
+        // learner sees real node progress here; rendering those transport
+        // tokens would expose a serialized payload instead of a document.
+        onToken() {},
         onArtifact(artifact) {
           const artifactType = artifact.resource_type ?? targetType;
           activeStreamTypeRef.current = artifactType;
@@ -204,7 +225,6 @@ export function ResourceTabs() {
           traceDispatch({ type: 'upsertRun', run });
         },
         onDone(done) {
-          tokenBuffer.flush();
           setProgressText('');
           const doneType = activeStreamTypeRef.current ?? targetType;
           updateResource(doneType, (previous) => ({
@@ -214,6 +234,9 @@ export function ResourceTabs() {
             errorMessage: undefined,
             qualityScore: done.quality_score,
           }));
+        },
+        onWorkflowTerminal(status) {
+          if (status.status === 'succeeded') persistResourceCompletion(status.run_id);
         },
         onError(error) {
           if (error.code === 'sse_reconnecting') {
@@ -226,7 +249,6 @@ export function ResourceTabs() {
             }));
             return;
           }
-          tokenBuffer.flush();
           setProgressText('');
           updateResource(targetType, (previous) => ({
             ...previous,
@@ -235,8 +257,156 @@ export function ResourceTabs() {
             errorMessage: error.message,
           }));
         },
+    }), { mode: presenterMode ? 'fixture' : 'real' });
+  };
+
+  const startResourcePack = () => {
+    if (isPreview) {
+      setProgressText('当前课程仅开放预置内容预览，不能生成资源包。');
+      return;
+    }
+    cancelRef.current?.();
+    setBundleGenerating(true);
+    setProgressText('正在创建完整资源包');
+    setResources((current) => {
+      const next = { ...current };
+      resourceTypes.filter((type) => type !== 'readings').forEach((type) => {
+        const previous = next[type] ?? fallbackResource(type);
+        next[type] = {
+          ...previous,
+          status: 'generating',
+          content: '',
+          evidenceRefs: [],
+          errorCode: undefined,
+          errorMessage: undefined,
+        };
+      });
+      return next;
+    });
+
+    cancelRef.current = startCourseResourcePack(taskContext, createCourseTaskLifecycle('generate_resource', courseDispatch, {
+      onProgress(progress) {
+        setProgressText(`${progress.node_name} · ${progress.percentage ?? 0}%`);
       },
-    );
+      onEvidence(chunk) {
+        evidence.pushEvidence([chunk]);
+      },
+      onToken() {},
+      onArtifact(artifact) {
+        const artifactType = artifact.resource_type;
+        activeStreamTypeRef.current = artifactType;
+        updateResource(artifactType, (previous) => ({
+          ...previous,
+          id: artifact.resource_id,
+          type: artifactType,
+          title: artifact.title,
+          status: 'generating',
+        }));
+      },
+      onTrace(run) {
+        traceDispatch({ type: 'upsertRun', run });
+      },
+      onDone(done) {
+        setProgressText('');
+        setBundleGenerating(false);
+        setResources((current) => Object.fromEntries(
+          Object.entries(current).map(([type, item]) => [
+            type,
+            item?.status === 'generating'
+              ? UUID_PATTERN.test(item.id)
+                ? { ...item, status: 'ready', qualityScore: done.quality_score }
+                : {
+                    ...item,
+                    status: 'failed',
+                    errorCode: 'ARTIFACT_MISSING',
+                    errorMessage: '资源包已结束，但该资源没有完成 Artifact Saga。请单独重试此资源。',
+                  }
+              : item,
+          ]),
+        ) as Partial<Record<ResourceType, ResourceItem>>);
+      },
+      onWorkflowTerminal(status) {
+        if (status.status === 'succeeded') persistResourceCompletion(status.run_id);
+      },
+      onError(error) {
+        if (error.code === 'sse_reconnecting') {
+          setProgressText(error.message);
+          return;
+        }
+        setProgressText('');
+        setBundleGenerating(false);
+        setResources((current) => Object.fromEntries(
+          Object.entries(current).map(([type, item]) => [
+            type,
+            item?.status === 'generating'
+              ? { ...item, status: 'failed', errorCode: error.code, errorMessage: error.message }
+              : item,
+          ]),
+        ) as Partial<Record<ResourceType, ResourceItem>>);
+      },
+    }), { mode: presenterMode ? 'fixture' : 'real' });
+  };
+
+  const retryPersistedResource = () => {
+    if (isPreview) {
+      setProgressText('预览课程没有可重试的真实资源。');
+      return;
+    }
+    if (!UUID_PATTERN.test(resource.id)) {
+      startGeneration(active);
+      return;
+    }
+    cancelRef.current?.();
+    setProgressText(`正在重新生成${resourceTypeLabel(active)}`);
+    updateResource(active, (previous) => ({
+      ...previous,
+      status: 'generating',
+      content: '',
+      evidenceRefs: [],
+      errorCode: undefined,
+      errorMessage: undefined,
+    }));
+    cancelRef.current = retryCourseResource(resource.id, createCourseTaskLifecycle('generate_resource', courseDispatch, {
+      onProgress(progress) {
+        setProgressText(`${progress.node_name} · ${progress.percentage ?? 0}%`);
+      },
+      onEvidence(chunk) {
+        evidence.pushEvidence([chunk]);
+      },
+      onToken() {},
+      onArtifact(artifact) {
+        updateResource(artifact.resource_type, (previous) => ({
+          ...previous,
+          id: artifact.resource_id,
+          type: artifact.resource_type,
+          title: artifact.title,
+          status: 'generating',
+        }));
+      },
+      onTrace(run) {
+        traceDispatch({ type: 'upsertRun', run });
+      },
+      onDone(done) {
+        setProgressText('');
+        updateResource(active, (previous) => ({ ...previous, status: 'ready', qualityScore: done.quality_score }));
+      },
+      onWorkflowTerminal(status) {
+        if (status.status === 'succeeded') persistResourceCompletion(status.run_id);
+      },
+      onError(error) {
+        if (error.code === 'sse_reconnecting') {
+          setProgressText(error.message);
+          return;
+        }
+        setProgressText('');
+        updateResource(active, (previous) => ({
+          ...previous,
+          status: 'failed',
+          errorCode: error.code,
+          errorMessage: error.message,
+        }));
+      },
+    }), { mode: presenterMode ? 'fixture' : 'real' });
   };
 
   useEffect(() => {
@@ -247,18 +417,19 @@ export function ResourceTabs() {
       setActive(targetType);
       window.setTimeout(() => startGeneration(targetType), 120);
     };
+    if (!presenterMode || isPreview) return undefined;
     window.addEventListener('securehub-course-demo-stage', handleDemoStage);
     return () => window.removeEventListener('securehub-course-demo-stage', handleDemoStage);
-  });
+  }, [isPreview, presenterMode]);
 
   const renderResource = () => {
-    if (active === 'doc') return <DocResourceView resource={resource} />;
-    if (active === 'ppt') return <PptResourceView resource={resource} />;
-    if (active === 'mindmap') return <MindmapResourceView resource={resource} />;
-    if (active === 'quiz') return <QuizResourceView resource={resource} />;
-    if (active === 'lab') return <LabResourceView resource={resource} />;
-    if (active === 'video') return <VideoResourceView resource={resource} />;
-    return <ReadingsResourceView resource={resource} />;
+    if (active === 'doc') return <DocResourceView resource={previewResource} />;
+    if (active === 'ppt') return <PptResourceView resource={previewResource} />;
+    if (active === 'mindmap') return <MindmapResourceView resource={previewResource} />;
+    if (active === 'quiz') return <QuizResourceView resource={previewResource} />;
+    if (active === 'lab') return <LabResourceView resource={previewResource} />;
+    if (active === 'video') return <VideoResourceView resource={previewResource} />;
+    return <ReadingsResourceView resource={previewResource} />;
   };
 
   return (
@@ -266,10 +437,10 @@ export function ResourceTabs() {
       <div className="rounded-xl border border-brand-blue-100 bg-white px-4 py-3 shadow-sm">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
-            <p className="text-xs font-medium text-brand-blue-700">学完 SQL 注入后的中枢延展示范</p>
-            <h3 className="mt-1 text-sm font-semibold text-slate-900">同一画像驱动 Research / Fund / Job / Competition 串场</h3>
+            <p className="text-xs font-medium text-brand-blue-700">{isPreview ? '预置内容预览的跨模块入口' : '学完 SQL 注入后的中枢延展示范'}</p>
+            <h3 className="mt-1 text-sm font-semibold text-slate-900">{isPreview ? '入口可浏览，预览课程不写入学习链路' : '同一画像驱动 Research / Fund / Job / Competition 串场'}</h3>
             <p className="mt-1 max-w-3xl text-xs leading-relaxed text-slate-500">
-              这些入口只跳转到现有页面或 mock 面板，用于演示课程画像如何延展到科研、就业、竞赛和写作选题；不代表已接入真实 Fund / Job / Competition 数据。
+              这些入口只跳转到现有页面，用于演示课程画像如何延展到科研、就业、竞赛和写作选题；不代表课程工作流已替代这些模块各自的数据链路。
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -290,9 +461,18 @@ export function ResourceTabs() {
       </div>
 
       <div className="rounded-xl border border-amber-200 bg-amber-50/70 px-4 py-3 text-sm text-amber-800">
-        当前资源工作台覆盖 doc / ppt / mindmap / quiz / lab / readings / video_script（前端以 video 类型承载）7 类展示。
-        未触发真实 artifact 时使用演示 fixture 预览，不代表后端已完成真实生成。
+        {isPreview ? '当前课程处于建设中：下列材料是只读预置内容，不是 Evidence Snapshot 或真实 Artifact；PPT、文档、实验、视频等资源会以占位状态显示。' : '当前资源工作台支持 doc / ppt / mindmap / quiz / lab / readings / video 7 类真实 artifact。未完成 Artifact Saga 时不会显示为已生成。'}
       </div>
+
+      {isPreview && (
+        <section className="rounded-xl border border-slate-200 bg-white p-4" aria-label="预置材料来源预览">
+          <p className="text-sm font-semibold text-slate-900">预置材料来源预览</p>
+          <p className="mt-1 text-xs text-slate-500">仅用于展示旧内容，不进入真实 Evidence、检索、审计或生成流程。</p>
+          <ul className="mt-3 space-y-2">
+            {previewEvidence.map((item) => <li key={item.chunk_id} className="text-xs text-slate-600"><span className="font-medium">{item.chapter ?? '预置材料'}</span>：{item.chunk_text}</li>)}
+          </ul>
+        </section>
+      )}
 
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap gap-2">
@@ -317,21 +497,50 @@ export function ResourceTabs() {
         <button
           type="button"
           onClick={() => startGeneration()}
-          disabled={isGenerating}
+          disabled={isPreview || isGenerating || bundleGenerating}
           className="inline-flex items-center gap-2 rounded-lg bg-brand-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
         >
           <PlayCircle className="h-4 w-4" />
-          生成{resourceTypeLabel(active)}
+          {isPreview ? '内容建设中' : `生成${resourceTypeLabel(active)}`}
+        </button>
+        <button
+          type="button"
+          onClick={startResourcePack}
+          disabled={isPreview || isGenerating || bundleGenerating}
+          className="inline-flex items-center gap-2 rounded-lg border border-brand-blue-200 bg-brand-blue-50 px-4 py-2 text-sm font-medium text-brand-blue-700 hover:bg-brand-blue-100 disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          <PlayCircle className="h-4 w-4" />
+          {isPreview ? '资源包建设中' : '生成完整资源包'}
         </button>
       </div>
 
       {isReconnecting && <LLMErrorState code={resource.errorCode} message={resource.errorMessage} />}
-      {isGenerating && !isReconnecting && <LoadingState text={progressText || '正在生成中…'} />}
+      {(isGenerating || bundleGenerating) && !isReconnecting && <LoadingState text={progressText || '正在生成中…'} />}
+      {resource.status === 'ready' && artifactProjection.isLoading && <LoadingState text="正在读取已持久化的资源产物…" />}
+      {resource.status === 'ready' && artifactProjection.error && (
+        <LLMErrorState
+          code="RESOURCE_ARTIFACT_UNAVAILABLE"
+          message={artifactProjection.error}
+          onRetry={artifactProjection.refresh}
+        />
+      )}
       {resource.status === 'failed' && (
         <LLMErrorState code={resource.errorCode} message={resource.errorMessage ?? '资源生成失败'} onRetry={() => startGeneration()} />
       )}
 
-      {resource.status === 'ready' && !variantSelections[active] && (
+      {resource.status === 'ready' && UUID_PATTERN.test(resource.id) && (
+        <button
+          type="button"
+          onClick={retryPersistedResource}
+          disabled={isPreview || bundleGenerating}
+          className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700 hover:border-brand-blue-200 hover:bg-brand-blue-50 hover:text-brand-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          <PlayCircle className="h-3.5 w-3.5" />
+          重新生成此资源
+        </button>
+      )}
+
+      {presenterMode && resource.status === 'ready' && !variantSelections[active] && (
         <ResourceVariants
           variants={getResourceVariants(active)}
           selectedKind={variantSelections[active]}
@@ -349,7 +558,7 @@ export function ResourceTabs() {
       <div className="relative">
         <div className="absolute right-4 top-4 z-10 flex items-center gap-2">
           <ResourceQualityBadge score={resource.qualityScore} />
-          {resource.status === 'ready' && (
+          {presenterMode && resource.status === 'ready' && (
             <>
               <button
                 type="button"
@@ -374,11 +583,11 @@ export function ResourceTabs() {
         </ErrorBoundary>
       </div>
 
-      {debateOpen && resource.status === 'ready' && (
+      {presenterMode && debateOpen && resource.status === 'ready' && (
         <AgentDebatePanel debate={buildAgentDebate(active)} autoPlay />
       )}
 
-      {resource.status === 'ready' && variantSelections[active] && (
+      {presenterMode && resource.status === 'ready' && variantSelections[active] && (
         <ResourceIterationCard
           versions={versionsByType[active] ?? buildResourceVersions(resource.content)}
           activeVersion={activeVersionByType[active] ?? 1}
@@ -414,11 +623,13 @@ export function ResourceTabs() {
         />
       )}
 
-      <ResourceReplayDrawer
-        open={replayOpen}
-        onClose={() => setReplayOpen(false)}
-        timeline={buildReplayTimeline(resource.id, active)}
-      />
+      {presenterMode && (
+        <ResourceReplayDrawer
+          open={replayOpen}
+          onClose={() => setReplayOpen(false)}
+          timeline={buildReplayTimeline(resource.id, active)}
+        />
+      )}
     </div>
   );
 }

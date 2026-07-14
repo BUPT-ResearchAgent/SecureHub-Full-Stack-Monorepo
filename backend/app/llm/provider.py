@@ -6,21 +6,17 @@
 - BaseLLMProvider 统一接口：generate / stream_generate / health_check / estimate_tokens
 - FixtureProvider：无需 Key，返回确定性 fixture（CI / 开发默认）
 - get_llm_provider(provider?) 按 LLM_PROVIDER 环境变量路由
-- API Key 缺失时不静默 fallback（除非 APP_ENV=development）
+- API Key 缺失时不静默 fallback；fixture 只能由 fixture mode 显式选择
 """
 
 from __future__ import annotations
 
 import abc
-import logging
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from pydantic import BaseModel
-
-logger = logging.getLogger(__name__)
-
 
 # ── Data types ──────────────────────────────────────────────────────────────
 
@@ -182,13 +178,13 @@ class FixtureProvider(BaseLLMProvider):
 # ── Factory ──────────────────────────────────────────────────────────────────
 
 
-def get_llm_provider(provider: str | None = None) -> BaseLLMProvider:
+def get_llm_provider(provider: str | None = None, *, api_key: str | None = None) -> BaseLLMProvider:
     """根据 LLM_PROVIDER 环境变量（或参数）返回对应 Provider。
 
     - fixture  → FixtureProvider（无需 Key，CI 默认）
     - deepseek → DeepSeekProvider（需 DEEPSEEK_API_KEY）
     - xfyun    → XunfeiSparkProvider（需 XFYUN_API_KEY）
-    - Key 缺失时，development 模式自动降级 + 警告；其他环境抛 ProviderUnavailable。
+    - Key 缺失时始终抛 ProviderUnavailable；不能把 real 根降级为 fixture。
     """
     from app.core.config import get_settings
 
@@ -200,15 +196,17 @@ def get_llm_provider(provider: str | None = None) -> BaseLLMProvider:
 
     if selected == "deepseek":
         from app.llm.deepseek_provider import DeepSeekProvider
-        if not settings.DEEPSEEK_API_KEY:
+        effective_key = settings.DEEPSEEK_API_KEY if api_key is None else api_key
+        if not effective_key:
             return _key_missing_fallback("deepseek", "DEEPSEEK_API_KEY", settings)
-        return DeepSeekProvider(settings=settings)
+        return DeepSeekProvider(settings=settings, api_key=effective_key)
 
     if selected == "xfyun":
         from app.llm.xfyun_provider import XunfeiSparkProvider
-        if not settings.XFYUN_API_KEY:
+        effective_key = settings.XFYUN_API_KEY if api_key is None else api_key
+        if not effective_key:
             return _key_missing_fallback("xfyun", "XFYUN_API_KEY", settings)
-        return XunfeiSparkProvider(settings=settings)
+        return XunfeiSparkProvider(settings=settings, api_key=effective_key)
 
     raise ValueError(f"Unknown LLM_PROVIDER: {selected!r}. Valid: fixture, deepseek, xfyun")
 
@@ -217,9 +215,6 @@ def _key_missing_fallback(provider_name: str, key_name: str, settings: Any) -> B
     from app.runtime.exceptions import ProviderUnavailable
 
     msg = f"{key_name} not set; {provider_name} provider unavailable"
-    if settings.APP_ENV == "development":
-        logger.warning("%s — falling back to fixture (development mode)", msg)
-        return FixtureProvider()
     raise ProviderUnavailable(msg)
 
 

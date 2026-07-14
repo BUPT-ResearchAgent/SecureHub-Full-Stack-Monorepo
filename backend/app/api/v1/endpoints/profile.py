@@ -1,47 +1,44 @@
-# Status: partial-real
+# Status: real
 
-"""Profile endpoints：
+"""Profile HTTP adapters.
 
-- ``POST /profile/chat`` 走 career_planner.BuildLearningPersona，返回 6+ 维画像
-- ``GET /profile/{user_id}`` 占位（从 ``user_profiles`` 读，无表时返回 fixture）
-- ``PUT /profile/{user_id}`` 占位（写 ``user_profiles``，无表时回显）
+``POST /profile/chat`` only creates and observes a durable
+``profile_build_v1`` root. RuntimeEngine owns every Skill call and persistence
+step after the root transaction has committed.
 """
 
 from __future__ import annotations
 
-import asyncio
-import logging
-from typing import Any
-from uuid import uuid4
+from typing import Any, Literal
+from uuid import UUID
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Header, Request
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from app.agents.career_planner.skills.build_learning_persona import (
-    BuildLearningPersona,
-    BuildLearningPersonaInput,
+from app.api.v1.endpoints.workflow_adapter import (
+    durable_sse_response,
+    start_product_workflow,
+    workflow_service,
 )
-from app.api.v1.endpoints.streaming import (
-    call_streaming_service,
-    make_event_source_response,
-    normalize_error,
-    service_kwargs,
-)
-from app.runtime.harness import HarnessContext
+from app.deps import CurrentUserDep, SessionDep
+from app.repositories.identity.capabilities import UserCapabilityRepository
+from app.repositories.identity.profiles import UserProfileRepository
+from app.services.workflow_application_service import WorkflowApplicationService
 
-logger = logging.getLogger(__name__)
+
 router = APIRouter()
-
-try:
-    from app.services.agent import build_learning_persona as real_build_learning_persona
-except ImportError:
-    real_build_learning_persona = None
 
 
 class ProfileChatRequest(BaseModel):
+    # Kept for wire compatibility. The authenticated identity below is the
+    # sole durable root owner and payload user_id is never trusted.
     user_id: str = "demo"
     message: str = Field(min_length=1)
     dialogue_turns: list[dict[str, str]] = Field(default_factory=list)
+    mode: Literal["fixture", "real"] = "real"
+    provider: str | None = None
+    model: str | None = None
 
 
 class ProfileChatResponse(BaseModel):
@@ -54,6 +51,7 @@ class ProfileChatResponse(BaseModel):
 class UserProfileResponse(BaseModel):
     user_id: str
     dimensions: dict[str, Any]
+    capabilities: list[dict[str, Any]] = Field(default_factory=list)
     updated_at: str | None = None
 
 
@@ -61,110 +59,76 @@ class UserProfileUpdate(BaseModel):
     dimensions: dict[str, Any]
 
 
-async def _profile_chat_events(payload: ProfileChatRequest):
-    queue = asyncio.Queue()
-    done = asyncio.Event()
+def _service(request: Request) -> WorkflowApplicationService:
+    return workflow_service(request)
 
-    async def emit(event: dict[str, Any]) -> None:
-        await queue.put(event)
 
-    async def run_skill() -> None:
-        try:
-            ctx = HarnessContext(
-                user_id=payload.user_id,
-                workflow_name="profile_build",
-                stream=True,
-                emit=emit,
-            )
-            out = await BuildLearningPersona().run(
-                BuildLearningPersonaInput(
-                    user_id=payload.user_id,
-                    query=payload.message,
-                    dialogue_turns=payload.dialogue_turns,
-                ),
-                ctx,
-            )
-            await emit(
-                {
-                    "event": "done",
-                    "run_id": str(uuid4()),
-                    "quality_score": out.quality_score,
-                    "persona": out.model_dump(mode="json"),
-                    "next_question": out.next_question,
-                }
-            )
-        except Exception as exc:  # noqa: BLE001 - propagate to SSE
-            mapped = normalize_error(exc)
-            detail = mapped.detail if isinstance(mapped.detail, dict) else {}
-            await emit(
-                {
-                    "event": "error",
-                    "code": detail.get("code", "InternalError"),
-                    "message": detail.get("message", str(exc)),
-                    "recoverable": False,
-                }
-            )
-        finally:
-            done.set()
-
-    task = asyncio.create_task(run_skill())
-    try:
-        while not done.is_set() or not queue.empty():
-            try:
-                yield await asyncio.wait_for(queue.get(), timeout=0.5)
-            except asyncio.TimeoutError:
-                continue
-    finally:
-        await task
+async def _profile_response(
+    session: SessionDep,
+    user_id: UUID,
+    dimensions: dict[str, Any],
+    updated_at: Any,
+) -> UserProfileResponse:
+    capabilities = await UserCapabilityRepository(session).list_by_user(user_id)
+    return UserProfileResponse(
+        user_id=str(user_id),
+        dimensions=dimensions,
+        capabilities=[
+            {
+                "dimension": row.dimension,
+                "score": row.score,
+                "confidence": row.confidence,
+                "evidence_count": row.evidence_count,
+            }
+            for row in capabilities
+        ],
+        updated_at=updated_at.isoformat() if updated_at else None,
+    )
 
 
 @router.post("/profile/chat")
-async def build_profile_from_chat(payload: ProfileChatRequest):
-    if real_build_learning_persona is not None:
-        return await make_event_source_response(
-            call_streaming_service(
-                real_build_learning_persona,
-                kwargs=service_kwargs(
-                    payload,
-                    message=payload.message,
-                    history=payload.dialogue_turns,
-                ),
-            )
-        )
-    return await make_event_source_response(_profile_chat_events(payload))
+async def build_profile_from_chat(
+    payload: ProfileChatRequest,
+    request: Request,
+    current_user_id: CurrentUserDep,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> StreamingResponse:
+    service = _service(request)
+    start = await start_product_workflow(
+        service,
+        workflow="profile_build_v1",
+        actor_user_id=current_user_id,
+        input_payload={
+            "message": payload.message,
+            "dialogue_turns": payload.dialogue_turns,
+            "domain": "course_websec",
+        },
+        mode=payload.mode,
+        provider=payload.provider,
+        model=payload.model,
+        idempotency_key=idempotency_key,
+    )
+    return durable_sse_response(service, start, actor_user_id=current_user_id)
+
+
+@router.get("/profile/me", response_model=UserProfileResponse)
+async def get_current_profile(
+    session: SessionDep,
+    current_user_id: CurrentUserDep,
+) -> UserProfileResponse:
+    """Return the authenticated profile without treating ``me`` as a UUID."""
+    profile = await UserProfileRepository(session).get_by_user_id(current_user_id)
+    if profile is None:
+        return await _profile_response(session, current_user_id, {}, None)
+    return await _profile_response(session, current_user_id, profile.dimensions or {}, profile.updated_at)
 
 
 @router.get("/profile/{user_id}", response_model=UserProfileResponse)
-async def get_profile(user_id: str) -> UserProfileResponse:
-    try:
-        from app.db.models.user_profile import UserProfile
-        from app.db.session import get_sessionmaker
-        from sqlalchemy import select
-
-        sessionmaker = get_sessionmaker()
-        async with sessionmaker() as session:
-            row = await session.execute(select(UserProfile).where(UserProfile.user_id == user_id))
-            profile = row.scalar_one_or_none()
-            if profile is not None:
-                return UserProfileResponse(
-                    user_id=str(profile.user_id),
-                    dimensions=profile.dimensions or {},
-                    updated_at=profile.updated_at.isoformat() if profile.updated_at else None,
-                )
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("profile read fallback: %s", exc)
-    # Fixture fallback when DB unavailable
-    return UserProfileResponse(
-        user_id=user_id,
-        dimensions={
-            "base_knowledge": "intermediate",
-            "cognitive_style": "hands-on",
-            "weak_points": ["sql_injection"],
-            "preferred_modality": ["doc", "lab"],
-            "time_budget": "8h/week",
-            "target_direction": "web_security",
-        },
-    )
+async def get_profile(user_id: UUID, session: SessionDep) -> UserProfileResponse:
+    profile = await UserProfileRepository(session).get_by_user_id(user_id)
+    if profile is None:
+        return await _profile_response(session, user_id, {}, None)
+    return await _profile_response(session, user_id, profile.dimensions or {}, profile.updated_at)
 
 
 @router.put("/profile/{user_id}", response_model=UserProfileResponse)

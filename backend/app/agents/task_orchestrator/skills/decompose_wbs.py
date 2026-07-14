@@ -1,14 +1,16 @@
 # Status: real
+# Declarative Skill: SkillExecutor owns ctx.log_run for this contract.
+# Declarative Skill: SkillExecutor owns ctx.log_run for this contract.
 
-from app.agents.base import BaseSkill, SkillContext
-from app.agents.planned_skill import PlannedSkillInput, PlannedSkillOutput, prepare_planned_skill_output
+from app.agents.base import BaseSkill
+from app.agents.skill_contracts import SkillInput, SkillOutput
 
 
-class DecomposeWBSInput(PlannedSkillInput):
+class DecomposeWBSInput(SkillInput):
     goal: str = ""
 
 
-class DecomposeWBSOutput(PlannedSkillOutput):
+class DecomposeWBSOutput(SkillOutput):
     tasks: list[dict[str, object]] = []
 
 
@@ -33,21 +35,3 @@ class DecomposeWBS(BaseSkill):
     name = "DecomposeWBS"
     applicable_domains = ["course_websec", "competition", "paper"]
     output_schema = DecomposeWBSOutput
-
-    async def run(self, inp: DecomposeWBSInput, ctx: SkillContext) -> DecomposeWBSOutput:
-        out = await prepare_planned_skill_output(
-            self,
-            inp,
-            ctx,
-            prompt_template=PROMPT_TEMPLATE,
-            output_model=DecomposeWBSOutput,
-        )
-        await ctx.log_run(
-            agent_id=self.agent_id,
-            skill_id=self.skill_id,
-            input_summary=inp.model_dump(),
-            output_summary=out.model_dump(),
-            evidence_chunk_ids=out.evidence_chunk_ids,
-            quality_score=out.quality_score,
-        )
-        return out

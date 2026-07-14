@@ -49,6 +49,11 @@ def stable_id(name: str) -> str:
 
 
 def upgrade() -> None:
+    # This legacy PG-specific seed uses ARRAY/Vector bulk binding. The later
+    # 20260611_0960 migration is the dialect-neutral canonical seed, so SQLite
+    # must skip this compatibility seed rather than fail before reaching it.
+    if op.get_bind().dialect.name != "postgresql":
+        return
     agent_rows = [
         {
             "id": stable_id(f"agent:{name}"),
@@ -109,5 +114,7 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    if op.get_bind().dialect.name != "postgresql":
+        return
     op.execute("DELETE FROM agent_skills")
     op.execute("DELETE FROM agents")

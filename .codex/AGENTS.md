@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - **文档目的**：作为"安枢智梯 SecureHub / CyberLadder"项目所有后续 Claude Code / Codex / Cursor 会话的默认上下文。任何在本仓库工作的 AI 助手（或新加入的工程师）应当**首先读完本文件**，再开始触碰代码。
 - **读者**：本项目团队成员；后续接入的 AI 编码助手；A3 赛题答辩评委（架构理解参考）。
-- **最后更新时间**：2026-07-10（默认上下文读取改为凝练索引优先；Agent Run API 真实闭环已签收；统一 A/B/C 联调阶段语言规范；COS Provider 与 private/team-sync 小批量同步已验证但 GitHub 外 data 全量同步未完成）。
+- **最后更新时间**：2026-07-14（v1.0 多课程真实 Catalog：Web 安全 `ready`，密码学/网络攻防/安全开发为明确只读 `preview`；固定 9 Agent、28 Skill binding、Runtime 与七类 SSE 均不变）。
 - **本文件的权威性**：在仓库层面，本文件 > `README.md` / `docs/architecture.md` / `docs/backend-overview.md`。当本文件与代码现状冲突时，**以代码为准并立即更新本文件**；当本文件与外部 4 份文档冲突时，**以本文件 §19 的"差异说明"为准**。
 
 ### 阅读约定（什么时候回读外部文档？）
@@ -18,8 +18,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | 日常判断当前阶段 / 三人分工 / 主瓶颈 / LLM、Embedding、Storage 决策 | **权威规划凝练索引**（默认替代 Layer B 长规划源文件） | `D:/Nnutural/Desktop/BUPT大全/BUPT竞赛/26软件杯/Plan/2026-07-10_SecureHub_权威规划凝练索引.md` |
 | 日常判断近期交付事实 / Prompt / Workout / 6-C / 7-COS 轨迹 | **执行轨迹凝练索引**（默认替代 Layer C 执行档全量读取） | `D:/Nnutural/Desktop/BUPT大全/BUPT竞赛/26软件杯/Plan/2026-07-10_SecureHub_执行轨迹凝练索引.md` |
 | 任务涉及 workflow-runs / fixed multi-agent workflow / SSE replay / agent_runs / cancel | **Agent Run API 真实闭环凝练索引**（只在该专项任务时读，替代 Agent-Run 原始 Plan / Prompt / Workout） | `D:/Nnutural/Desktop/BUPT大全/BUPT竞赛/26软件杯/Plan/2026-07-10_Agent_Run_API_真实闭环凝练索引.md` |
-| 不确定"做什么、优先级、新增到哪里" | **A3 赛题规划**（最权威开发指导） | `D:/Nnutural/Desktop/BUPT大全/BUPT竞赛/26软件杯/CompetitionTheme/A3赛题规划.md` |
+| 任务涉及 RuntimeEngine / Durable Run / SkillExecutor / Outbox / Worker / SSE replay 或五条产品 adapter | **Agent Runtime v1.1 契约与 Wave 0-6 交付报告** | `docs/api/workflow-run-contract.md`；`Workout/Agent-Runtime-Wave-4-6.md`；必要时回读 `D:/Nnutural/Desktop/BUPT大全/BUPT竞赛/26软件杯/Plan/2026-07-11_SecureHub_多智能体底层完整架构实施方案.md` |
+| 不确定"做什么、优先级、新增到哪里" | **A3 产品化阶段 2-8 实施规划**（当前开发执行源） | `D:/Nnutural/Desktop/BUPT大全/BUPT竞赛/26软件杯/Plan/2026-07-13_SecureHub_A3产品化阶段2-8实施规划.md` |
+| 不确定 A3 产品能力与演示主线 | **A3 赛题规划**（产品需求与评分映射源） | `D:/Nnutural/Desktop/BUPT大全/BUPT竞赛/26软件杯/CompetitionTheme/A3赛题规划.md` |
 | 不确定 A3 硬性需求边界 | **A3 赛题原文** | `D:/Nnutural/Desktop/BUPT大全/BUPT竞赛/26软件杯/CompetitionTheme/A3赛题.md` |
+| 任务涉及 PPT、课程试题、资料可视化、案例/测试证据或竞赛评分 | **赛前突击准备包规划** | `D:/Nnutural/Desktop/BUPT大全/BUPT竞赛/26软件杯/Plan/2026-07-14_SecureHub_赛前突击准备包规划.md` |
 | 不确定项目整体愿景 / 商业逻辑 / 市场叙事 | **项目计划书**（挑战杯） | `D:/Nnutural/Desktop/BUPT大全/BUPT竞赛/26软件杯/Legacy/鸿雁杯/MinerU_markdown_项目计划书_2054945124833226752.md` |
 | 不确定某智能体内部算法 / 公式 / 输入输出契约 | **设计开发文档**（CyberLadder v1.8，1.5 节最重要） | `D:/Nnutural/Desktop/BUPT大全/BUPT竞赛/26软件杯/Legacy/2026037134-03 设计与开发文档/3 软件应用与开发类作品设计和开发文档模板（2026版）.md` |
 | 数据层 v2 改造任务（assets / resources / storage / 字段升级） | **先读权威规划凝练索引 §7；必要时再反查 Data-layer v2 原文** | `D:/Nnutural/Desktop/BUPT大全/BUPT竞赛/26软件杯/Plan/2026-07-10_SecureHub_权威规划凝练索引.md` |
@@ -30,22 +33,24 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ---
 
-## 0A. 当前阶段与统一语言规范（2026-07-09）
+## 0A. 当前阶段与统一语言规范（2026-07-14）
 
 > 本节用于修正 2026-07-08 前后文档中的阶段漂移。后续回答、任务提示词、PR 描述均按本节措辞执行。
 
 | 维度 | 统一口径 |
 |---|---|
-| 当前阶段 | **A/B/C 真实联调校准期**：C 主线已完成；A/B 均已推进底座；下一步不是扩功能，而是压向 5 条主路径端到端验收 |
-| A 实际进度 | **约 70%+**。已合入 DeepSeek / 讯飞星火 Provider、`BaseLLMProvider` Router、统一异常、LLM health / skill execution service；Qwen Embedding Provider 与 retriever profile 校验也已合入 |
-| A 禁用表述 | 不再说"A 还没接模型"或"A 只是骨架"；应说"模型供应商与 Provider 抽象已落地，瓶颈转为 Harness 主路径真实执行 / 落库 / `agent_runs` 验收" |
-| B 实际进度 | **约 95%**。已合入 typed SSE、real-first API fallback、DTO 冻结、mock-to-real 前端适配、LLM status / error states |
-| B 禁用表述 | 不再说"B 只是纯 mock 页面"；应说"B 已有 real-first 集成底座，仍需用 A 的真实后端复跑并收敛 partial-real 契约" |
-| C 实际进度 | **100%，主线开发完成**。后续转数据支撑、证据校验、CI / demo smoke 辅助角色 |
-| COS 侧线进度 | **Provider 与私有同步链路已验证，但全量同步未完成**。7-COS-3 只确认 20 个 `allowed_runtime_asset` 已上传、manifest 20 行、`storage_objects` 20 条 ready；约 870 个默认 allowlist 资产的全量上传曾启动后手动中止 |
-| 当前主瓶颈 | A 的 Harness Wave 2 + 5 个 SSE 主路径：`courses/plan`、`courses/resources/generate`、`profile/chat`、`tutor/ask`、`assessment/run` |
-| 最大风险 | fallback / mock-to-real 适配被误认为真实联调完成；COS 20 个样本被误认为 GitHub 外 data 全量同步完成；必须在真 Provider + 真 RAG + 真 `agent_runs` + 前端 SSE 下同窗复跑 |
-| Agent Run API 专项 | **已真实闭环签收**：固定五节点 workflow 已在真 DeepSeek、真 RAG、真 PostgreSQL `agent_runs` 下通过 success、SSE replay 与 token 后 cancel；这不代表五条产品主路径已完成 |
+| 当前阶段 | **Runtime v1.1 Wave 0-6 已签收，A3-S5~S7 均为 `real-accepted`**；S8 保持 `planned` + `external-gate-open`，Spark primary/DeepSeek replacement/Spark cancel 规划保留但暂缓执行；当前优先赛前 PPT/试题 Skill 评估、curated fallback、资料可视化、数据/案例/测试证据与评分机制 |
+| Runtime 核心 | `RuntimeEngine`、`SecureHubStateMachine`、framework-neutral `WorkflowDefinition`、唯一 `SkillExecutor`、PostgreSQL durable store/outbox、Worker/lease/fencing/recovery 均已落地 |
+| 产品路径 | `/profile/chat`、`/courses/{id}/plan`、`/courses/{id}/resources/generate`、`/tutor/ask`、`/assessment/run` 都是 `WorkflowApplicationService` adapter，复用唯一可查询 root UUID |
+| A3-S5~S7 | S5 使用 `assessment_update_v2` atomic audit；S6 从同一 durable root 投影 Evidence/Agent/QualityCheck/Provider/Artifact/control；S7 使用独立 `fund_recommendation_v1`、固定 9 Agent/28 bindings、`domain=fund` 共享知识资产和 server-side profile snapshot |
+| 多课程 Catalog v1.0 | `courses` 固定投影四门产品；仅 `WEBSEC-101` 为 `ready`。三门 `preview` 只显示预置内容，所有真实课程动作在 root 前 `409 COURSE_CONTENT_NOT_READY`；未知 course 禁止回落 Web 安全 |
+| 阶段状态 | 正式生命周期为 `planned -> in_progress -> code_complete -> engineering-accepted -> real-accepted`；`external-gate-open` 仅是正交 Gate 标记，不能替代或拼接为生命周期状态 |
+| 真实联调证据 | Golden Slice 与五条产品路径均以 `real / deepseek / deepseek-v4-pro` 成功；五路径共 17 条 `agent_runs`/Provider Call。cancel root `2daf935b-e3b7-4dbe-af34-d792dffc66d3` 为 `cancelled`，21 条 live/replay SSE 一致且终态后无 token/artifact |
+| 前端与 SSE | `WorkflowRunClient` 使用 typed reducer、Last-Event-ID、durable gap replay、duplicate dedupe 与 provider stream replacement；对外事件固定七类 |
+| 不可倒退语义 | real 失败不得进入 fixture；QualityCheck 不得内嵌/放宽；Redis 不是任务、lease、state 或 event 真相；Provider unknown 不假装 exactly-once |
+| COS Runtime Gate | 2026-07-12 以进程级 `STORAGE_PROVIDER=cos` 真实完成 upload、head、download、signed URL、delete；此前 HTTP 451 仅为历史记录。此结论不等于 GitHub 外 data 已全量同步 |
+| 当前外部 Gate | `XFYUN_API_KEY` 为空；Spark primary、首 token 后受控中断、真实 DeepSeek draft replacement 与 Spark cancel 均未执行、未伪造。该 Gate 未取消，但当前暂缓排期；赛前物料完成不能替代 Spark 验收 |
+| 赛前物料策略 | Skill 调研必须 timebox；DeepSeek/Skill 产物未达质量线时使用人工审校的 `pre-generated/curated` 高质量内容，并在前端/PPT/视频显式区分 live、curated 与 fixture |
 
 ---
 
@@ -121,16 +126,16 @@ A3 新能力一律作为**现有 9 智能体的新 skill** 叠加，**绝不**�
 | --- | --- |
 | 多源数据采集与治理（1.5.3.1） | `backend/app/knowledge/loaders/`（离线脚本） + `backend/app/services/knowledge/crawling/`（Scrapling / MediaCrawler / MindSpider 适配器 + `source_normalizer` + `crawler_policy`） |
 | 知识检索与证据链管理（1.5.3.2） | `backend/app/rag/`（service） |
-| 系统调度与多智能体编排（1.5.3.7） | `backend/app/runtime/router.py` + LangGraph conditional edge |
+| 系统调度与多智能体编排（1.5.3.7） | `backend/app/runtime/engine.py` + `state_machine.py` + versioned `WorkflowDefinition`；LangGraph 仅可选 TopologyAdapter |
 | 安全监控与合规审核（1.5.3.8） | `backend/app/runtime/guardrails/`（middleware） |
-| **Skill 执行框架（Harness）** | `backend/app/runtime/harness/`（base / context / fixtures / errors / types） |
+| **Skill 执行框架（Harness）** | `backend/app/runtime/harness/`（唯一 `SkillExecutor` + contracts；fixture 仅限显式 fixture mode，不是 real fallback） |
 | **对象存储抽象** | `backend/app/services/storage/`（local / Tencent COS 已落地；minio / s3 / oss / r2 为后续备选；统一 `storage_objects.object_key`） |
 
 **严禁注册**：`crawler_agent` / `media_agent` / `spider_agent` / `pdf_agent` / `mineru_agent` / `harness_agent` / `storage_agent` —— 任何包装基础设施为"第 10 个智能体"的尝试都会被拒。Scrapling、MediaCrawler、MindSpider、MinerU 均为**外部工具**或**适配器**，仅在 service 层使用，**不进入** `agents` 表。
 
 ### 3.3 ❌ 不要为新 domain 单独建知识库表（统一知识资产层 v2）
 
-所有 domain（`course_websec` / `policy` / `fund` / `job` / `competition` / `paper` / `news`）共用：
+所有 domain（`course_websec` / `course_crypto` / `course_network_security` / `course_secure_development` / `policy` / `fund` / `job` / `competition` / `paper` / `news`）共用：其中后三个课程 domain 当前仅受治理的 Catalog 占位，未开放文档/RAG/Skill，严禁扩展冻结的 `applicable_domains`。
 
 - `documents`：文档级元信息、来源、可信度、`raw_text` 可空、`status` 跟踪入库生命周期
 - `document_assets`：PDF / Markdown / 封面 / 页图 / OCR / 章节文件等**源资料**资产
@@ -161,24 +166,27 @@ quiz_attempts / learning_events
 ```
 本文件 §4 与 §6 的状态标签**必须随代码同步更新**。
 
+### 3.5.1 演示身份 / 教师端（2026-07-14）
+
+- `users.role` 是教师演示身份的唯一权威；前端不可用 localStorage 或 URL 参数伪造身份。
+- 演示 seed 包含学生、课程教师、科研导师、就业导师、综合教师五类账号；注册用户默认学生。
+- `/auth/login` 与 `/auth/me` 返回 `role`，`/teacher/context` 对学生必须返回 403。教师业务卡片仍可使用显式 demo 数据，但导航准入必须来自服务端角色。
+- 修改角色 schema、认证返回值或演示 seed 时，必须同步更新本文件、根 `AGENTS.md` 与 `CLAUDE.md`，并执行迁移与重新 seed。
+
 ### 3.6 ❌ 不要绕开 RAG 直接调 LLM（生成必须经 Harness 完整链路）
 
-所有生成式 skill（除"创意发散"类如 `generate_research_topic` 显式声明外）**必须**先经 `rag/retriever.py` 取证据 → 拼入 prompt → 生成 → `outcome_evaluator.quality_check` → 落 `generated_resources`（结构化）/ `storage_objects`（文件） → 绑定 `evidence_chunk_ids` 入 `agent_runs` 表。
+所有生成式 skill（除"创意发散"类如 `generate_research_topic` 显式声明外）**必须**经唯一 `SkillExecutor` 的真实检索链路：RuntimeEngine 先建立 root/step attempt/running `agent_runs`，SkillExecutor 执行 `rag.retrieve`、evidence snapshot、ContextBuilder、provider journal/call 与 strict parse，并把 Candidate Output 交回 WorkflowDefinition。QualityCheck 只可作为后续**显式独立 Workflow Node**执行；通过后 Artifact Saga 才可发布 artifact event。
 
 **Harness 强制链路**（不可省略任何一步）：
 
 ```
-Harness.run(skill, input, ctx)
-  → validate input (input_schema)
-  → rag.retrieve(domain, query, top_k)
-  → evidence_floor check（< MIN_EVIDENCE 则抛 InsufficientEvidence，禁止回退裸 LLM）
-  → compose prompt
-  → llm.xfyun（fallback: deepseek / qwen）
-  → parse output (output_schema)
-  → outcome_evaluator.QualityCheck
-  → generated_resources / storage_objects 写入
-  → ctx.log_run(agent_runs)
-  → 返回 typed output / SSE events
+RuntimeEngine.execute_node(...)
+  → create step attempt + running agent_run
+  → SkillExecutor.validate / rag.retrieve / evidence snapshot / ContextBuilder
+  → provider-call journal + declared real Provider / strict parse
+  → Candidate Output + one durable child record
+  → explicit QualityCheck Workflow Node + independent child record
+  → Artifact Saga / transactional outbox / typed SSE events
 ```
 
 ### 3.7 ❌ 不要绕开 `agent_runs` 写日志
@@ -211,7 +219,9 @@ Harness.run(skill, input, ctx)
 
 ---
 
-## 4. 仓库目录速查
+## 4. 仓库目录历史快照（2026-06，非当前实现清单）
+
+> 本节保留早期仓库形态用于追溯，其中 `[planned]` 不代表 2026-07-12 当前状态。当前 Runtime/Agent/LLM/RAG/DB/Streaming 目录以代码、§0A 与 §19.18 为准。
 
 > 工作目录：`D:/Nnutural/Desktop/BUPT大全/BUPT竞赛/26软件杯/CompAssitant-FrontDesign`
 > 状态标签：**[real]** 已实现且对接真实数据；**[mock]** 已实现但用 mock 数据；**[planned]** 规划中未实现；**[legacy]** 旧版本，不再扩展。
@@ -476,7 +486,9 @@ features/<feature>/
 
 ---
 
-## 6. 后端架构详解
+## 6. 后端架构历史规划与现行入口
+
+> §6.1-6.4 是早期 P0 规划快照，不再作为实现状态表。Runtime v1.1 当前入口为 `backend/app/runtime/engine.py`、`workflow_definition.py`、`harness/executor.py`、`persistence/`、`services/workflow_application_service.py` 与 `streaming/sse_gateway.py`。
 
 ### 6.1 当前已实现的 endpoints
 
@@ -512,7 +524,7 @@ features/<feature>/
 | `backend/app/core/config.py` | [real] | `Settings`（pydantic-settings），关键字段：`APP_NAME` / `API_V1_PREFIX` / `FRONTEND_ORIGINS` / `DEBUG` |
 | `backend/app/core/logging.py` | [real] | basic logging |
 
-### 6.3 即将新增的后端目录结构（P0 一次性建好）
+### 6.3 历史拟建后端目录结构（P0 规划快照）
 
 ```
 backend/app/
@@ -596,7 +608,7 @@ backend/app/
 | `GET /api/v1/tasks/{task_id}/stream` | SSE 进度推送 | P0 | `endpoints/streaming.py` |
 | `POST /api/v1/tutor/ask` | `career_planner.route_tutor_question` → 路由 | P1 | `endpoints/tutor.py` |
 | `POST /api/v1/assessment/run` | `outcome_evaluator.run_assessment` | P1 | `endpoints/assessment.py` |
-| `POST /api/v1/research/funds/recommend` | `career_planner + job_analyst + rag(domain=fund)` | P2 | 扩展 `endpoints/research.py` |
+| `POST /api/v1/research/fund-recommendations` | `career_planner + job_analyst + rag(domain=fund)`；CurrentUser server-side profile ownership | P2 | `endpoints/fund_recommendations.py` |
 | `POST /api/v1/policy/interpret` | `policy_interpreter.interpret_policy` | P2 | 扩展 `endpoints/policy.py` |
 | `GET /api/v1/agents/runs?workflow=&user_id=` | 读 `agent_runs` 表，供前端 trace 可视化 | P1 | `endpoints/agents.py` |
 | `GET /api/v1/agents/manifest` | 返回 `agents` + `agent_skills` 注册表 | P1 | `endpoints/agents.py` |
@@ -994,6 +1006,7 @@ error     可恢复 / 不可恢复错误
 - 7-COS-1：Provider 与 smoke 通过。
 - 7-COS-2：`mineru_ingested/**/assets/*` 候选为 0，脚本骨架完成，不能写成 10 个样本迁移完成。
 - 7-COS-3：20 个 `allowed_runtime_asset` 已上传、manifest 20 行、`storage_objects` 20 条 ready；默认 allowlist 约 870 个资产未全量完成，最近一次全量上传已手动中止。
+- 2026-07-12 Runtime Gate：进程级 COS smoke 已真实完成 upload/head/download/signed URL/delete；此前 451 仅为历史失败。
 - 继续全量同步前必须补 `skip existing` / 断点续传 / manifest 增量追加 / 限速或并发控制；不得把中断后的半成品当作完成。
 - 永久禁止上传 `.env*`、`SecretKey.csv`、`account.csv`、`.codegraph/**`、sqlite/db、raw MediaCrawler 数据；教材 PDF / `full.md` 只能在项目负责人明确确认后用私有前缀单独处理。
 
@@ -1009,7 +1022,7 @@ error     可恢复 / 不可恢复错误
 
 | 分组 | 表（P0 必做） | 表（P1/P2 扩展） | SQLAlchemy 模型目录 |
 | --- | --- | --- | --- |
-| A. 身份与画像 | `users` · `user_profiles` · `user_capabilities` | — | `backend/app/db/models/identity/` |
+| A. 身份、画像与 Provider 凭据 | `users` · `user_profiles` · `user_capabilities` · `provider_credentials` | — | `backend/app/db/models/identity/` |
 | B. 统一知识资产 | `documents` · `document_assets` · `chunks` · `knowledge_nodes` · `knowledge_edges` · `courses` | — | `backend/app/db/models/knowledge/` |
 | C. 学习闭环 | `learning_events` · `quiz_items` · `quiz_attempts` | `learning_paths` · `learning_tasks` | `backend/app/db/models/learning/` |
 | D. 多智能体注册与运行 | `agents` · `agent_skills` · `agent_runs` | `agent_messages` | `backend/app/db/models/agent/` |
@@ -1046,6 +1059,22 @@ user_capabilities (
   UNIQUE(user_id, dimension)
 );
 -- SQLAlchemy: backend/app/db/models/identity/user_capability.py
+
+provider_credentials (
+  id UUID PRIMARY KEY,
+  user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+  provider VARCHAR(32),            -- deepseek / xfyun
+  name VARCHAR(120),
+  encrypted_key TEXT,              -- AES-256-GCM ciphertext only
+  key_fingerprint VARCHAR(32),     -- sha256:<12 hex>; UI/audit safe
+  is_active BOOLEAN,
+  verification_status VARCHAR(16), -- unverified / verified / invalid / error
+  verified_at TIMESTAMP,
+  UNIQUE(user_id, provider, name),
+  UNIQUE(user_id, provider) WHERE is_active
+);
+-- Runtime roots persist only workflow_runs.credential_id. The worker decrypts
+-- at provider-call time; Settings and SSE/Outbox/AgentRun never receive a key.
 
 
 -- ========== B. 统一知识资产层 ==========
@@ -1608,7 +1637,7 @@ data/processed/mineru/{document_id}/
 
 ## 11. LLM / Agent 框架技术决策
 
-> 2026-07-09 更新：Provider 家族（A PR #35）+ Embedding Provider（C 6-C-6）已生产化，非 planned；B 已具备 real-first API/SSE/DTO 集成底座。下一步优先验收 Harness 主路径真实执行，而非继续扩大 mock 展示面。
+> 2026-07-11 更新：Provider 家族与 Qwen embedding 仍为已生产化前提；v1.1 Wave 0-3 已完成唯一 RuntimeEngine/Durable Core/五条产品路径验收。下文所有较旧的 LangGraph production-runtime 表述均被本节和 §0A/§19.17 覆盖。
 
 | 决策 | 选型 | 理由 |
 | --- | --- | --- |
@@ -1618,20 +1647,21 @@ data/processed/mineru/{document_id}/
 | **Embedding** | **Qwen `text-embedding-v4`**（阿里云百炼 OpenAI-Compatible） | 6-C-6 完成生产化；1024D dense 适配 pgvector；单批 ≤10；`embedding_profile` 契约锁定禁止跨模型 fallback |
 | **Embedding Provider 抽象** | `backend/app/llm/embeddings/{base,errors,factory,service,fixture,qwen_openai_compatible}.py` [real] | 6-C-6 完成；参见 `docs/api/evidence-contract.md` v1.2 |
 | **~~BGE-M3~~ / ~~bge-large-zh~~** | deprecated | 6-C-6 迁移前的初步方案；已被 Qwen 生产化替代；Prompt/6-C-5 里 BGE-M3 尝试全部 revert |
-| **Agent 框架** | **LangGraph** | 显式 DAG + 节点级超时 / 重试 / 条件边 / human-in-loop；比 AutoGen / CrewAI 更适合"工作流可视化" |
+| **生产 Agent Runtime** | **RuntimeEngine + SecureHub StateMachine + SkillExecutor** | 唯一 lifecycle/state/worker/checkpoint/terminal authority；`WorkflowDefinition` framework-neutral |
+| **LangGraph** | 可替换 `TopologyAdapter` | 只做 graph validation / conditional-edge helper / visualization；不得持有 production state、checkpoint、resume、worker scheduling 或 terminal state |
 | **流式协议** | **SSE**（Server-Sent Events） | FastAPI 原生支持 `StreamingResponse(media_type="text/event-stream")`；前端 `EventSource` 一行接入；比 WebSocket 简单 |
 | **模型 client 封装位置** | `backend/app/llm/` | `xfyun.py` / `deepseek.py` / `embedding.py` |
 | **TTS（视频音频）** | 讯飞 TTS（在线 API） | A3 用讯飞工具；轻量化避免本地模型 |
 
-### 11.0 A/B/C 联调验收口径（2026-07-09）
+### 11.0 Runtime v1.1 Wave 0-3 联调验收口径（2026-07-11）
 
-5 条主路径只有同时满足以下条件，才允许标记为"真实联调完成"：
+以下条件均已在本轮达成；逐条 root、SSE、Provider 和 UUID 证据在 `Workout/Agent-Runtime-Wave-0-3.md`：
 
-1. 后端走真实 Harness skill 链路：`rag.retrieve → evidence_floor → LLM Provider → QualityCheck → generated_resources/storage_objects → agent_runs`。
+1. 后端走真实 RuntimeEngine/SkillExecutor 链路：`step attempt + running agent_run → rag.retrieve → evidence snapshot → ContextBuilder → provider journal/call → strict parse → Candidate Output → explicit QualityCheck node → Artifact Saga → outbox/SSE`。
 2. RAG 召回使用 Qwen `embedding_profile`，不跨模型 fallback，不静默吞掉 provider 错误。
 3. 前端经 B 的 real-first API/SSE 客户端消费 7 类事件，不能只看 mock replay。
 4. 每条路径至少产出一次可追溯 `run_id`、非空 `evidence_chunk_ids`、可展示 `trace` / `artifact`。
-5. A/B/C 在同一时间窗复跑并记录结果；单人本地 happy path 不等于联调完成。
+5. `pytest -q`、migration round-trip、typecheck/build 与针对性 durable/fault coverage 通过；真实 DeepSeek live gate 有 17 条 provider-call journal 记录。Wave 4-6 不因这些证据而提前完成。
 
 ### 11.1 SSE 事件类型规范（强制，7 种）
 
@@ -2112,15 +2142,15 @@ forbidden: LLM 自由生成内容
 - **依据**：`Plan/7-8-文本嵌入向量模型.md` §11-31（1500 行工程规格），PR #37 merged。
 - **契约演进**：`docs/api/evidence-contract.md` v1.1 → **v1.2 frozen**，`chunks.metadata.embedding_profile` 字段引入。
 
-### 19.14 A/B/C 真实联调阶段口径修正（2026-07-09）
+### 19.14 A/B/C 真实联调阶段历史口径（2026-07-09，已被 §19.18 覆盖）
 
 - **旧表述风险**：容易把 A 简化成"未接模型 / 只有骨架"，把 B 简化成"纯 mock 页面"，导致后续任务错误地重复建设 Provider 或前端 mock。
 - **本项目当前事实**：
   - A 已合入 LLM Provider 家族、DeepSeek / 讯飞星火 Provider、统一异常、LLM health / skill execution service；Embedding Provider / Qwen / retriever profile 校验也已生产化。
   - B 已合入 typed SSE、real-first API fallback、DTO 冻结、mock-to-real 适配、LLM status / error states。
   - C 6-C 主线完成，转为数据支撑、证据校验、CI / demo smoke 辅助角色。
-- **新的统一口径**：当前瓶颈不是"有没有模型供应商"或"有没有前端展示"，而是 A 的 Harness Wave 2 + 5 条 SSE 主路径真实执行、落库、`agent_runs` 和前端 SSE 联调验收。
-- **验收边界**：只有 `courses/plan`、`courses/resources/generate`、`profile/chat`、`tutor/ask`、`assessment/run` 在真 Provider + 真 RAG + 真 `agent_runs` + 前端 SSE 下复跑通过，才算阶段闭环。
+- **当时统一口径**：2026-07-09 的瓶颈是 Harness 与 5 条 SSE 主路径；该瓶颈已在 2026-07-12 真实 DeepSeek/Qwen/PostgreSQL 五路径验收中解除。
+- **验收边界**：五条产品路径必须在真 Provider + 真 RAG + 真 `agent_runs` + SSE 下复跑；该条件现已满足，不能再写成待办。
 - **不变铁律**：9 agent 固定；横切基础设施不算 agent；统一知识资产层；生成式 skill 必须先 RAG 后 LLM；所有 skill 必须写 `agent_runs`。
 
 ### 19.15 Tencent COS 私有同步口径修正（2026-07-09）
@@ -2132,6 +2162,7 @@ forbidden: LLM 自由生成内容
   - 7-COS-3 已同步 20 个 `allowed_runtime_asset` 到 `private/team-sync/data/...`，manifest 20 行，`storage_objects` 20 条 ready。
   - 默认 allowlist 约 870 个资产尚未全量完成；最近一次全量上传因为速度问题由项目负责人手动中止。
 - **新的统一口径**：COS Provider 与团队私有同步链路已验证，但 GitHub 外 data 全量同步未完成。
+- **Runtime Gate 更新**：2026-07-12 COS upload/head/download/signed URL/delete 独立 smoke 已通过；这不改变 GitHub 外 data 尚未全量同步的结论。
 - **下一步边界**：继续同步前优先补 `skip existing` / 断点续传 / manifest 增量追加 / 限速或并发控制；不得上传 Secret、`.env*`、Secret CSV、raw MediaCrawler、sqlite/db、`.codegraph`；教材 PDF / `full.md` 只能在项目负责人明确确认后私有同步。
 - **不变铁律**：COS / Storage 是横切基础设施，不是 agent；大文件实体仍通过 `storage_objects.object_key` 抽象，不新增并列表。
 
@@ -2146,11 +2177,34 @@ forbidden: LLM 自由生成内容
   `cancelled`，cursor 后无 token/artifact。
 - **关键判断**：通过将学习路径、课程文档、题目 artifact 投影进 QualityCheck prompt 修复真实输入缺口；
   未放宽 evidence floor、strict JSON、QualityCheck 或 persistence。
-- **边界**：这只签收 Agent Run API。五条产品 endpoint 的真 Provider + 真 RAG + 真 `agent_runs` +
-  前端 SSE 同窗联调仍是全局主瓶颈；不得将本专项完成写成整个 SecureHub 已完成。
+- **历史边界**：本节只描述 2026-07-10 Agent Run API 专项；当时尚未验收的五条产品路径已由后续 Wave 0-6 和 2026-07-12 live handoff 解除，当前状态以 §19.18 为准。
 - **阅读收敛**：涉及该专项时先读
   `Plan/2026-07-10_Agent_Run_API_真实闭环凝练索引.md`，再按其 source:line 追证，不默认逐份读
   Agent-Run 原始 Plan / Prompt / Workout。
+
+### 19.17 Agent Runtime v1.1 Wave 0-3 签收（2026-07-11）
+
+- **权威切换**：`RuntimeEngine` 是唯一 Production Execution Authority，`SecureHubStateMachine` 是唯一状态机，PostgreSQL/`workflow_events` 是状态和事件真相，`SkillExecutor` 是唯一生产 Skill 内核；LangGraph 只能作为可替换 TopologyAdapter。
+- **已签收范围**：Contract Freeze、`resource_generate_v1` Golden Slice、PostgreSQL worker/outbox/lease/fencing/recovery/SSE gap core、完整 9 Agent/28 Skill catalog，以及五条产品 adapter/WorkflowRunClient。QualityCheck 为独立 node，real 路径没有进入 fixture 或绕过 RAG/evidence/agent_runs/artifact persistence。
+- **真实运行**：Golden root `5ffd1c7a-203f-49c3-8df5-1600afdd4acd` 和五条产品路径均在 `real / deepseek / deepseek-v4-pro` 下 succeeded；Golden 一次 QualityCheck defect 经过有界 rework 后成功。共记录 17 次真实 provider call，且没有记录完整 prompt、reasoning 或完整模型文本。
+- **耐久证据**：`workflow_events` 使用原子 sequence + transactional outbox；PostgreSQL queued scan 保障 Redis 丢失/重复通知；stale worker 被 `lease_epoch` fenced；SSE 支持 Last-Event-ID replay/live gap recovery；Provider `started/completed/unknown` 和 Artifact Saga recovery 有故障注入覆盖。迁移在一次性 SQLite 库完成 `upgrade head -> downgrade 20260611_0960 -> upgrade head`，head 为 `20260711_1020`。
+- **当时外部阻塞（历史）**：Wave 0-3 验收时真实 COS `put_object` 返回 `451 UnavailableForLegalReasons`。该失败记录保留；2026-07-12 COS Runtime 五步成功由 §19.18 覆盖当前状态。
+- **边界**：本节只标记 v1.1 Wave 0-3；Wave 4-6 的并行协作扩展、HITL/运营、安全深化和 legacy removal 仍待后续任务。完整 IDs、SSE 计数、测试命令与故障结果见 `Workout/Agent-Runtime-Wave-0-3.md`。
+
+### 19.18 Agent Runtime v1.1 Wave 4-6 与 Live Handoff 签收（2026-07-11 至 2026-07-12）
+
+本节覆盖并优先于本文所有仍将 Wave 4-6 标为待办的历史表述。
+
+- **协作与质量**：`course_learning_full_v1` 使用声明式最小 state projection、`ArtifactRef` / `EvidenceRef` lineage、PostgreSQL branch session fan-out、defect taxonomy 和一次有界 deterministic rework；不得把 agent free-chat 作为工作流介质。
+- **Provider**：目标演示主链为讯飞星火，DeepSeek 是透明显式 real fallback；该策略代码已实现，但 Spark live gate 尚未通过。每个 fallback 新建 provider call/stream attempt 并发出 draft replacement trace；不得拼接两个 Provider 的文本，fixture 绝不接管 real 根。
+- **控制平面**：pause/resume/retry/approval、兼容性检查和显式 checkpoint migration、root/node/provider budget、PolicyEngine、审计、metrics/evals 均由唯一 RuntimeEngine/StateMachine/PostgreSQL 控制面实现。
+- **收敛**：旧 `BaseSkill.run`/`planned_skill.py`/RunRegistry/legacy Harness/graphs/direct skill execution/duplicate SSE serializer 均不再是生产权威；LangGraph 只能是 topology adapter。
+- **DeepSeek/Qwen/PostgreSQL**：五条产品路径均以 `real / deepseek / deepseek-v4-pro` succeeded，共 17 条 `agent_runs` 与 17 条 Provider Call；3,549 个同 profile ready chunks、Evidence Snapshot 与 SSE replay 已复核。
+- **取消**：`resource_generate_v1` root `2daf935b-e3b7-4dbe-af34-d792dffc66d3` 在第一条可见 token 后收到 cancel，最终 `done/cancelled`；21 条 live/replay SSE 一致，终态后无 token/artifact。
+- **COS**：进程级 `STORAGE_PROVIDER=cos` 独立 smoke 已真实通过 upload、head、download、signed URL、delete。历史 451 仍保留为旧失败，不再是当前 Runtime Gate。
+- **版本与回归**：migration head `20260712_1040`；全量回归 `230 passed, 3 skipped`；最终证据提交 `89a6e0e1`。
+- **唯一开放 Provider Gate**：Spark bearer key 为空，Spark primary、首 token 后受控中断、真实 DeepSeek replacement 与 Spark cancel 均未运行。不得把直接 DeepSeek success/cancel 或 fixture fault test 写成 Spark 验收。
+- **数据侧线**：COS Runtime gate 已通过不等于 GitHub 外 data 已全量同步；20 个既有同步样本和约 870 个待治理对象继续分开记录。
 
 ---
 

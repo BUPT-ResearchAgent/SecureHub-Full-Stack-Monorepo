@@ -3,13 +3,14 @@ import type { CourseCatalogItem } from './courseCatalog.types';
 /**
  * 学生进入「课程学习」时可选的课程目录。
  *
- * 课程数据是前端 mock，演示用；接入真后端时由 `/api/v1/courses` 替换。
- * 真后端字段对齐 `docs/api/course-contract.md §1.1`：`id` / `title` / `description` / `progress`。
- * 其余字段（难度、知识点、工作流模板、配色）仍由前端补充以撑起多课程演示。
+ * Presentation presets only: they retain legacy copy, cover and workflow
+ * layout choices.  The durable catalogue identity/readiness/counts always
+ * come from `/api/v1/courses/catalog` in `courseCatalogApi.ts`.
  */
 export const courseCatalog: CourseCatalogItem[] = [
   {
     id: 'web-security-foundation',
+    code: 'WEBSEC-101',
     title: 'Web 安全基础',
     subtitle: 'OWASP Top 10 与实操化讲解',
     description:
@@ -18,12 +19,17 @@ export const courseCatalog: CourseCatalogItem[] = [
     difficulty: '入门',
     estimatedHours: 18,
     progressPercent: 35,
+    chapterCount: 5,
+    knowledgePointCount: 17,
+    resourceCount: 0,
+    coreCoveragePercent: 0,
     tags: ['Web 攻防', 'OWASP', '案例驱动'],
     coverTone: 'blue',
     defaultWorkflowId: 'course_learning',
   },
   {
     id: 'crypto-foundation',
+    code: 'CRYPTO-101',
     title: '密码学基础',
     subtitle: '从经典到现代密码学',
     description:
@@ -32,12 +38,17 @@ export const courseCatalog: CourseCatalogItem[] = [
     difficulty: '进阶',
     estimatedHours: 22,
     progressPercent: 12,
+    chapterCount: 6,
+    knowledgePointCount: 0,
+    resourceCount: 0,
+    coreCoveragePercent: 0,
     tags: ['密码学', '协议', 'TLS'],
     coverTone: 'violet',
     defaultWorkflowId: 'course_learning',
   },
   {
     id: 'network-attack-defense',
+    code: 'NET-SEC-201',
     title: '网络攻防实训',
     subtitle: '面向 CTF 与红蓝对抗的实战训练',
     description:
@@ -46,12 +57,17 @@ export const courseCatalog: CourseCatalogItem[] = [
     difficulty: '实战',
     estimatedHours: 28,
     progressPercent: 8,
+    chapterCount: 10,
+    knowledgePointCount: 0,
+    resourceCount: 0,
+    coreCoveragePercent: 0,
     tags: ['CTF', '红蓝对抗', '流量分析'],
     coverTone: 'amber',
     defaultWorkflowId: 'tutor_routing',
   },
   {
     id: 'secure-development-audit',
+    code: 'SDL-201',
     title: '安全开发与代码审计',
     subtitle: 'SDL、依赖治理与白盒审计',
     description:
@@ -60,6 +76,10 @@ export const courseCatalog: CourseCatalogItem[] = [
     difficulty: '挑战',
     estimatedHours: 24,
     progressPercent: 0,
+    chapterCount: 8,
+    knowledgePointCount: 0,
+    resourceCount: 0,
+    coreCoveragePercent: 0,
     tags: ['SDL', '审计', '依赖治理'],
     coverTone: 'green',
     defaultWorkflowId: 'resource_generate',
@@ -74,8 +94,30 @@ const courseIdAliases: Record<string, string> = {
   'web-sec': 'web-security-foundation',
   websec: 'web-security-foundation',
   course_websec_intro: 'web-security-foundation',
+  'WEB-SEC-101': 'web-security-foundation',
   '00000000-0000-0000-0000-000000000101': 'web-security-foundation',
 };
+
+export const coursePresentationByCode = Object.fromEntries(
+  courseCatalog.map((course) => [course.code, course]),
+) as Record<string, CourseCatalogItem>;
+
+export const legacyCourseReferenceToCode: Record<string, string> = Object.fromEntries(
+  courseCatalog.flatMap((course) => [
+    [course.id, course.code],
+    [course.code, course.code],
+  ]),
+) as Record<string, string>;
+
+Object.entries(courseIdAliases).forEach(([alias, legacyId]) => {
+  const course = courseCatalogById[legacyId];
+  if (course) legacyCourseReferenceToCode[alias] = course.code;
+});
+
+export function resolveLegacyCourseCode(value: string | null | undefined): string | undefined {
+  if (!value) return undefined;
+  return legacyCourseReferenceToCode[value] ?? legacyCourseReferenceToCode[value.toUpperCase()];
+}
 
 /** 默认课程：保持第一门 Web 安全基础不变，前几轮演示数据全部围绕它构建。 */
 export const defaultCourseId: CourseCatalogItem['id'] = courseCatalog[0].id;
@@ -85,8 +127,8 @@ export function getCourseById(courseId: string | null | undefined): CourseCatalo
   return courseCatalogById[courseIdAliases[courseId] ?? courseId];
 }
 
-export function resolveCourseId(courseId: string | null | undefined): string {
-  return getCourseById(courseId)?.id ?? defaultCourseId;
+export function resolveCourseId(courseId: string | null | undefined): string | undefined {
+  return getCourseById(courseId)?.id;
 }
 
 export const courseCoverGradient: Record<CourseCatalogItem['coverTone'], string> = {

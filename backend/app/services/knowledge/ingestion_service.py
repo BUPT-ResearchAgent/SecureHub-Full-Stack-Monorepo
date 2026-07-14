@@ -196,6 +196,7 @@ class IngestionService:
             "rights_note": document_metadata.get("rights_note"),
             "license": document_metadata.get("license"),
             "collection_mode": document_metadata.get("collection_mode"),
+            "course_eligible": document_metadata.get("course_eligible"),
         }
         source_metadata = {key: value for key, value in source_metadata.items() if value is not None}
 

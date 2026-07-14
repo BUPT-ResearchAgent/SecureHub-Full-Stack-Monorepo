@@ -6,7 +6,6 @@ from app.agents.base import (
     BaseSkill,
     InsufficientEvidence,
     SafetyBlocked,
-    SkillContext,
     ToolUnavailable,
 )
 
@@ -16,6 +15,5 @@ __all__ = [
     "BaseSkill",
     "InsufficientEvidence",
     "SafetyBlocked",
-    "SkillContext",
     "ToolUnavailable",
 ]

@@ -101,3 +101,11 @@ export const TEACHER_NAV: TeacherNavItem[] = [
 export function getTeacherNav(role: TeacherRole): TeacherNavItem[] {
   return TEACHER_NAV.filter((item) => item.visibleFor.includes(role));
 }
+
+export function canAccessTeacherPath(role: TeacherRole, pathname: string): boolean {
+  return getTeacherNav(role).some((item) =>
+    item.path === '/teacher'
+      ? pathname === '/teacher'
+      : pathname === item.path || pathname.startsWith(`${item.path}/`),
+  );
+}

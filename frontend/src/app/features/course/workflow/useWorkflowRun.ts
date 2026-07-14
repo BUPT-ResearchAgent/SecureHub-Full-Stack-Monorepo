@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useReducer, useRef } from 'react';
 import type { AgentRunDTO } from '@/lib/sse.types';
+import type { WorkflowEvent, WorkflowRunStartResponse } from '@/lib/workflow-run.types';
+import { WorkflowRunClient } from '@/lib/workflow-run-client';
 import type { WorkflowDefinition, WorkflowReplayStep } from './types';
 import { createInitialRunState, createMockReplaySteps, workflowRunReducer } from './runtime';
 
@@ -17,6 +19,9 @@ export function useWorkflowRun(workflow: WorkflowDefinition) {
   const stepsRef = useRef<WorkflowReplayStep[]>([]);
   const elapsedRef = useRef(0);
   const startedAtRef = useRef(0);
+  const durableClientRef = useRef<WorkflowRunClient | null>(null);
+
+  if (!durableClientRef.current) durableClientRef.current = new WorkflowRunClient();
 
   const clearTimers = useCallback(() => {
     timersRef.current.forEach((timer) => window.clearTimeout(timer));
@@ -57,7 +62,7 @@ export function useWorkflowRun(workflow: WorkflowDefinition) {
     elapsedRef.current = 0;
     startedAtRef.current = performance.now();
     stepsRef.current = [];
-    dispatch({ type: 'reset', workflow, phase: 'running', runId: runId(workflow.id) });
+    dispatch({ type: 'reset', workflow, phase: 'running' });
   }, [clearTimers, workflow]);
 
   const run = useCallback(() => {
@@ -77,14 +82,61 @@ export function useWorkflowRun(workflow: WorkflowDefinition) {
   }, [schedule, state.phase, workflow]);
 
   const pause = useCallback(() => {
+    if (state.durableRun && state.currentRunId) {
+      void durableClientRef.current?.pause(state.currentRunId).then((response) => {
+        dispatch({ type: 'applyWorkflowControl', status: response.status });
+      });
+      return;
+    }
     if (state.phase !== 'running') return;
     elapsedRef.current = performance.now() - startedAtRef.current;
     clearTimers();
     dispatch({ type: 'setPhase', phase: 'paused' });
-  }, [clearTimers, state.phase]);
+  }, [clearTimers, state.currentRunId, state.durableRun, state.phase]);
+
+  const resume = useCallback(() => {
+    if (state.durableRun && state.currentRunId) {
+      void durableClientRef.current?.resume(state.currentRunId).then((response) => {
+        dispatch({ type: 'applyWorkflowControl', status: response.status });
+      });
+      return;
+    }
+    if (state.phase === 'paused') run();
+  }, [run, state.currentRunId, state.durableRun, state.phase]);
+
+  const retry = useCallback(() => {
+    if (!state.durableRun || !state.currentRunId) return;
+    void durableClientRef.current?.retry(state.currentRunId).then((response) => {
+      dispatch({ type: 'applyWorkflowControl', status: response.status });
+    });
+  }, [state.currentRunId, state.durableRun]);
+
+  const cancel = useCallback(() => {
+    if (!state.durableRun || !state.currentRunId) return;
+    void durableClientRef.current?.cancel(state.currentRunId).then((response) => {
+      dispatch({ type: 'applyWorkflowControl', status: response.status });
+    });
+  }, [state.currentRunId, state.durableRun]);
+
+  const decideApproval = useCallback((approved: boolean) => {
+    if (!state.durableRun || !state.currentRunId || !state.approvalId) return;
+    void durableClientRef.current
+      ?.decideApproval(state.currentRunId, state.approvalId, approved)
+      .then(() => {
+        dispatch({ type: 'applyWorkflowControl', status: approved ? 'queued' : 'blocked' });
+      });
+  }, [state.approvalId, state.currentRunId, state.durableRun]);
 
   const applyTrace = useCallback((run: AgentRunDTO) => {
     dispatch({ type: 'applyTrace', run });
+  }, []);
+
+  const applyWorkflowStart = useCallback((start: WorkflowRunStartResponse) => {
+    dispatch({ type: 'applyWorkflowStart', start });
+  }, []);
+
+  const applyWorkflowEvent = useCallback((event: WorkflowEvent) => {
+    dispatch({ type: 'applyWorkflowEvent', event });
   }, []);
 
   useEffect(() => {
@@ -96,8 +148,15 @@ export function useWorkflowRun(workflow: WorkflowDefinition) {
     state,
     run,
     pause,
+    resume,
+    retry,
+    cancel,
+    approve: () => decideApproval(true),
+    reject: () => decideApproval(false),
     reset,
     beginExternalRun,
     applyTrace,
+    applyWorkflowStart,
+    applyWorkflowEvent,
   };
 }

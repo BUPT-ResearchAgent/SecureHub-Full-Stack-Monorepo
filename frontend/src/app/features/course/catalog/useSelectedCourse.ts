@@ -1,12 +1,8 @@
 import { useCallback, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { setMockCourseContext } from '@/lib/mock/course.mock';
-import {
-  defaultCourseId,
-  getCourseById,
-  resolveCourseId,
-} from './courseCatalog';
 import type { CourseCatalogItem } from './courseCatalog.types';
+import { resolveLegacyCourseCode } from './courseCatalog';
+import { useCourseCatalog } from './useCourseCatalog';
 
 const STORAGE_KEY = 'securehub.course.selectedCourseId';
 
@@ -29,50 +25,65 @@ function writeStored(value: string) {
 }
 
 export type UseSelectedCourseResult = {
-  /** 当前选中的课程对象（永远有值；无效 id 会回退到默认课程）。 */
-  course: CourseCatalogItem;
-  courseId: string;
-  /** URL 上是否带了无效的 ?courseId=，便于上层显示「已回退到默认课程」提示。 */
-  fellBackToDefault: boolean;
+  /** Backend-backed course; unavailable only while the real catalog loads or fails. */
+  course: CourseCatalogItem | null;
+  courseId: string | null;
+  courses: CourseCatalogItem[];
+  catalogStatus: 'loading' | 'ready' | 'error';
+  catalogError: Error | null;
+  /** URL 上请求的课程不存在时保留原值，绝不静默切换到其他课程。 */
+  invalidCourseReference: string | null;
   selectCourse: (courseId: string, options?: { replace?: boolean }) => void;
 };
 
 /**
  * 把「当前学习课程」同步到 URL（`?courseId=`）和 `localStorage`。
  *
- * 优先级：URL > localStorage > defaultCourseId。
- * 任何分支上读到无效 id 时回退到 defaultCourseId，并通过 `fellBackToDefault=true` 通知 UI。
+ * 优先级：URL > localStorage > 默认目录首项。URL 中的未知值不会回落到其他课程。
  */
 export function useSelectedCourse(): UseSelectedCourseResult {
   const [params, setParams] = useSearchParams();
+  const catalog = useCourseCatalog();
   const rawFromUrl = params.get('courseId');
-  const courseFromUrl = getCourseById(rawFromUrl);
-
-  // URL 缺失时，从 localStorage 兜底；都没有就回默认课程。
-  const effectiveId = courseFromUrl?.id ?? resolveCourseId(readStored());
-  const course = getCourseById(effectiveId) ?? getCourseById(defaultCourseId)!;
-  const fellBackToDefault = Boolean(rawFromUrl) && !courseFromUrl;
+  const byId = (value: string | null) => {
+    if (!value) return undefined;
+    const legacyCode = resolveLegacyCourseCode(value);
+    return catalog.courses.find((course) => course.id === value || course.code === value || course.code === legacyCode);
+  };
+  const courseFromUrl = byId(rawFromUrl);
+  const storedCourse = byId(readStored());
+  const invalidCourseReference = rawFromUrl && catalog.status === 'ready' && !courseFromUrl ? rawFromUrl : null;
+  const course = invalidCourseReference ? null : courseFromUrl ?? storedCourse ?? catalog.courses[0] ?? null;
 
   // 同步 URL、localStorage 与 mock 回放上下文（仅在缺失/不一致时写，避免无限回环）。
   useEffect(() => {
+    if (!course || invalidCourseReference) return;
     writeStored(course.id);
-    setMockCourseContext(course.id);
     if (rawFromUrl === course.id) return;
     const next = new URLSearchParams(params);
     next.set('courseId', course.id);
     setParams(next, { replace: true });
-  }, [course.id, params, rawFromUrl, setParams]);
+  }, [course, invalidCourseReference, params, rawFromUrl, setParams]);
 
   const selectCourse = useCallback(
     (nextId: string, options?: { replace?: boolean }) => {
-      const resolved = resolveCourseId(nextId);
-      writeStored(resolved);
+      const selected = byId(nextId);
+      if (!selected) return;
+      writeStored(selected.id);
       const next = new URLSearchParams(params);
-      next.set('courseId', resolved);
+      next.set('courseId', selected.id);
       setParams(next, { replace: options?.replace ?? false });
     },
-    [params, setParams],
+    [params, setParams, catalog.courses],
   );
 
-  return { course, courseId: course.id, fellBackToDefault, selectCourse };
+  return {
+    course,
+    courseId: course?.id ?? null,
+    courses: catalog.courses,
+    catalogStatus: catalog.status,
+    catalogError: catalog.error,
+    invalidCourseReference,
+    selectCourse,
+  };
 }

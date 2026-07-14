@@ -1,18 +1,25 @@
 # Status: real
+# Declarative Skill: SkillExecutor owns ctx.log_run for this contract.
+# Declarative Skill: SkillExecutor owns ctx.log_run for this contract.
 
-from app.agents._skill_helper import run_through_harness
-from app.agents.base import BaseSkill, SkillContext
-from app.agents.planned_skill import PlannedSkillInput, PlannedSkillOutput
+from pydantic import Field
+
+from app.agents.base import BaseSkill
+from app.agents.skill_contracts import SkillInput, SkillOutput
 
 
-class AnalyzeJobMarketInput(PlannedSkillInput):
+class AnalyzeJobMarketInput(SkillInput):
     target_role: str | None = None
     region: str | None = None
+    fund_context: dict[str, object] = Field(default_factory=dict)
 
 
-class AnalyzeJobMarketOutput(PlannedSkillOutput):
+class AnalyzeJobMarketOutput(SkillOutput):
     trend: str = ""
     top_skills: list[str] = []
+    # Only populated for fund_recommendation_v1. Existing job callers keep the
+    # previous two-field result shape.
+    fund_landscape: list[dict[str, object]] = Field(default_factory=list, max_length=12)
 
 
 PROMPT_TEMPLATE = """
@@ -27,6 +34,12 @@ You are job_analyst summarizing the job market for security roles.
 [Task]
 {task_instruction}
 
+When ``domain`` is ``fund``, analyse only the supplied fund evidence as an
+opportunity landscape: programme name, direction, official source, published
+deadline text, and the skills or project evidence it expects. Do not infer
+amounts, availability, or deadlines that the evidence does not state. Return
+``fund_landscape`` entries only when those facts are supported.
+
 Return JSON matching:
 {output_schema_hint}
 """
@@ -34,17 +47,7 @@ Return JSON matching:
 
 class AnalyzeJobMarket(BaseSkill):
     name = "AnalyzeJobMarket"
-    applicable_domains = ["job"]
+    # Compatibility extension of the existing frozen binding; this does not
+    # create a twenty-ninth Skill Catalog binding.
+    applicable_domains = ["job", "fund"]
     output_schema = AnalyzeJobMarketOutput
-
-    async def run(self, inp: AnalyzeJobMarketInput, ctx: SkillContext) -> AnalyzeJobMarketOutput:
-        return await run_through_harness(
-            self,
-            inp,
-            ctx,
-            prompt_template=PROMPT_TEMPLATE,
-            output_model=AnalyzeJobMarketOutput,
-            agent_name="job_analyst",
-            capability_dim="job",
-            evidence_floor=1,
-        )  # type: ignore[return-value]

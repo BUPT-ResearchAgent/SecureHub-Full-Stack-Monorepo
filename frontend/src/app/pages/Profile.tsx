@@ -1,3 +1,5 @@
+// Status: real
+
 import { Download, RotateCcw, Save, UploadCloud, User } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
@@ -9,6 +11,7 @@ import { AssetListPanel } from '../features/profile/components/AssetListPanel';
 import { AssetVaultPanel } from '../features/profile/components/AssetVaultPanel';
 import { NotificationSettingsPanel } from '../features/profile/components/NotificationSettingsPanel';
 import { PersonaPanel } from '../features/profile/components/PersonaPanel';
+import { ProviderCredentialsPanel } from '../features/profile/components/ProviderCredentialsPanel';
 import { ProfileEditDrawer } from '../features/profile/components/ProfileEditDrawer';
 import { ProfileWorkbenchBar } from '../features/profile/components/ProfileWorkbenchBar';
 import { GeneratedResourceHistory } from '../features/profile/components/GeneratedResourceHistory';
@@ -35,7 +38,7 @@ export function Profile() {
   const loadProfile = () => {
     setProfileLoading(true);
     setProfileError('');
-    getMyProfile(user?.id ?? '00000000-0000-0000-0000-000000000001')
+    getMyProfile()
       .then(setProfile)
       .catch((error) => setProfileError(error instanceof Error ? error.message : '画像数据加载失败'))
       .finally(() => setProfileLoading(false));
@@ -139,6 +142,12 @@ export function Profile() {
             label: '资源历史',
             description: '查看课程学习中已生成的讲解文档、课件、思维导图、练习题、实验与阅读资源',
             render: () => <GeneratedResourceHistory userId={user?.id ?? '00000000-0000-0000-0000-000000000001'} />,
+          },
+          {
+            key: 'models',
+            label: '模型与密钥',
+            description: 'DeepSeek 与讯飞星火的用户级密钥池',
+            render: () => <ProviderCredentialsPanel />,
           },
           {
             key: 'vault',
