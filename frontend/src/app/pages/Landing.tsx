@@ -21,11 +21,12 @@ import {
 } from 'lucide-react';
 import { DataTag } from '@/app/components/DataTag';
 import { BrandFooter } from '@/app/components/BrandFooter';
+import { entryPathForRole } from '@/app/features/auth/demoAccounts';
 import { useAuth } from '@/app/features/auth/store';
 
 export function Landing() {
   const navigate = useNavigate();
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, user } = useAuth();
   const [expandedFaq, setExpandedFaq] = useState<number | null>(null);
   const heroRef = useRef<HTMLDivElement>(null);
 
@@ -45,7 +46,7 @@ export function Landing() {
   };
 
   const enterWorkspace = () => {
-    navigate(isAuthenticated ? '/workspace' : '/login?redirect=/workspace');
+    navigate(isAuthenticated ? entryPathForRole(user?.role ?? 'student') : '/login');
   };
 
   return (

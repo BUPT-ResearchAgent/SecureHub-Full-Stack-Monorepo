@@ -10,7 +10,7 @@ import { ApiError } from '@/lib/api';
 import { useAuth } from '../store';
 import { PasswordField } from './PasswordField';
 import { PasswordStrengthMeter, evaluatePasswordStrength } from './PasswordStrength';
-import { DEMO_ACCOUNTS, entryPathForRole, getDemoAccount } from '../demoAccounts';
+import { DEMO_ACCOUNTS, getDemoAccount, resolvePostLoginPath } from '../demoAccounts';
 import type { AppRole } from '../types';
 
 type AuthFormMode = 'login' | 'register';
@@ -68,10 +68,16 @@ export function AuthForm({ mode }: { mode: AuthFormMode }) {
   }, [requestedDemo]);
 
   useEffect(() => {
-    if (auth.isAuthenticated && !requestedDemo && !hasRequestedRedirect) {
-      navigate(entryPathForRole(auth.user?.role ?? 'student'), { replace: true });
+    if (auth.isAuthenticated && !requestedDemo) {
+      navigate(
+        resolvePostLoginPath(
+          auth.user?.role ?? 'student',
+          hasRequestedRedirect ? redirect : null,
+        ),
+        { replace: true },
+      );
     }
-  }, [auth.isAuthenticated, auth.user?.role, hasRequestedRedirect, navigate, requestedDemo]);
+  }, [auth.isAuthenticated, auth.user?.role, hasRequestedRedirect, navigate, redirect, requestedDemo]);
 
   const title = isRegister ? '创建 SecureHub 账号' : '登录 SecureHub';
   const subtitle = isRegister
@@ -131,7 +137,10 @@ export function AuthForm({ mode }: { mode: AuthFormMode }) {
         const signedInUser = await auth.login({ email: email.trim(), password }, { remember });
         toast.success('登录成功');
         navigate(
-          hasRequestedRedirect ? redirect : entryPathForRole(signedInUser.role),
+          resolvePostLoginPath(
+            signedInUser.role,
+            hasRequestedRedirect ? redirect : null,
+          ),
           { replace: true },
         );
       }

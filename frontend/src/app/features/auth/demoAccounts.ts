@@ -77,3 +77,23 @@ export function getDemoAccount(role: string | null | undefined): DemoAccount | u
 export function entryPathForRole(role: AppRole): string {
   return getDemoAccount(role)?.entryPath ?? '/workspace';
 }
+
+/**
+ * Preserve an explicit deep link when the signed-in role can open it.  The
+ * generic student workspace redirect must not override a teacher identity
+ * selected at login.
+ */
+export function resolvePostLoginPath(role: AppRole, redirect?: string | null): string {
+  const entryPath = entryPathForRole(role);
+  if (!redirect) return entryPath;
+
+  const isStudentWorkspace =
+    redirect === '/workspace' ||
+    redirect === '/home' ||
+    redirect.startsWith('/workspace?') ||
+    redirect.startsWith('/workspace#');
+
+  if (isStudentWorkspace) return entryPath;
+  if (role === 'student' && redirect.startsWith('/teacher')) return entryPath;
+  return redirect;
+}
