@@ -4,7 +4,7 @@ import { Toaster } from 'sonner';
 import { Layout } from '@/app/components/Layout';
 import { LoadingState } from '@/app/components/StateView';
 import { AuthProvider } from '@/app/features/auth/store';
-import { ProtectedRoute } from '@/app/features/auth/components/ProtectedRoute';
+import { ProtectedRoute, StudentOnlyRoute } from '@/app/features/auth/components/ProtectedRoute';
 import { Landing } from '@/app/pages/Landing';
 import { Login } from '@/app/pages/Login';
 import { Register } from '@/app/pages/Register';
@@ -75,7 +75,9 @@ export default function App() {
           <Route
             element={
               <ProtectedRoute>
-                <Layout />
+                <StudentOnlyRoute>
+                  <Layout />
+                </StudentOnlyRoute>
               </ProtectedRoute>
             }
           >

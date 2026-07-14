@@ -1,3 +1,5 @@
+// Status: real
+
 import type { ReactNode } from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../store';
@@ -17,6 +19,21 @@ export function ProtectedRoute({ children }: { children: ReactNode }) {
   if (!isAuthenticated) {
     const redirect = encodeURIComponent(`${location.pathname}${location.search}`);
     return <Navigate to={`/login?redirect=${redirect}`} replace />;
+  }
+
+  return <>{children}</>;
+}
+
+/**
+ * The student application must never become a fallback surface for a signed-in
+ * teacher. This route-level guard also covers stale bookmarks and cached
+ * pre-fix redirects that target /workspace.
+ */
+export function StudentOnlyRoute({ children }: { children: ReactNode }) {
+  const { user } = useAuth();
+
+  if (user?.role && user.role !== 'student') {
+    return <Navigate to="/teacher" replace />;
   }
 
   return <>{children}</>;
