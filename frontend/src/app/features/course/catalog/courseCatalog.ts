@@ -3,9 +3,9 @@ import type { CourseCatalogItem } from './courseCatalog.types';
 /**
  * 学生进入「课程学习」时可选的课程目录。
  *
- * 课程数据是前端 mock，演示用；接入真后端时由 `/api/v1/courses` 替换。
- * 真后端字段对齐 `docs/api/course-contract.md §1.1`：`id` / `title` / `description` / `progress`。
- * 其余字段（难度、知识点、工作流模板、配色）仍由前端补充以撑起多课程演示。
+ * Presentation presets only: they retain legacy copy, cover and workflow
+ * layout choices.  The durable catalogue identity/readiness/counts always
+ * come from `/api/v1/courses/catalog` in `courseCatalogApi.ts`.
  */
 export const courseCatalog: CourseCatalogItem[] = [
   {
@@ -94,8 +94,30 @@ const courseIdAliases: Record<string, string> = {
   'web-sec': 'web-security-foundation',
   websec: 'web-security-foundation',
   course_websec_intro: 'web-security-foundation',
+  'WEB-SEC-101': 'web-security-foundation',
   '00000000-0000-0000-0000-000000000101': 'web-security-foundation',
 };
+
+export const coursePresentationByCode = Object.fromEntries(
+  courseCatalog.map((course) => [course.code, course]),
+) as Record<string, CourseCatalogItem>;
+
+export const legacyCourseReferenceToCode: Record<string, string> = Object.fromEntries(
+  courseCatalog.flatMap((course) => [
+    [course.id, course.code],
+    [course.code, course.code],
+  ]),
+) as Record<string, string>;
+
+Object.entries(courseIdAliases).forEach(([alias, legacyId]) => {
+  const course = courseCatalogById[legacyId];
+  if (course) legacyCourseReferenceToCode[alias] = course.code;
+});
+
+export function resolveLegacyCourseCode(value: string | null | undefined): string | undefined {
+  if (!value) return undefined;
+  return legacyCourseReferenceToCode[value] ?? legacyCourseReferenceToCode[value.toUpperCase()];
+}
 
 /** 默认课程：保持第一门 Web 安全基础不变，前几轮演示数据全部围绕它构建。 */
 export const defaultCourseId: CourseCatalogItem['id'] = courseCatalog[0].id;
@@ -105,8 +127,8 @@ export function getCourseById(courseId: string | null | undefined): CourseCatalo
   return courseCatalogById[courseIdAliases[courseId] ?? courseId];
 }
 
-export function resolveCourseId(courseId: string | null | undefined): string {
-  return getCourseById(courseId)?.id ?? defaultCourseId;
+export function resolveCourseId(courseId: string | null | undefined): string | undefined {
+  return getCourseById(courseId)?.id;
 }
 
 export const courseCoverGradient: Record<CourseCatalogItem['coverTone'], string> = {

@@ -11,6 +11,11 @@ export type CourseCatalogItem = {
   title: string;
   subtitle?: string;
   description: string;
+  /** Backend-owned readiness; presentation presets must not infer this from counts. */
+  contentStatus?: 'ready' | 'preview';
+  unavailableReason?: string;
+  /** Legacy preset key for read-only preview content; never sent to the API. */
+  previewContentKey?: string;
   /** 当前学习的知识点中文名，用于顶部标签和聊天上下文。 */
   currentKnowledgePoint: string;
   currentKnowledgePointId?: string;

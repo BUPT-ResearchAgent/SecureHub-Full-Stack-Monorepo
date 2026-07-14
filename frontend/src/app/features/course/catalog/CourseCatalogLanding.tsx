@@ -49,7 +49,7 @@ export function CourseCatalogLanding({
         </p>
         <h1 className="text-2xl font-semibold text-slate-950 sm:text-3xl">课程学习</h1>
         <p className="max-w-2xl text-sm leading-relaxed text-slate-500">
-          从真实课程目录中选择当前学习方向：9 个既有产品智能体会基于你的画像生成讲解、PPT、思维导图、练习题、实操与拓展阅读。
+          四门课程均来自真实课程目录；Web 安全基础可运行完整学习闭环，其他课程提供明确标注的只读内容预览。
         </p>
       </header>
 
@@ -152,7 +152,7 @@ function FirstTimeBanner() {
           选择一门课开始你的 A3 个性化学习之旅
         </p>
         <p className="mt-1 text-xs leading-relaxed text-slate-600">
-          建议先点开「Web 安全基础」体验 9 智能体协作生成 7 类资源的完整闭环；其他课程同样能跑通整套流程。
+          建议先点开「Web 安全基础」体验完整学习闭环；其余三门课程目前仅开放预置内容预览，不会启动生成式工作流。
         </p>
       </div>
     </motion.section>
@@ -202,6 +202,9 @@ function CatalogCard({
               {course.difficulty}
             </span>
             <span className="text-[10px] text-slate-400">约 {course.estimatedHours} 课时</span>
+            <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${course.contentStatus === 'ready' ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>
+              {course.contentStatus === 'ready' ? '完整课程' : '内容预览 / 建设中'}
+            </span>
           </div>
         </div>
 
@@ -242,7 +245,7 @@ function CatalogCard({
         <div className="relative z-10 flex items-center justify-between border-t border-slate-100 pt-3 text-xs">
           <span className="inline-flex items-center gap-1 text-slate-500">
             <Bot className="h-3.5 w-3.5 text-brand-blue-600" />
-            9 智能体已就绪
+            {course.contentStatus === 'ready' ? '完整工作流可用' : '仅预置内容预览'}
           </span>
           <span
             className={`inline-flex items-center gap-1 font-medium ${courseCoverAccent[course.coverTone]}`}

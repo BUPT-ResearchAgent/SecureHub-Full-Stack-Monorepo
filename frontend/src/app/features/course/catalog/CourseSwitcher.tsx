@@ -64,6 +64,9 @@ export function CourseSwitcher({
           <span className="truncate text-[11px] uppercase tracking-wide text-slate-400">当前课程</span>
           <span className="flex items-center gap-2">
             <span className="truncate text-sm font-semibold text-slate-900">{course.title}</span>
+            <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ${course.contentStatus === 'preview' ? 'bg-amber-50 text-amber-700' : 'bg-emerald-50 text-emerald-700'}`}>
+              {course.contentStatus === 'preview' ? '预览' : '完整'}
+            </span>
             <span
               className={`hidden rounded-full px-1.5 py-0.5 text-[10px] font-medium ${courseDifficultyTone[course.difficulty]} sm:inline-flex`}
             >
@@ -120,6 +123,9 @@ export function CourseSwitcher({
                         <span className="flex items-center gap-2">
                           <span className="truncate text-sm font-semibold text-slate-900">
                             {item.title}
+                          </span>
+                          <span className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium ${item.contentStatus === 'preview' ? 'bg-amber-50 text-amber-700' : 'bg-emerald-50 text-emerald-700'}`}>
+                            {item.contentStatus === 'preview' ? '预览' : '完整'}
                           </span>
                           <span
                             className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium ${courseDifficultyTone[item.difficulty]}`}

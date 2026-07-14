@@ -10,7 +10,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.api.v1.endpoints import assessment, courses, profile, tutor
-from app.db.seeds._constants import COURSE_WEBSEC_ID, DEMO_USER_ID, node_id
+from app.db.seeds._constants import COURSE_CRYPTO_ID, COURSE_WEBSEC_ID, DEMO_USER_ID, node_id
 from app.main import app
 from app.runtime.contracts import EventEnvelope, EventType
 from app.schemas.agent_control import (
@@ -217,6 +217,32 @@ def test_product_adapter_does_not_fallback_when_root_persistence_is_unavailable(
         "code": "INTERNAL",
         "message": "workflow runtime is temporarily unavailable",
     }
+
+
+def test_preview_course_adapters_refuse_before_creating_a_root(
+    client: TestClient, service: RecordingWorkflowService
+) -> None:
+    preview_id = str(COURSE_CRYPTO_ID)
+    requests_before = len(service.requests)
+    plan = client.post(
+        "/api/v1/courses/crypto-foundation/plan",
+        json={"user_id": UNTRUSTED_USER_ID, "target_node_id": KP_ID, "options": {"depth": 3}},
+    )
+    tutor_response = client.post(
+        "/api/v1/tutor/ask",
+        json={"user_id": UNTRUSTED_USER_ID, "course_id": preview_id, "question": "为什么不能生成？"},
+        headers={"Idempotency-Key": "preview-tutor"},
+    )
+    assessment_response = client.post(
+        "/api/v1/assessment/run",
+        json={"user_id": UNTRUSTED_USER_ID, "course_id": preview_id, "answers": []},
+        headers={"Idempotency-Key": "preview-assessment"},
+    )
+
+    for response in (plan, tutor_response, assessment_response):
+        assert response.status_code == 409, response.text
+        assert response.json()["detail"]["code"] == "COURSE_CONTENT_NOT_READY"
+    assert len(service.requests) == requests_before
 
 
 def test_course_plan_returns_accepted_root_when_not_terminal(

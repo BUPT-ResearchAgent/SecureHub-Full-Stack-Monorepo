@@ -20,6 +20,9 @@
 
 ```
 course_websec       Web 安全课程
+course_crypto       密码学基础课程（当前仅 Catalog 预览占位，未开放 Skill）
+course_network_security  网络攻防实训课程（当前仅 Catalog 预览占位，未开放 Skill）
+course_secure_development 安全开发与代码审计课程（当前仅 Catalog 预览占位，未开放 Skill）
 policy              政策法规
 fund                科研基金
 job                 招聘岗位
@@ -28,7 +31,7 @@ paper               学术论文
 news                安全事件 / CVE / CNVD
 ```
 
-**约束**：新增 domain 需 A + C 双签；不允许临时字符串如 `course_crypto_v2`。
+**约束**：新增 domain 需 A + C 双签；不允许临时字符串如 `course_crypto_v2`。上述三个课程 domain 已受治理但只用于真实 `courses` 目录占位；本轮不写 `documents/chunks/knowledge_nodes`，不扩展任何冻结 Skill 的 `applicable_domains`，也不把预置前端材料视为该 domain 的真实内容。
 
 ### 1.2 `documents.source_type` —— 原始来源类型
 

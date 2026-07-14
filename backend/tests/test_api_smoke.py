@@ -99,12 +99,37 @@ def test_real_rag_search_sanitises_embedding_dependency_failure(monkeypatch):
     }
 
 
-def test_courses_list():
+def test_courses_list_uses_catalog_projection(monkeypatch):
+    from app.api.v1.endpoints import courses as courses_endpoint
+    from app.db.seeds._constants import COURSE_PRODUCTS
+    from app.schemas.course_product import CourseCatalogItemDTO
+
+    class CatalogService:
+        async def list_catalog(self, *, user_id):
+            return [
+                CourseCatalogItemDTO(
+                    id=product.id,
+                    code=product.code,
+                    title=product.title,
+                    domain=product.domain,
+                    description=product.description,
+                    content_status=product.content_status,
+                    unavailable_reason=product.unavailable_reason,
+                    chapter_count=0,
+                    knowledge_point_count=0,
+                    resource_count=0,
+                    progress_percent=0,
+                    core_coverage_percent=0,
+                )
+                for product in COURSE_PRODUCTS
+            ]
+
+    monkeypatch.setattr(courses_endpoint, "_course_catalog_service", lambda _session: CatalogService())
     client = TestClient(app)
     response = client.get("/api/v1/courses")
     assert response.status_code == 200
     body = response.json()
-    assert any(c["code"] == "WEB-SEC-101" for c in body)
+    assert [course["code"] for course in body] == ["WEBSEC-101", "CRYPTO-101", "NET-SEC-201", "SDL-201"]
 
 
 def test_llm_health_endpoint_uses_health_service(monkeypatch):

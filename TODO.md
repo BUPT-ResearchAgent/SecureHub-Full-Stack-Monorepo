@@ -7,6 +7,7 @@
 > `Workout/Agent-Runtime-Wave-4-6.md`
 > Productization evidence: `../Workout/10-A3-S5-AB-1.md`,
 > `../Workout/10-A3-S6-BA-1.md`, and `../Workout/10-A3-S7-ACB-1.md`
+> Multi-course catalog evidence: `../Workout/11-A3-Multi-Course-Real-Catalog.md`
 
 ## Current Status
 
@@ -23,6 +24,13 @@ The fixed nine business Agents remain:
 `policy_interpreter`, `hot_analyst`, `job_analyst`, `competition_advisor`,
 `career_planner`, `topic_explorer`, `doc_archivist`, `task_orchestrator`, and
 `outcome_evaluator`.
+
+### A3 Multi-Course Catalog v1.0
+
+- [x] `courses` 真实目录固定为四门稳定产品：`WEBSEC-101` 为完整 `ready` 课程；`CRYPTO-101`、`NET-SEC-201`、`SDL-201` 是真实目录记录但仍为只读 `preview`。
+- [x] preview 的 detail/graph/path/progress 诚实返回空投影；旧前端材料仅以“预置内容预览”展示，不计为 RAG、Evidence、Artifact、AgentRun、Provider Call 或学习进度。
+- [x] 课程 plan/resource/tutor/assessment、资源 retry 与直接 `/workflow-runs` 都在 durable root 创建前对 preview 返回 `409 COURSE_CONTENT_NOT_READY`；未知 course 不回落 Web 安全。
+- [ ] 三门 preview 升级为 `ready` 前，分别补齐真实资料入库、knowledge_nodes/edges、Evidence manifest、RAG/evidence-floor 验收与独立的 Skill-domain 语义版本评审；不得把此目录工作误报为内容闭环。
 
 ### A3 Productization S5-S7
 

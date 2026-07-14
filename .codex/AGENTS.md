@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - **文档目的**：作为"安枢智梯 SecureHub / CyberLadder"项目所有后续 Claude Code / Codex / Cursor 会话的默认上下文。任何在本仓库工作的 AI 助手（或新加入的工程师）应当**首先读完本文件**，再开始触碰代码。
 - **读者**：本项目团队成员；后续接入的 AI 编码助手；A3 赛题答辩评委（架构理解参考）。
-- **最后更新时间**：2026-07-14（SecureHub Agent Runtime v1.1 Wave 0-6 与 A3-S5~S7 均已 `real-accepted`；S8 保持 `planned` + `external-gate-open` 并暂缓执行，当前优先赛前 PPT/试题/可视化/证据评分准备）。
+- **最后更新时间**：2026-07-14（v1.0 多课程真实 Catalog：Web 安全 `ready`，密码学/网络攻防/安全开发为明确只读 `preview`；固定 9 Agent、28 Skill binding、Runtime 与七类 SSE 均不变）。
 - **本文件的权威性**：在仓库层面，本文件 > `README.md` / `docs/architecture.md` / `docs/backend-overview.md`。当本文件与代码现状冲突时，**以代码为准并立即更新本文件**；当本文件与外部 4 份文档冲突时，**以本文件 §19 的"差异说明"为准**。
 
 ### 阅读约定（什么时候回读外部文档？）
@@ -43,6 +43,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | Runtime 核心 | `RuntimeEngine`、`SecureHubStateMachine`、framework-neutral `WorkflowDefinition`、唯一 `SkillExecutor`、PostgreSQL durable store/outbox、Worker/lease/fencing/recovery 均已落地 |
 | 产品路径 | `/profile/chat`、`/courses/{id}/plan`、`/courses/{id}/resources/generate`、`/tutor/ask`、`/assessment/run` 都是 `WorkflowApplicationService` adapter，复用唯一可查询 root UUID |
 | A3-S5~S7 | S5 使用 `assessment_update_v2` atomic audit；S6 从同一 durable root 投影 Evidence/Agent/QualityCheck/Provider/Artifact/control；S7 使用独立 `fund_recommendation_v1`、固定 9 Agent/28 bindings、`domain=fund` 共享知识资产和 server-side profile snapshot |
+| 多课程 Catalog v1.0 | `courses` 固定投影四门产品；仅 `WEBSEC-101` 为 `ready`。三门 `preview` 只显示预置内容，所有真实课程动作在 root 前 `409 COURSE_CONTENT_NOT_READY`；未知 course 禁止回落 Web 安全 |
 | 阶段状态 | 正式生命周期为 `planned -> in_progress -> code_complete -> engineering-accepted -> real-accepted`；`external-gate-open` 仅是正交 Gate 标记，不能替代或拼接为生命周期状态 |
 | 真实联调证据 | Golden Slice 与五条产品路径均以 `real / deepseek / deepseek-v4-pro` 成功；五路径共 17 条 `agent_runs`/Provider Call。cancel root `2daf935b-e3b7-4dbe-af34-d792dffc66d3` 为 `cancelled`，21 条 live/replay SSE 一致且终态后无 token/artifact |
 | 前端与 SSE | `WorkflowRunClient` 使用 typed reducer、Last-Event-ID、durable gap replay、duplicate dedupe 与 provider stream replacement；对外事件固定七类 |
@@ -134,7 +135,7 @@ A3 新能力一律作为**现有 9 智能体的新 skill** 叠加，**绝不**�
 
 ### 3.3 ❌ 不要为新 domain 单独建知识库表（统一知识资产层 v2）
 
-所有 domain（`course_websec` / `policy` / `fund` / `job` / `competition` / `paper` / `news`）共用：
+所有 domain（`course_websec` / `course_crypto` / `course_network_security` / `course_secure_development` / `policy` / `fund` / `job` / `competition` / `paper` / `news`）共用：其中后三个课程 domain 当前仅受治理的 Catalog 占位，未开放文档/RAG/Skill，严禁扩展冻结的 `applicable_domains`。
 
 - `documents`：文档级元信息、来源、可信度、`raw_text` 可空、`status` 跟踪入库生命周期
 - `document_assets`：PDF / Markdown / 封面 / 页图 / OCR / 章节文件等**源资料**资产

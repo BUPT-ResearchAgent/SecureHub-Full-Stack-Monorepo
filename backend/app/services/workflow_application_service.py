@@ -19,6 +19,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import get_settings
+from app.db.seeds._constants import resolve_course_product
 from app.db.models.workflow_runtime import WorkflowApproval, WorkflowProviderCall, WorkflowRun, WorkflowStepAttempt
 from app.repositories.identity.provider_credentials import ProviderCredentialRepository
 from app.runtime.contracts import EventEnvelope, ExecutionMode, RunStatus, RuntimeSemanticVersion
@@ -48,6 +49,25 @@ from app.schemas.agent_control import (
 
 
 Wakeup = Callable[[UUID], Awaitable[None] | None]
+
+
+# Every workflow below can create a root that eventually invokes course
+# Skills, persists Evidence/AgentRun/Artifact state, or mutates progress.  Its
+# readiness check belongs here so the generic /workflow-runs route cannot
+# bypass a product endpoint's UX guard.
+_COURSE_CONTENT_WORKFLOWS = frozenset(
+    {
+        "course_plan_v1",
+        "resource_generate_v1",
+        "course_learning_full_v1",
+        "course_learning_full_v2",
+        "tutor_routing_v1",
+        "tutor_routing_v2",
+        "tutor_routing_v3",
+        "assessment_update_v1",
+        "assessment_update_v2",
+    }
+)
 
 
 class WorkflowApplicationError(RuntimeError):
@@ -119,8 +139,12 @@ class WorkflowApplicationService:
         except Exception as exc:
             raise WorkflowApplicationError("INVALID_INPUT", "workflow input does not match the frozen definition", status_code=422) from exc
 
-        provider, model = self._provider_selection(request)
         async with self.sessionmaker() as session:
+            await self._preflight_course_content(
+                workflow_name=definition.name,
+                validated_input=validated_input,
+            )
+            provider, model = self._provider_selection(request)
             credential_id = None
             if request.mode == ExecutionMode.REAL and provider in {"deepseek", "xfyun"}:
                 # Resolve the active key once while the root is created. The
@@ -597,6 +621,41 @@ class WorkflowApplicationService:
             payload.pop("persona_summary", None)
             payload["domain"] = "fund"
         return payload
+
+    @staticmethod
+    async def _preflight_course_content(
+        *,
+        workflow_name: str,
+        validated_input: dict[str, Any],
+    ) -> None:
+        """Canonicalise a known course and reject preview roots before side effects.
+
+        The manifest-backed lookup intentionally accepts only explicit product
+        UUID/code/legacy aliases.  There is no default ``course_websec`` path:
+        an unknown identifier never reaches a durable root, Provider selection,
+        event stream, AgentRun, Evidence Snapshot or Artifact Saga.
+        """
+        if workflow_name not in _COURSE_CONTENT_WORKFLOWS:
+            return
+        raw_course_id = validated_input.get("course_id")
+        product = resolve_course_product(str(raw_course_id) if raw_course_id is not None else None)
+        if product is None:
+            raise WorkflowApplicationError(
+                "COURSE_NOT_FOUND",
+                "课程不存在或链接已失效。",
+                status_code=404,
+            )
+        if product.content_status != "ready":
+            raise WorkflowApplicationError(
+                "COURSE_CONTENT_NOT_READY",
+                product.unavailable_reason or "课程内容正在建设中，暂不能启动真实学习工作流。",
+                status_code=409,
+            )
+
+        # Do not trust a browser-provided domain.  The persisted root records
+        # the product's canonical UUID/domain only after readiness succeeds.
+        validated_input["course_id"] = str(product.id)
+        validated_input["domain"] = product.domain
 
     @staticmethod
     async def _hydrate_fund_profile(

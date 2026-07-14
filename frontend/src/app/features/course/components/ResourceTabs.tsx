@@ -6,6 +6,8 @@ import { LLMErrorState, LoadingState } from '@/app/components/StateView';
 import { useEvidence } from '@/app/components/EvidenceDrawer';
 import { useAgentTraceDispatch } from '@/app/features/agents/store';
 import { isMockMode } from '@/lib/mock';
+import { getMockEvidenceForCourse } from '@/lib/mock/courses.mock';
+import { useSelectedCourse } from '../catalog/useSelectedCourse';
 import { isWorkflowDraftReplacement } from '@/lib/workflow-run.types';
 import { useCourseDispatch, useCourseState } from '../store';
 import type { ResourceItem, ResourceType } from '../types';
@@ -93,6 +95,7 @@ function ExtensionButton({
 export function ResourceTabs() {
   const navigate = useNavigate();
   const { resources: storedResources, taskContext } = useCourseState();
+  const { course } = useSelectedCourse();
   const courseDispatch = useCourseDispatch();
   const evidence = useEvidence();
   const traceDispatch = useAgentTraceDispatch();
@@ -110,6 +113,11 @@ export function ResourceTabs() {
   const [iterating, setIterating] = useState(false);
   const [bundleGenerating, setBundleGenerating] = useState(false);
   const presenterMode = isMockMode();
+  const isPreview = course?.contentStatus === 'preview';
+  const previewEvidence = useMemo(
+    () => isPreview ? getMockEvidenceForCourse(course?.previewContentKey ?? course?.id) : [],
+    [course?.id, course?.previewContentKey, isPreview],
+  );
   const resource = resources[active] ?? fallbackResource(active);
   const artifactProjection = useRealResourceArtifact(resource);
   const previewResource = artifactProjection.resource;
@@ -120,6 +128,13 @@ export function ResourceTabs() {
   useEffect(() => {
     setResources(initialResourceMap(storedResources));
   }, [storedResources]);
+
+  // Resource state is not shared across course products; this also prevents a
+  // previously generated Web 安全 artifact from appearing in a preview course.
+  useEffect(() => {
+    setResources({});
+    setProgressText('');
+  }, [taskContext.courseId]);
 
   useEffect(() => {
     Object.values(resources).forEach((resource) => {
@@ -140,7 +155,7 @@ export function ResourceTabs() {
   };
 
   const persistResourceCompletion = (workflowRunId: string) => {
-    if (presenterMode) return;
+    if (presenterMode || isPreview) return;
     void recordCourseProgress(taskContext.courseId, {
       knowledge_point_id: taskContext.kpId,
       activity_type: 'resource',
@@ -154,6 +169,10 @@ export function ResourceTabs() {
   };
 
   const startGeneration = (targetType: ResourceType = active) => {
+    if (isPreview) {
+      setProgressText('当前课程仅开放预置内容预览，资源生成尚未就绪，不会创建工作流。');
+      return;
+    }
     cancelRef.current?.();
     activeStreamTypeRef.current = targetType;
     setProgressText('正在校验输入');
@@ -242,6 +261,10 @@ export function ResourceTabs() {
   };
 
   const startResourcePack = () => {
+    if (isPreview) {
+      setProgressText('当前课程仅开放预置内容预览，不能生成资源包。');
+      return;
+    }
     cancelRef.current?.();
     setBundleGenerating(true);
     setProgressText('正在创建完整资源包');
@@ -325,6 +348,10 @@ export function ResourceTabs() {
   };
 
   const retryPersistedResource = () => {
+    if (isPreview) {
+      setProgressText('预览课程没有可重试的真实资源。');
+      return;
+    }
     if (!UUID_PATTERN.test(resource.id)) {
       startGeneration(active);
       return;
@@ -390,10 +417,10 @@ export function ResourceTabs() {
       setActive(targetType);
       window.setTimeout(() => startGeneration(targetType), 120);
     };
-    if (!presenterMode) return undefined;
+    if (!presenterMode || isPreview) return undefined;
     window.addEventListener('securehub-course-demo-stage', handleDemoStage);
     return () => window.removeEventListener('securehub-course-demo-stage', handleDemoStage);
-  }, [presenterMode]);
+  }, [isPreview, presenterMode]);
 
   const renderResource = () => {
     if (active === 'doc') return <DocResourceView resource={previewResource} />;
@@ -410,8 +437,8 @@ export function ResourceTabs() {
       <div className="rounded-xl border border-brand-blue-100 bg-white px-4 py-3 shadow-sm">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
-            <p className="text-xs font-medium text-brand-blue-700">学完 SQL 注入后的中枢延展示范</p>
-            <h3 className="mt-1 text-sm font-semibold text-slate-900">同一画像驱动 Research / Fund / Job / Competition 串场</h3>
+            <p className="text-xs font-medium text-brand-blue-700">{isPreview ? '预置内容预览的跨模块入口' : '学完 SQL 注入后的中枢延展示范'}</p>
+            <h3 className="mt-1 text-sm font-semibold text-slate-900">{isPreview ? '入口可浏览，预览课程不写入学习链路' : '同一画像驱动 Research / Fund / Job / Competition 串场'}</h3>
             <p className="mt-1 max-w-3xl text-xs leading-relaxed text-slate-500">
               这些入口只跳转到现有页面，用于演示课程画像如何延展到科研、就业、竞赛和写作选题；不代表课程工作流已替代这些模块各自的数据链路。
             </p>
@@ -434,8 +461,18 @@ export function ResourceTabs() {
       </div>
 
       <div className="rounded-xl border border-amber-200 bg-amber-50/70 px-4 py-3 text-sm text-amber-800">
-        当前资源工作台支持 doc / ppt / mindmap / quiz / lab / readings / video 7 类真实 artifact。未完成 Artifact Saga 时不会显示为已生成。
+        {isPreview ? '当前课程处于建设中：下列材料是只读预置内容，不是 Evidence Snapshot 或真实 Artifact；PPT、文档、实验、视频等资源会以占位状态显示。' : '当前资源工作台支持 doc / ppt / mindmap / quiz / lab / readings / video 7 类真实 artifact。未完成 Artifact Saga 时不会显示为已生成。'}
       </div>
+
+      {isPreview && (
+        <section className="rounded-xl border border-slate-200 bg-white p-4" aria-label="预置材料来源预览">
+          <p className="text-sm font-semibold text-slate-900">预置材料来源预览</p>
+          <p className="mt-1 text-xs text-slate-500">仅用于展示旧内容，不进入真实 Evidence、检索、审计或生成流程。</p>
+          <ul className="mt-3 space-y-2">
+            {previewEvidence.map((item) => <li key={item.chunk_id} className="text-xs text-slate-600"><span className="font-medium">{item.chapter ?? '预置材料'}</span>：{item.chunk_text}</li>)}
+          </ul>
+        </section>
+      )}
 
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap gap-2">
@@ -460,20 +497,20 @@ export function ResourceTabs() {
         <button
           type="button"
           onClick={() => startGeneration()}
-          disabled={isGenerating || bundleGenerating}
+          disabled={isPreview || isGenerating || bundleGenerating}
           className="inline-flex items-center gap-2 rounded-lg bg-brand-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
         >
           <PlayCircle className="h-4 w-4" />
-          生成{resourceTypeLabel(active)}
+          {isPreview ? '内容建设中' : `生成${resourceTypeLabel(active)}`}
         </button>
         <button
           type="button"
           onClick={startResourcePack}
-          disabled={isGenerating || bundleGenerating}
+          disabled={isPreview || isGenerating || bundleGenerating}
           className="inline-flex items-center gap-2 rounded-lg border border-brand-blue-200 bg-brand-blue-50 px-4 py-2 text-sm font-medium text-brand-blue-700 hover:bg-brand-blue-100 disabled:cursor-not-allowed disabled:opacity-60"
         >
           <PlayCircle className="h-4 w-4" />
-          生成完整资源包
+          {isPreview ? '资源包建设中' : '生成完整资源包'}
         </button>
       </div>
 
@@ -495,7 +532,7 @@ export function ResourceTabs() {
         <button
           type="button"
           onClick={retryPersistedResource}
-          disabled={bundleGenerating}
+          disabled={isPreview || bundleGenerating}
           className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700 hover:border-brand-blue-200 hover:bg-brand-blue-50 hover:text-brand-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
         >
           <PlayCircle className="h-3.5 w-3.5" />

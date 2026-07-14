@@ -74,6 +74,7 @@ export function AssessmentPanel() {
   const dispatch = useCourseDispatch();
   const { course } = useSelectedCourse();
   const presenterMode = isMockMode();
+  const isPreview = course?.contentStatus === 'preview';
   const quizResource = useMemo(
     () => resources.find((resource) => resource.type === 'quiz' && resource.status === 'ready') ?? null,
     [resources],
@@ -84,14 +85,14 @@ export function AssessmentPanel() {
     [quizArtifact.resource.content],
   );
   const questions = useMemo<AssessmentQuestion[]>(
-    () => presenterMode && course ? getMockQuizItemsForCourse(course.id).map((item) => ({
+    () => (presenterMode || isPreview) && course ? getMockQuizItemsForCourse(course.previewContentKey ?? course.id).map((item) => ({
         id: item.id,
         type: 'single' as const,
         prompt: item.prompt,
         kp: item.kp,
         options: item.options,
       })) : realQuestions,
-    [course?.id, presenterMode, realQuestions],
+    [course?.id, course?.previewContentKey, isPreview, presenterMode, realQuestions],
   );
   const [answers, setAnswers] = useState<Record<string, AssessmentAnswer>>({});
   const [loading, setLoading] = useState(false);
@@ -176,6 +177,10 @@ export function AssessmentPanel() {
 
   const submit = async () => {
     if (loading) return;
+    if (isPreview) {
+      setError('这是只读预置题目预览；课程内容尚未就绪，不能提交评估或更新学习进度。');
+      return;
+    }
     setLoading(true);
     setError('');
     setEvents([]);
@@ -271,14 +276,18 @@ export function AssessmentPanel() {
 
   const hasSubmitted = Boolean(assessment);
   const score = Math.round((assessment?.score ?? 0) * 100);
-  const canSubmit = !loading && questions.length > 0 && questions.every((question) => hasAnswer(answers[question.id]));
+  const canSubmit = !isPreview && !loading && questions.length > 0 && questions.every((question) => hasAnswer(answers[question.id]));
 
   return (
     <>
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_420px]">
       <Card title="学习效果评估" subtitle="完成题目后回流 outcome_evaluator 更新能力画像">
         <div className="space-y-4">
-          {!presenterMode && (
+          {isPreview ? (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm leading-relaxed text-amber-800">
+              以下是旧版预置题目预览，不是实时生成的题目，也不会写入能力画像、学习进度或工作流审计。
+            </div>
+          ) : !presenterMode && (
             <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">
               {!quizResource && (
                 <div className="flex flex-wrap items-center justify-between gap-2">
@@ -320,6 +329,7 @@ export function AssessmentPanel() {
                         type={question.type === 'multiple' ? 'checkbox' : 'radio'}
                         name={question.id}
                         checked={picked}
+                        disabled={isPreview}
                         onChange={(event) => setAnswers((current) => {
                           if (question.type !== 'multiple') return { ...current, [question.id]: option };
                           const existing = current[question.id];
@@ -340,6 +350,7 @@ export function AssessmentPanel() {
               {question.type === 'short' && (
                 <textarea
                   value={typeof answers[question.id] === 'string' ? answers[question.id] : ''}
+                  disabled={isPreview}
                   onChange={(event) => setAnswers((current) => ({ ...current, [question.id]: event.target.value }))}
                   className="mt-3 min-h-[96px] w-full rounded-md border border-slate-200 px-3 py-2 text-sm outline-none focus:border-brand-blue-500"
                   placeholder="请输入你的判断理由"
@@ -357,7 +368,7 @@ export function AssessmentPanel() {
             className="inline-flex items-center gap-2 rounded-lg bg-brand-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
           >
             <CheckCircle2 className="h-4 w-4" />
-            {loading ? '正在评估…' : '提交评估'}
+            {loading ? '正在评估…' : isPreview ? '预览题目不可提交' : '提交评估'}
           </button>
 
           {events.length > 0 && (

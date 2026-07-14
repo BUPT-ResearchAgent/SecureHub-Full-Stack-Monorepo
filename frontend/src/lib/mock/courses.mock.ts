@@ -246,6 +246,27 @@ export const evidenceByCourse: Record<string, CourseMockEvidence> = {
   'secure-development-audit': sdlEvidence,
 };
 
+/** Explicit bridge from real course identifiers to legacy read-only presets. */
+const legacyPreviewKeyByReference: Record<string, keyof typeof evidenceByCourse> = {
+  'web-security-foundation': 'web-security-foundation',
+  'crypto-foundation': 'crypto-foundation',
+  'network-attack-defense': 'network-attack-defense',
+  'secure-development-audit': 'secure-development-audit',
+  '5f63a7c3-1c76-513c-88a5-f335d6190816': 'web-security-foundation',
+  '318753d5-7605-59ce-a91c-5192bec35f15': 'crypto-foundation',
+  'f04f362f-a17c-5cf2-a061-3eba0611f079': 'network-attack-defense',
+  '5ca93e75-9a27-506d-8444-d35b8f216a37': 'secure-development-audit',
+  'WEBSEC-101': 'web-security-foundation',
+  'CRYPTO-101': 'crypto-foundation',
+  'NET-SEC-201': 'network-attack-defense',
+  'SDL-201': 'secure-development-audit',
+};
+
+function previewKey(courseReference: string | undefined | null): keyof typeof evidenceByCourse | undefined {
+  if (!courseReference) return undefined;
+  return legacyPreviewKeyByReference[courseReference] ?? legacyPreviewKeyByReference[courseReference.toUpperCase()];
+}
+
 export const knowledgeNodesByCourse: Record<string, CourseMockKpNode[]> = {
   'web-security-foundation': [
     { id: 'sql_injection', title: 'SQL 注入基础', status: 'active' },
@@ -381,16 +402,16 @@ export const quizItemsByCourse: Record<string, CourseMockQuiz[]> = {
 };
 
 export function getMockEvidenceForCourse(courseId: string | undefined | null): CourseMockEvidence {
-  if (!courseId) return evidenceByCourse['web-security-foundation'];
-  return evidenceByCourse[courseId] ?? evidenceByCourse['web-security-foundation'];
+  const key = previewKey(courseId);
+  return key ? evidenceByCourse[key] : [];
 }
 
 export function getMockKnowledgeNodesForCourse(courseId: string | undefined | null) {
-  if (!courseId) return knowledgeNodesByCourse['web-security-foundation'];
-  return knowledgeNodesByCourse[courseId] ?? knowledgeNodesByCourse['web-security-foundation'];
+  const key = previewKey(courseId);
+  return key ? knowledgeNodesByCourse[key] : [];
 }
 
 export function getMockQuizItemsForCourse(courseId: string | undefined | null): CourseMockQuiz[] {
-  if (!courseId) return quizItemsByCourse['web-security-foundation'];
-  return quizItemsByCourse[courseId] ?? quizItemsByCourse['web-security-foundation'];
+  const key = previewKey(courseId);
+  return key ? quizItemsByCourse[key] : [];
 }
