@@ -1,6 +1,6 @@
 # Status: real
 
-"""Idempotent seed for the demo student account, persona, and capability vector."""
+"""Idempotent seed for five demo identities and the student persona vector."""
 
 import asyncio
 
@@ -8,11 +8,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.security import hash_password
 from app.db.seeds._constants import (
+    DEMO_ACCOUNTS,
     DEMO_USER_CAPABILITIES,
     DEMO_USER_DIMENSIONS,
-    DEMO_USER_EMAIL,
     DEMO_USER_ID,
-    DEMO_USER_NAME,
     DEMO_USER_PASSWORD,
 )
 from app.db.session import get_sessionmaker
@@ -26,29 +25,33 @@ async def _seed(session: AsyncSession) -> None:
     profiles = UserProfileRepository(session)
     caps = UserCapabilityRepository(session)
 
-    user = await users.get_by_id(DEMO_USER_ID)
-    if user is None:
-        user = await users.get_by_email(DEMO_USER_EMAIL)
-    if user is None:
-        user = await users.create(
-            user_id=DEMO_USER_ID,
-            email=DEMO_USER_EMAIL,
-            display_name=DEMO_USER_NAME,
-            hashed_password=hash_password(DEMO_USER_PASSWORD),
-            is_active=True,
-        )
-    else:
-        user.email = DEMO_USER_EMAIL
-        user.display_name = DEMO_USER_NAME
+    for role, user_id, email, display_name in DEMO_ACCOUNTS:
+        user = await users.get_by_id(user_id)
+        if user is None:
+            user = await users.get_by_email(email)
+        if user is None:
+            await users.create(
+                user_id=user_id,
+                email=email,
+                display_name=display_name,
+                hashed_password=hash_password(DEMO_USER_PASSWORD),
+                is_active=True,
+                role=role,
+            )
+            continue
+
+        user.email = email
+        user.display_name = display_name
         user.hashed_password = hash_password(DEMO_USER_PASSWORD)
         user.is_active = True
+        user.role = role
         await session.flush()
 
-    await profiles.upsert(user_id=user.id, dimensions=DEMO_USER_DIMENSIONS)
+    await profiles.upsert(user_id=DEMO_USER_ID, dimensions=DEMO_USER_DIMENSIONS)
 
     for dimension, score, confidence in DEMO_USER_CAPABILITIES:
         await caps.upsert_score(
-            user_id=user.id,
+            user_id=DEMO_USER_ID,
             dimension=dimension,
             score=score,
             confidence=confidence,

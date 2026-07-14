@@ -2,10 +2,9 @@
 
 """Data-backed catalog, knowledge graph, path, and progress projections.
 
-Progress is intentionally persisted inside the existing ``web_security``
-``user_capabilities`` record.  That keeps user/profile progress under its
-single source of truth while the graph and assets remain in their unified
-knowledge tables.
+Ready-course progress is intentionally persisted inside the course product's
+existing ``user_capabilities`` dimension.  Preview products return an honest
+empty projection and never write learner progress, evidence, or artifacts.
 """
 
 from __future__ import annotations
@@ -21,10 +20,10 @@ from app.db.models.identity.user_capability import UserCapability
 from app.db.models.knowledge.course import Course
 from app.db.models.knowledge.knowledge_node import KnowledgeNode
 from app.db.seeds._constants import (
-    COURSE_WEBSEC_CODE,
-    COURSE_WEBSEC_MANIFEST_ID,
+    COURSE_PRODUCTS,
+    COURSE_PRODUCT_BY_CODE,
+    CourseProductDefinition,
     LEGACY_SMOKE_COURSE_WEBSEC_ID,
-    WEBSEC_CHAPTERS,
 )
 from app.repositories.course_learning import CourseLearningRepository
 from app.repositories.identity.capabilities import UserCapabilityRepository
@@ -40,7 +39,6 @@ from app.schemas.course_product import (
     CourseProgressDTO,
 )
 
-_CAPABILITY_DIMENSION = "web_security"
 _PROGRESS_KEY = "course_progress"
 _PROGRESS_SCHEMA_VERSION = 1
 
@@ -53,6 +51,10 @@ class CourseProgressValidationError(ValueError):
     pass
 
 
+class CourseContentNotReadyError(RuntimeError):
+    """A real-content action was requested for a catalogue-only preview."""
+
+
 class CourseCatalogService:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
@@ -60,27 +62,34 @@ class CourseCatalogService:
         self.capabilities = UserCapabilityRepository(session)
 
     async def list_catalog(self, *, user_id: UUID) -> list[CourseCatalogItemDTO]:
-        # The Wave 0 smoke course is preserved for historical workflow replay,
-        # but it is not an additional product catalog entry.
-        courses = [
-            course
-            for course in await self.repository.list_courses(domain="course_websec")
-            if course.code == COURSE_WEBSEC_CODE
-        ]
-        return [await self._catalog_item(course, user_id=user_id) for course in courses]
+        # The product manifest fixes user-visible ordering.  The legacy smoke
+        # course remains compatible with historical resources but never
+        # appears as a fifth catalogue item.
+        courses_by_code = {course.code: course for course in await self.repository.list_courses()}
+        ordered: list[Course] = []
+        for product in COURSE_PRODUCTS:
+            course = courses_by_code.get(product.code)
+            if course is None or course.id != product.id:
+                raise CourseProductNotFoundError(f"course product {product.code} is not seeded")
+            ordered.append(course)
+        return [await self._catalog_item(course, user_id=user_id) for course in ordered]
 
     async def get_detail(self, *, course_id: UUID, user_id: UUID) -> CourseDetailDTO:
         course = await self._require_course(course_id)
+        product = self._product_for(course)
+        if product.content_status == "preview":
+            return self._preview_detail(course, product)
         nodes = list(await self.repository.list_nodes(course.id))
         resource_counts = await self.repository.resource_counts(
-            course_ids=_resource_course_ids(course), user_id=user_id
+            course_ids=_resource_course_ids(course, product), user_id=user_id
         )
         documents = await self.repository.list_evidence_documents(course.domain)
         evidence_by_slug, platforms = _evidence_by_slug(documents)
         progress = await self.get_progress(course_id=course.id, user_id=user_id, nodes=nodes)
-        coverage = _chapter_coverage(nodes, evidence_by_slug)
+        coverage = _chapter_coverage(nodes, evidence_by_slug, product)
         catalog_item = self._catalog_from_parts(
             course,
+            product=product,
             nodes=nodes,
             resource_counts=resource_counts,
             evidence_by_slug=evidence_by_slug,
@@ -96,14 +105,17 @@ class CourseCatalogService:
             chapters=coverage,
             knowledge_points=knowledge_points,
             source_platforms=platforms,
-            source_manifest=COURSE_WEBSEC_MANIFEST_ID,
+            source_manifest=product.source_manifest,
         )
 
     async def get_graph(self, *, course_id: UUID, user_id: UUID) -> CourseGraphDTO:
         course = await self._require_course(course_id)
+        product = self._product_for(course)
+        if product.content_status == "preview":
+            return CourseGraphDTO(course_id=course.id, nodes=[], edges=[])
         nodes = list(await self.repository.list_nodes(course.id))
         resources = await self.repository.resource_counts(
-            course_ids=_resource_course_ids(course), user_id=user_id
+            course_ids=_resource_course_ids(course, product), user_id=user_id
         )
         documents = await self.repository.list_evidence_documents(course.domain)
         evidence_by_slug, _ = _evidence_by_slug(documents)
@@ -127,10 +139,20 @@ class CourseCatalogService:
 
     async def get_path(self, *, course_id: UUID, user_id: UUID) -> CoursePathDTO:
         course = await self._require_course(course_id)
+        product = self._product_for(course)
+        if product.content_status == "preview":
+            return CoursePathDTO(
+                course_id=course.id,
+                capability_dimension=product.capability,
+                capability_score=0.0,
+                strategy="foundation_first",
+                explanation=product.unavailable_reason or "课程内容正在建设中。",
+                nodes=[],
+            )
         nodes = list(await self.repository.list_nodes(course.id))
         edges = list(await self.repository.list_edges([node.id for node in nodes]))
         progress = await self.get_progress(course_id=course.id, user_id=user_id, nodes=nodes, edges=edges)
-        capability = await self.capabilities.get(user_id, _CAPABILITY_DIMENSION)
+        capability = await self.capabilities.get(user_id, product.capability)
         score = capability.score if capability is not None else 0.0
         accelerated = score >= 0.7
         ordered = _topological_order(nodes, edges, accelerated=accelerated)
@@ -159,13 +181,13 @@ class CourseCatalogService:
             )
         strategy = "accelerated_prerequisite_route" if accelerated else "foundation_first"
         explanation = (
-            f"依据 user_capabilities.web_security={score:.2f}，优先选择解锁更多后续主题的已满足先修节点。"
+            f"依据 user_capabilities.{product.capability}={score:.2f}，优先选择解锁更多后续主题的已满足先修节点。"
             if accelerated
-            else f"依据 user_capabilities.web_security={score:.2f}，先稳固 HTTP、浏览器边界和会话基础。"
+            else f"依据 user_capabilities.{product.capability}={score:.2f}，先按课程图谱稳固基础概念。"
         )
         return CoursePathDTO(
             course_id=course.id,
-            capability_dimension=_CAPABILITY_DIMENSION,
+            capability_dimension=product.capability,
             capability_score=score,
             strategy=strategy,
             explanation=explanation,
@@ -181,9 +203,18 @@ class CourseCatalogService:
         edges: list[Any] | None = None,
     ) -> CourseProgressDTO:
         course = await self._require_course(course_id)
+        product = self._product_for(course)
+        if product.content_status == "preview":
+            return CourseProgressDTO(
+                course_id=course.id,
+                course_code=course.code,
+                completed_knowledge_point_ids=[],
+                progress_percent=0.0,
+                next_recommendation=product.unavailable_reason or "课程内容正在建设中。",
+            )
         nodes = nodes if nodes is not None else list(await self.repository.list_nodes(course.id))
         edges = edges if edges is not None else list(await self.repository.list_edges([node.id for node in nodes]))
-        capability = await self.capabilities.get(user_id, _CAPABILITY_DIMENSION)
+        capability = await self.capabilities.get(user_id, product.capability)
         payload = _progress_payload(capability, course.code)
         known_ids = {node.id for node in nodes}
         completed = [UUID(value) for value in payload.get("completed_kp_ids", []) if _is_known_uuid(value, known_ids)]
@@ -210,14 +241,17 @@ class CourseCatalogService:
         workflow_run_id: UUID | None = None,
     ) -> CourseProgressDTO:
         course = await self._require_course(course_id)
+        product = self._product_for(course)
+        if product.content_status == "preview":
+            raise CourseContentNotReadyError(product.unavailable_reason or "课程内容正在建设中。")
         nodes = list(await self.repository.list_nodes(course.id))
         if knowledge_point_id not in {node.id for node in nodes}:
             raise CourseProgressValidationError("knowledge point does not belong to this course")
-        capability = await self.capabilities.get(user_id, _CAPABILITY_DIMENSION)
+        capability = await self.capabilities.get(user_id, product.capability)
         if capability is None:
             capability = await self.capabilities.upsert_score(
                 user_id=user_id,
-                dimension=_CAPABILITY_DIMENSION,
+                dimension=product.capability,
                 score=0.0,
                 confidence=0.0,
                 evidence_count=0,
@@ -254,7 +288,7 @@ class CourseCatalogService:
         metadata[_PROGRESS_KEY] = all_progress
         await self.capabilities.upsert_score(
             user_id=user_id,
-            dimension=_CAPABILITY_DIMENSION,
+            dimension=product.capability,
             score=capability.score,
             confidence=capability.confidence,
             evidence_count=capability.evidence_count,
@@ -263,32 +297,55 @@ class CourseCatalogService:
         return await self.get_progress(course_id=course.id, user_id=user_id, nodes=nodes)
 
     async def _catalog_item(self, course: Course, *, user_id: UUID) -> CourseCatalogItemDTO:
+        product = self._product_for(course)
+        if product.content_status == "preview":
+            return self._catalog_from_parts(
+                course,
+                product=product,
+                nodes=[],
+                resource_counts={},
+                evidence_by_slug={},
+                progress=await self.get_progress(course_id=course.id, user_id=user_id),
+                coverage=[],
+            )
         nodes = list(await self.repository.list_nodes(course.id))
         resources = await self.repository.resource_counts(
-            course_ids=_resource_course_ids(course), user_id=user_id
+            course_ids=_resource_course_ids(course, product), user_id=user_id
         )
         documents = await self.repository.list_evidence_documents(course.domain)
         evidence_by_slug, _ = _evidence_by_slug(documents)
         progress = await self.get_progress(course_id=course.id, user_id=user_id, nodes=nodes)
         return self._catalog_from_parts(
             course,
+            product=product,
             nodes=nodes,
             resource_counts=resources,
             evidence_by_slug=evidence_by_slug,
             progress=progress,
-            coverage=_chapter_coverage(nodes, evidence_by_slug),
+            coverage=_chapter_coverage(nodes, evidence_by_slug, product),
         )
 
     async def _require_course(self, course_id: UUID) -> Course:
         course = await self.repository.get_course(course_id)
-        if course is None:
+        if course is None or course.code not in COURSE_PRODUCT_BY_CODE:
             raise CourseProductNotFoundError(f"course {course_id} does not exist")
+        product = COURSE_PRODUCT_BY_CODE[course.code]
+        if course.id != product.id:
+            raise CourseProductNotFoundError(f"course {course_id} does not match its product definition")
         return course
+
+    @staticmethod
+    def _product_for(course: Course) -> CourseProductDefinition:
+        try:
+            return COURSE_PRODUCT_BY_CODE[course.code]
+        except KeyError as exc:  # _require_course should make this unreachable.
+            raise CourseProductNotFoundError(f"course {course.id} does not have a product definition") from exc
 
     @staticmethod
     def _catalog_from_parts(
         course: Course,
         *,
+        product: CourseProductDefinition,
         nodes: list[KnowledgeNode],
         resource_counts: dict[UUID, int],
         evidence_by_slug: dict[str, set[UUID]],
@@ -303,6 +360,8 @@ class CourseCatalogService:
             title=course.title,
             domain=course.domain,
             description=course.description,
+            content_status=product.content_status,
+            unavailable_reason=product.unavailable_reason,
             chapter_count=len(coverage),
             knowledge_point_count=len(nodes),
             resource_count=sum(resource_counts.values()),
@@ -311,6 +370,31 @@ class CourseCatalogService:
             current_knowledge_point=current.name if current is not None else progress.next_recommendation,
             next_recommendation=progress.next_recommendation,
             core_coverage_percent=round(core_coverage, 1),
+        )
+
+    def _preview_detail(self, course: Course, product: CourseProductDefinition) -> CourseDetailDTO:
+        progress = CourseProgressDTO(
+            course_id=course.id,
+            course_code=course.code,
+            completed_knowledge_point_ids=[],
+            progress_percent=0.0,
+            next_recommendation=product.unavailable_reason or "课程内容正在建设中。",
+        )
+        catalog_item = self._catalog_from_parts(
+            course,
+            product=product,
+            nodes=[],
+            resource_counts={},
+            evidence_by_slug={},
+            progress=progress,
+            coverage=[],
+        )
+        return CourseDetailDTO(
+            **catalog_item.model_dump(),
+            chapters=[],
+            knowledge_points=[],
+            source_platforms=[],
+            source_manifest=None,
         )
 
 
@@ -329,8 +413,8 @@ def _node_dto(node: KnowledgeNode, *, resource_count: int, evidence_count: int) 
     )
 
 
-def _resource_course_ids(course: Course) -> tuple[UUID, ...]:
-    if course.code == COURSE_WEBSEC_CODE:
+def _resource_course_ids(course: Course, product: CourseProductDefinition) -> tuple[UUID, ...]:
+    if product.id == COURSE_PRODUCTS[0].id:
         return (course.id, LEGACY_SMOKE_COURSE_WEBSEC_ID)
     return (course.id,)
 
@@ -358,10 +442,14 @@ def _evidence_by_slug(documents: list[Any] | Any) -> tuple[dict[str, set[UUID]],
     return evidence, sorted(platforms)
 
 
-def _chapter_coverage(nodes: list[KnowledgeNode], evidence_by_slug: dict[str, set[UUID]]) -> list[CourseChapterDTO]:
+def _chapter_coverage(
+    nodes: list[KnowledgeNode],
+    evidence_by_slug: dict[str, set[UUID]],
+    product: CourseProductDefinition,
+) -> list[CourseChapterDTO]:
     by_slug = {_slug(node): node for node in nodes}
     chapters: list[CourseChapterDTO] = []
-    for code, title, slugs in WEBSEC_CHAPTERS:
+    for code, title, slugs in product.chapters:
         chapter_nodes = [by_slug[slug] for slug in slugs if slug in by_slug]
         covered = [node.id for node in chapter_nodes if evidence_by_slug.get(_slug(node))]
         percentage = round((len(covered) / len(chapter_nodes) * 100) if chapter_nodes else 0.0, 1)

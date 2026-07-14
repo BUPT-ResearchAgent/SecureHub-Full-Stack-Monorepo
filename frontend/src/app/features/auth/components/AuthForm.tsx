@@ -10,6 +10,8 @@ import { ApiError } from '@/lib/api';
 import { useAuth } from '../store';
 import { PasswordField } from './PasswordField';
 import { PasswordStrengthMeter, evaluatePasswordStrength } from './PasswordStrength';
+import { DEMO_ACCOUNTS, getDemoAccount, resolvePostLoginPath } from '../demoAccounts';
+import type { AppRole } from '../types';
 
 type AuthFormMode = 'login' | 'register';
 type FieldErrors = Partial<Record<'email' | 'password' | 'displayName' | 'confirmPassword', string>>;
@@ -33,6 +35,14 @@ export function AuthForm({ mode }: { mode: AuthFormMode }) {
   const navigate = useNavigate();
   const location = useLocation();
   const redirect = useMemo(() => getRedirect(location.search), [location.search]);
+  const hasRequestedRedirect = useMemo(
+    () => new URLSearchParams(location.search).has('redirect'),
+    [location.search],
+  );
+  const requestedDemo = useMemo(
+    () => getDemoAccount(new URLSearchParams(location.search).get('demo')),
+    [location.search],
+  );
 
   const [email, setEmail] = useState('');
   const [displayName, setDisplayName] = useState('');
@@ -42,12 +52,32 @@ export function AuthForm({ mode }: { mode: AuthFormMode }) {
   const [loading, setLoading] = useState(false);
   const [formError, setFormError] = useState('');
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
+  const [selectedDemoRole, setSelectedDemoRole] = useState<AppRole | null>(
+    requestedDemo?.role ?? null,
+  );
 
   useEffect(() => {
-    if (auth.isAuthenticated) {
-      navigate('/workspace', { replace: true });
+    if (requestedDemo) {
+      setSelectedDemoRole(requestedDemo.role);
+      setEmail(requestedDemo.email);
+      setPassword(requestedDemo.password);
+      setRemember(true);
+      setFieldErrors({});
+      setFormError('');
     }
-  }, [auth.isAuthenticated, navigate]);
+  }, [requestedDemo]);
+
+  useEffect(() => {
+    if (auth.isAuthenticated && !requestedDemo) {
+      navigate(
+        resolvePostLoginPath(
+          auth.user?.role ?? 'student',
+          hasRequestedRedirect ? redirect : null,
+        ),
+        { replace: true },
+      );
+    }
+  }, [auth.isAuthenticated, auth.user?.role, hasRequestedRedirect, navigate, redirect, requestedDemo]);
 
   const title = isRegister ? '创建 SecureHub 账号' : '登录 SecureHub';
   const subtitle = isRegister
@@ -75,9 +105,12 @@ export function AuthForm({ mode }: { mode: AuthFormMode }) {
     return Object.keys(next).length === 0;
   };
 
-  const fillDemo = () => {
-    setEmail('demo-student@securehub.local');
-    setPassword('SecureHub@2026');
+  const selectDemo = (role: AppRole) => {
+    const account = getDemoAccount(role);
+    if (!account) return;
+    setSelectedDemoRole(account.role);
+    setEmail(account.email);
+    setPassword(account.password);
     setRemember(true);
     setFieldErrors({});
     setFormError('');
@@ -101,9 +134,15 @@ export function AuthForm({ mode }: { mode: AuthFormMode }) {
         toast.success('注册成功，已进入工作台');
         navigate('/workspace', { replace: true });
       } else {
-        await auth.login({ email: email.trim(), password }, { remember });
+        const signedInUser = await auth.login({ email: email.trim(), password }, { remember });
         toast.success('登录成功');
-        navigate(redirect, { replace: true });
+        navigate(
+          resolvePostLoginPath(
+            signedInUser.role,
+            hasRequestedRedirect ? redirect : null,
+          ),
+          { replace: true },
+        );
       }
     } catch (error) {
       setFormError(errorMessage(error));
@@ -125,6 +164,42 @@ export function AuthForm({ mode }: { mode: AuthFormMode }) {
           <AlertCircle className="h-4 w-4" />
           <AlertDescription>{formError}</AlertDescription>
         </Alert>
+      )}
+
+      {!isRegister && (
+        <section className="rounded-xl border border-brand-blue-100 bg-brand-blue-50/40 p-3.5">
+          <div className="mb-3">
+            <h2 className="text-sm font-semibold text-slate-900">选择演示身份</h2>
+            <p className="mt-0.5 text-xs leading-5 text-slate-500">
+              选择后自动填入对应账号，登录后进入该身份的演示工作台。
+            </p>
+          </div>
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            {DEMO_ACCOUNTS.map((account) => {
+              const Icon = account.icon;
+              const selected = account.role === selectedDemoRole;
+              return (
+                <button
+                  key={account.role}
+                  type="button"
+                  onClick={() => selectDemo(account.role)}
+                  disabled={loading}
+                  className={`group rounded-lg border p-3 text-left transition-all disabled:cursor-not-allowed disabled:opacity-60 ${
+                    selected
+                      ? 'border-brand-blue-600 bg-white shadow-sm'
+                      : 'border-slate-200 bg-white/70 hover:-translate-y-0.5 hover:border-brand-blue-200 hover:bg-white'
+                  } ${account.role === 'hybrid' ? 'sm:col-span-2' : ''}`}
+                >
+                  <span className={`flex h-7 w-7 items-center justify-center rounded-md ${selected ? 'bg-brand-blue-600 text-white' : 'bg-slate-100 text-slate-600'} transition-colors group-hover:bg-brand-blue-600 group-hover:text-white`}>
+                    <Icon className="h-4 w-4" aria-hidden />
+                  </span>
+                  <span className="mt-2 block text-sm font-semibold text-slate-800">{account.label}</span>
+                  <span className="mt-0.5 block text-[11px] leading-4 text-slate-500">{account.description}</span>
+                </button>
+              );
+            })}
+          </div>
+        </section>
       )}
 
       <form className="space-y-4" onSubmit={handleSubmit} noValidate>
@@ -201,16 +276,7 @@ export function AuthForm({ mode }: { mode: AuthFormMode }) {
             />
             记住登录
           </label>
-          {!isRegister && (
-            <button
-              type="button"
-              onClick={fillDemo}
-              disabled={loading}
-              className="text-sm font-medium text-[#003399] hover:underline disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              填入 demo 账号
-            </button>
-          )}
+          {!isRegister && <span className="text-xs text-slate-400">演示账号密码已自动填入</span>}
         </div>
 
         <button
@@ -223,9 +289,11 @@ export function AuthForm({ mode }: { mode: AuthFormMode }) {
         </button>
       </form>
 
-      <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm leading-6 text-slate-600">
-        Demo 账号：demo-student@securehub.local / SecureHub@2026。该账号加载陈同学演示数据。
-      </div>
+      {!isRegister && (
+        <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm leading-6 text-slate-600">
+          演示身份使用独立账号和固定示例数据；普通账号默认进入学生工作台。
+        </div>
+      )}
 
       <p className="text-center text-sm text-slate-600">
         {isRegister ? '已有账号？' : '还没有账号？'}

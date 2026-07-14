@@ -1,4 +1,4 @@
-import { ReactNode } from 'react';
+import { ReactNode, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { ChevronRight } from 'lucide-react';
 
@@ -22,10 +22,18 @@ export function PageShell({
   tabs: TabDef[];
   defaultTab?: string;
 }) {
-  const [params] = useSearchParams();
-  const active = params.get('tab') || defaultTab || tabs[0].key;
+  const [params, setParams] = useSearchParams();
+  const requested = params.get('tab');
+  const active = requested || defaultTab || tabs[0].key;
   const current = tabs.find((t) => t.key === active) || tabs[0];
   const desc = current.description || subtitle;
+
+  useEffect(() => {
+    if (!requested || tabs.some((tab) => tab.key === requested)) return;
+    const next = new URLSearchParams(params);
+    next.set('tab', tabs[0].key);
+    setParams(next, { replace: true });
+  }, [params, requested, setParams, tabs]);
 
   return (
     <div className="space-y-6">
@@ -37,7 +45,7 @@ export function PageShell({
       </nav>
 
       {/* Page header */}
-      <header className="flex items-start justify-between gap-6 pb-5 border-b border-slate-200">
+      <header className="flex flex-col items-start justify-between gap-4 border-b border-slate-200 pb-5 sm:flex-row sm:gap-6">
         <div className="flex-1 min-w-0">
           <h1 className="text-2xl font-semibold text-slate-900 leading-tight">{current.label}</h1>
           {desc && (
@@ -45,7 +53,7 @@ export function PageShell({
           )}
         </div>
         {actions && (
-          <div className="flex items-center gap-2 shrink-0">{actions}</div>
+          <div className="flex w-full items-center gap-2 sm:w-auto sm:shrink-0">{actions}</div>
         )}
       </header>
 

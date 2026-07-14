@@ -5,6 +5,8 @@ import { useState } from 'react';
 import { Card, Tag } from '@/app/components/PageShell';
 import { useCourseProductPath } from '../path/useCourseProductPath';
 import { useCourseDispatch, useCourseState } from '../store';
+import { useSelectedCourse } from '../catalog/useSelectedCourse';
+import { getMockKnowledgeNodesForCourse } from '@/lib/mock/courses.mock';
 
 export interface LearningPathDAGProps {
   courseId?: string;
@@ -28,9 +30,12 @@ const generatedStatusTone = {
 export function LearningPathDAG({ courseId }: LearningPathDAGProps) {
   const { taskContext, path: generatedPath } = useCourseState();
   const dispatch = useCourseDispatch();
+  const { course } = useSelectedCourse();
   const [expandedGeneratedNodeId, setExpandedGeneratedNodeId] = useState<string | null>(null);
   const effectiveCourseId = courseId ?? taskContext.courseId;
   const productPath = useCourseProductPath(effectiveCourseId);
+  const isPreview = course?.id === effectiveCourseId && course.contentStatus === 'preview';
+  const previewNodes = isPreview ? getMockKnowledgeNodesForCourse(course?.previewContentKey ?? course?.id) : [];
 
   if (productPath.status === 'loading') {
     return (
@@ -59,6 +64,18 @@ export function LearningPathDAG({ courseId }: LearningPathDAGProps) {
   const graphNodes = new Map(graph.nodes.map((node) => [node.id, node]));
   const labels = new Map(graph.nodes.map((node) => [node.id, node.name]));
   const generatedForCourse = generatedPath?.courseId === effectiveCourseId ? generatedPath : null;
+
+  if (isPreview) {
+    return (
+      <Card title="学习路径图谱" subtitle="课程真实图谱尚未就绪；以下为只读预置知识点预览">
+        <div className="mb-3 flex flex-wrap gap-2"><Tag tone="amber">内容预览 / 建设中</Tag><Tag tone="blue">真实节点 0</Tag><Tag tone="blue">真实先修边 0</Tag></div>
+        <p className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-800">这些知识点不会写入学习路径、能力画像或进度；它们不是课程知识图谱节点。</p>
+        <div className="space-y-2">
+          {previewNodes.map((node) => <div key={node.id} className="rounded-lg border border-slate-200 bg-white p-3 text-sm text-slate-700"><span className="font-medium">{node.title}</span><span className="ml-2 text-xs text-slate-400">预置状态：{node.status}</span></div>)}
+        </div>
+      </Card>
+    );
+  }
 
   return (
     <Card title="学习路径图谱" subtitle={path.explanation}>

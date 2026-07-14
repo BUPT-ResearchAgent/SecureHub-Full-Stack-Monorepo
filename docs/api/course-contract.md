@@ -1,4 +1,6 @@
 # SecureHub API Contract v1（A3 main path）
+> Changelog 2026-07-14: A3 多课程真实目录。`courses` 现固定投影四门真实课程记录；`content_status`、预览空投影、legacy slug 和 `COURSE_CONTENT_NOT_READY` 门禁为 additive 契约。未就绪课程绝不回落到 Web 安全基础。
+>
 > Frozen: 2026-06-09 — 任何字段变动必须双签（A + B 或 A + C）并在本文件顶部追加 changelog。
 
 ## 0. 公共约定
@@ -7,9 +9,39 @@
 - 错误统一 `{detail:{message,code}}`
 - 分页统一 `?page=1&page_size=20`，响应 `{items, total, page, page_size}`
 
+### 0.1 课程产品目录（2026-07-14）
+
+| code | UUID | domain | content_status | legacy slug |
+| --- | --- | --- | --- | --- |
+| `WEBSEC-101` | `5f63a7c3-1c76-513c-88a5-f335d6190816` | `course_websec` | `ready` | `web-security-foundation` |
+| `CRYPTO-101` | `318753d5-7605-59ce-a91c-5192bec35f15` | `course_crypto` | `preview` | `crypto-foundation` |
+| `NET-SEC-201` | `f04f362f-a17c-5cf2-a061-3eba0611f079` | `course_network_security` | `preview` | `network-attack-defense` |
+| `SDL-201` | `5ca93e75-9a27-506d-8444-d35b8f216a37` | `course_secure_development` | `preview` | `secure-development-audit` |
+
+- `ready`：已拥有真实图谱、Evidence 与运行时工作流；当前只有 Web 安全基础。
+- `preview`：`courses` 记录和 Catalog 是真实的，但页面仅展示显式标注的旧版预置内容；它们不是 RAG、Evidence Snapshot、Artifact、AgentRun 或学习进度。
+- 所有课程路由接受上表 UUID、code 和 legacy slug。未知 ID/code/slug 返回 `404 COURSE_NOT_FOUND`；不得静默转换或回落到 `WEBSEC-101`。
+- 预览课程对真实内容动作统一返回 `409 {"detail":{"code":"COURSE_CONTENT_NOT_READY","message":"…"}}`，且在创建 workflow root、SSE event、AgentRun、Provider Call、Evidence Snapshot、Artifact 前拒绝。
+
+### 0.2 `GET /api/v1/courses/catalog` 与详情投影
+
+`GET /api/v1/courses/catalog` 返回固定顺序的四项数组；每项除现有字段外必含：
+
+```json
+{
+  "id": "318753d5-7605-59ce-a91c-5192bec35f15",
+  "code": "CRYPTO-101",
+  "domain": "course_crypto",
+  "content_status": "preview",
+  "unavailable_reason": "课程真实知识图谱、证据资产与可运行学习工作流仍在建设中。"
+}
+```
+
+`GET /api/v1/courses/{course}/detail` 的 `source_manifest` 对 `ready` 课程为 manifest 字符串；对 `preview` 课程必须为 `null`，不得返回 `websec-foundation-v1`。preview 的 detail/graph/path/progress 是合法的空投影（0 节点、0 边、0%），不伪造 Evidence 或完成度。兼容入口 `GET /api/v1/courses` 从同一四课程源投影摘要字段。
+
 ## 1. REST endpoints
 ### 1.1 GET  /api/v1/courses
-Status: partial-real
+Status: real (compatibility summary projection)
 Owner: member-a
 Request shape:
 ```json
@@ -17,23 +49,18 @@ Request shape:
 ```
 Response shape:
 ```json
-{
-  "items": [
-    {
-      "id": "00000000-0000-0000-0000-000000000101",
-      "code": "course_websec_intro",
-      "title": "Web 安全基础",
-      "description": "SQL 注入、XSS、CSRF 等 Web 安全入门课程",
-      "progress": 0.35
-    }
-  ],
-  "total": 1,
-  "page": 1,
-  "page_size": 20
-}
+[
+  {
+    "id": "5f63a7c3-1c76-513c-88a5-f335d6190816",
+    "code": "WEBSEC-101",
+    "title": "Web 安全基础",
+    "domain": "course_websec",
+    "description": "…"
+  }
+]
 ```
-Error codes: 400 / 422 / 503
-Notes: `code` 对演示数据固定为 `course_websec_intro`；列表默认只返回 enabled 课程。
+Error codes: 401 / 404 / 503
+Notes: 返回四门目录产品，字段兼容旧摘要消费者；不再以旧 smoke 课程或前端静态卡作为目录权威。
 
 ### 1.2 POST /api/v1/courses/{cid}/plan
 Status: partial-real
@@ -60,8 +87,8 @@ Response shape:
   ]
 }
 ```
-Error codes: 400 / 404 / 422 / 503
-Notes: 路径必须来自 `knowledge_nodes` / `knowledge_edges`，不能由 LLM 裸生成。
+Error codes: 400 / 404 / 409 / 422 / 503
+Notes: 路径必须来自 `knowledge_nodes` / `knowledge_edges`，不能由 LLM 裸生成。preview 请求在任何 durable root 创建前返回 `409 COURSE_CONTENT_NOT_READY`。
 
 ### 1.3 POST /api/v1/courses/{cid}/resources/generate?type=doc|ppt|mindmap|quiz|lab|video|readings   (SSE)
 Status: partial-real
@@ -76,7 +103,7 @@ Request shape:
 }
 ```
 Response shape: SSE event stream，事件类型见 §2
-Error codes: 400 / 404 / 422 / 429 / 502 / 504 / 500
+Error codes: 400 / 404 / 409 / 422 / 429 / 502 / 504 / 500
 Notes: `evidence_chunk_ids` 非空，否则返回 422 `InsufficientEvidence`；第一个 `token` 事件前必须先发送 `evidence`。
 
 ### 1.4 GET  /api/v1/agent-runs?workflow=&user_id=&limit=

@@ -32,7 +32,7 @@ export function CourseCatalogPanel({
         <div>
           <h2 className="text-base font-semibold text-slate-900">学习课程目录</h2>
           <p className="mt-0.5 text-xs text-slate-500">
-            从 {courses.length} 门真实课程中选择当前学习方向，工作流与资源徽章会自动随上下文切换。
+            从 {courses.length} 门真实目录课程中选择当前学习方向；预览课程只展示预置内容，不启动工作流。
           </p>
         </div>
         <span className="inline-flex items-center gap-1 rounded-full bg-brand-blue-50 px-2 py-0.5 text-xs text-brand-blue-700">
@@ -92,6 +92,9 @@ function CourseGridCard({
               {course.difficulty}
             </span>
             <span className="text-[10px] text-slate-400">约 {course.estimatedHours} 课时</span>
+            <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${course.contentStatus === 'preview' ? 'bg-amber-50 text-amber-700' : 'bg-emerald-50 text-emerald-700'}`}>
+              {course.contentStatus === 'preview' ? '内容预览' : '完整课程'}
+            </span>
           </div>
         </div>
 

@@ -48,6 +48,7 @@ def _to_auth_user(user: User) -> AuthUser:
         email=user.email,
         display_name=user.display_name,
         is_active=user.is_active,
+        role=user.role,  # type: ignore[arg-type]
     )
 
 
@@ -75,6 +76,7 @@ class AuthService:
                 display_name=display_name,
                 hashed_password=hash_password(payload.password),
                 is_active=True,
+                role="student",
             )
             await self.profiles.upsert(user_id=user.id, dimensions={})
             for dimension in DEFAULT_CAPABILITY_DIMENSIONS:

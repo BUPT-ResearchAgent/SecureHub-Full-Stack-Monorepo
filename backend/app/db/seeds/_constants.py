@@ -5,6 +5,8 @@ and core-skill catalogue. ``20260611_0960_seed_agents_skills`` and the seed
 scripts in this package both import from here so the two surfaces never drift.
 """
 
+from dataclasses import dataclass
+from typing import Literal
 from uuid import NAMESPACE_URL, UUID, uuid5
 
 
@@ -19,6 +21,17 @@ DEMO_USER_ID: UUID = stable_id("user:demo-student")
 DEMO_USER_EMAIL = "demo-student@securehub.local"
 DEMO_USER_NAME = "陈同学"
 DEMO_USER_PASSWORD = "SecureHub@2026"
+
+# Demo accounts are deliberately deterministic so presentation flows can be
+# reset without browser-local role state.  Passwords stay in the development
+# seed and are never returned by an API response.
+DEMO_ACCOUNTS: tuple[tuple[str, UUID, str, str], ...] = (
+    ("student", DEMO_USER_ID, DEMO_USER_EMAIL, DEMO_USER_NAME),
+    ("course_teacher", stable_id("user:demo-course-teacher"), "demo-course-teacher@securehub.local", "张老师"),
+    ("research_mentor", stable_id("user:demo-research-mentor"), "demo-research-mentor@securehub.local", "林老师"),
+    ("career_mentor", stable_id("user:demo-career-mentor"), "demo-career-mentor@securehub.local", "周老师"),
+    ("hybrid", stable_id("user:demo-hybrid-teacher"), "demo-hybrid-teacher@securehub.local", "王老师"),
+)
 
 DEMO_USER_DIMENSIONS: dict[str, object] = {
     "knowledge_basis": "中级 — 学过 Web 开发与计算机网络基础",
@@ -231,6 +244,114 @@ WEBSEC_EDGES: list[tuple[str, str]] = [
     ("sql-injection-blind", "owasp-top10"),
     ("auth-bypass", "waf-bypass"),
 ]
+
+
+# ---- Course product catalogue ------------------------------------------------
+
+
+CourseContentStatus = Literal["ready", "preview"]
+CourseChapterDefinition = tuple[str, str, tuple[str, ...]]
+
+
+@dataclass(frozen=True)
+class CourseProductDefinition:
+    """The only product-level catalogue definition used by seed/API layers.
+
+    ``courses`` remains the durable catalogue table.  This manifest supplies
+    presentation-independent product semantics that the table does not model
+    yet: stable ordering, readiness, capability ownership and legacy links.
+    Preview products intentionally contain no knowledge/evidence seed data.
+    """
+
+    id: UUID
+    code: str
+    title: str
+    description: str
+    domain: str
+    capability: str
+    content_status: CourseContentStatus
+    legacy_slug: str
+    source_manifest: str | None = None
+    unavailable_reason: str | None = None
+    chapters: tuple[CourseChapterDefinition, ...] = ()
+
+
+COURSE_CRYPTO_ID: UUID = stable_id("course:crypto-foundation")
+COURSE_NETWORK_SECURITY_ID: UUID = stable_id("course:network-attack-defense")
+COURSE_SECURE_DEVELOPMENT_ID: UUID = stable_id("course:secure-development-audit")
+
+# This tuple is the single source of truth for the four product courses.  Do
+# not duplicate its code/order/status/domain mapping in an endpoint or seed.
+COURSE_PRODUCTS: tuple[CourseProductDefinition, ...] = (
+    CourseProductDefinition(
+        id=COURSE_WEBSEC_ID,
+        code=COURSE_WEBSEC_CODE,
+        title=COURSE_WEBSEC_TITLE,
+        description=COURSE_WEBSEC_DESCRIPTION,
+        domain="course_websec",
+        capability="web_security",
+        content_status="ready",
+        legacy_slug="web-security-foundation",
+        source_manifest=COURSE_WEBSEC_MANIFEST_ID,
+        chapters=tuple(WEBSEC_CHAPTERS),
+    ),
+    CourseProductDefinition(
+        id=COURSE_CRYPTO_ID,
+        code="CRYPTO-101",
+        title="密码学基础",
+        description="对称与非对称加密、哈希、TLS 与常见密码学误用的课程预览。",
+        domain="course_crypto",
+        capability="crypto",
+        content_status="preview",
+        legacy_slug="crypto-foundation",
+        unavailable_reason="课程真实知识图谱、Evidence 与可运行工作流仍在建设中。",
+    ),
+    CourseProductDefinition(
+        id=COURSE_NETWORK_SECURITY_ID,
+        code="NET-SEC-201",
+        title="网络攻防实训",
+        description="端口扫描、服务识别、流量分析与合规攻防复盘的课程预览。",
+        domain="course_network_security",
+        capability="network_security",
+        content_status="preview",
+        legacy_slug="network-attack-defense",
+        unavailable_reason="课程真实知识图谱、Evidence 与可运行工作流仍在建设中。",
+    ),
+    CourseProductDefinition(
+        id=COURSE_SECURE_DEVELOPMENT_ID,
+        code="SDL-201",
+        title="安全开发与代码审计",
+        description="SDL、输入校验、依赖治理与代码审计的课程预览。",
+        domain="course_secure_development",
+        capability="engineering_practice",
+        content_status="preview",
+        legacy_slug="secure-development-audit",
+        unavailable_reason="课程真实知识图谱、Evidence 与可运行工作流仍在建设中。",
+    ),
+)
+
+COURSE_PRODUCT_BY_CODE = {product.code: product for product in COURSE_PRODUCTS}
+COURSE_PRODUCT_BY_ID = {product.id: product for product in COURSE_PRODUCTS}
+
+# Historical aliases remain explicit compatibility paths.  They are never a
+# fallback for an unknown product reference.
+_COURSE_PRODUCT_ALIASES = {
+    **{str(product.id): product for product in COURSE_PRODUCTS},
+    **{product.code.lower(): product for product in COURSE_PRODUCTS},
+    **{product.legacy_slug: product for product in COURSE_PRODUCTS},
+    "course-websec": COURSE_PRODUCT_BY_CODE[COURSE_WEBSEC_CODE],
+    "web-sec": COURSE_PRODUCT_BY_CODE[COURSE_WEBSEC_CODE],
+    "websec": COURSE_PRODUCT_BY_CODE[COURSE_WEBSEC_CODE],
+    "course_websec_intro": COURSE_PRODUCT_BY_CODE[COURSE_WEBSEC_CODE],
+    str(LEGACY_SMOKE_COURSE_WEBSEC_ID): COURSE_PRODUCT_BY_CODE[COURSE_WEBSEC_CODE],
+}
+
+
+def resolve_course_product(value: str | UUID | None) -> CourseProductDefinition | None:
+    """Resolve a known UUID/code/legacy slug without any default fallback."""
+    if value is None:
+        return None
+    return _COURSE_PRODUCT_ALIASES.get(str(value).strip().lower())
 
 
 def node_id(slug: str) -> UUID:

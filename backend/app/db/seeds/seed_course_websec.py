@@ -35,6 +35,7 @@ from app.db.seeds._constants import (
     node_id,
     stable_id,
 )
+from app.db.seeds.seed_course_catalog import run as seed_course_catalog
 from app.db.session import get_sessionmaker
 from app.repositories.knowledge.chunks import ChunkRepository
 from app.repositories.knowledge.courses import CourseRepository
@@ -303,22 +304,15 @@ async def _seed(session: AsyncSession) -> dict[str, int]:
     chunk_count = 0
     quiz_count = 0
 
-    # ---- course ----
+    # ---- course catalogue ----
+    # The shared product seed owns all four ``courses`` rows.  This Websec
+    # seeder owns only the ready course's graph/evidence assets below.
+    websec_existed = await courses.get_by_code(COURSE_WEBSEC_CODE) is not None
+    await seed_course_catalog(session)
+    course_count = 0 if websec_existed else 1
     course = await courses.get_by_code(COURSE_WEBSEC_CODE)
-    if course is None:
-        course = await courses.create(
-            course_id=COURSE_WEBSEC_ID,
-            code=COURSE_WEBSEC_CODE,
-            title=COURSE_WEBSEC_TITLE,
-            domain=DOMAIN,
-            description=COURSE_WEBSEC_DESCRIPTION,
-        )
-        course_count = 1
-    else:
-        course.title = COURSE_WEBSEC_TITLE
-        course.domain = DOMAIN
-        course.description = COURSE_WEBSEC_DESCRIPTION
-        await session.flush()
+    if course is None:  # Defensive: the product manifest is the authority.
+        raise RuntimeError("WEBSEC-101 product row was not created by seed_course_catalog")
     course_pk = course.id
 
     # ---- nodes ----

@@ -211,7 +211,7 @@ function CourseStudyInner() {
     courses,
     catalogStatus,
     catalogError,
-    fellBackToDefault,
+    invalidCourseReference,
     selectCourse,
   } = useSelectedCourse();
   const [initialView] = useState<CourseView>(() => readStoredCourseView());
@@ -278,7 +278,9 @@ function CourseStudyInner() {
   if (!course) {
     return (
       <div className="flex min-h-52 items-center justify-center rounded-lg border border-slate-200 bg-white px-5 text-sm text-slate-500">
-        {catalogStatus === 'error'
+        {invalidCourseReference
+          ? `未找到课程「${invalidCourseReference}」。请从课程目录重新选择，系统不会回落到其他课程。`
+          : catalogStatus === 'error'
           ? `课程目录加载失败：${catalogError?.message ?? '请检查后端课程服务。'}`
           : '正在加载真实课程目录...'}
       </div>
@@ -318,7 +320,7 @@ function CourseStudyInner() {
             </span>
           </div>
           <div className="flex items-center gap-2">
-            <button
+            {course.contentStatus === 'ready' ? <button
               type="button"
               onClick={openBackendStatusLLMTab}
               title="查看 LLM 健康状态；当前课程 real 工作流使用已签收的 DeepSeek 链路，Spark Gate 延后处理"
@@ -326,7 +328,11 @@ function CourseStudyInner() {
             >
               <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
               DeepSeek 真实链路
-            </button>
+            </button> : (
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-[11px] font-medium text-amber-700">
+                内容预览 / 建设中
+              </span>
+            )}
             <CourseSwitcher course={course} courses={courses} onSelect={(id) => selectCourse(id)} />
             <Popover>
               <PopoverTrigger asChild>
@@ -379,9 +385,9 @@ function CourseStudyInner() {
           </div>
         </div>
 
-        {fellBackToDefault && (
-          <p className="inline-flex items-center gap-1.5 rounded-full bg-amber-50 px-2 py-0.5 text-[11px] text-amber-700">
-            URL 中的 courseId 无效，已回退到默认课程「{course.title}」。
+        {course.contentStatus === 'preview' && (
+          <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] leading-relaxed text-amber-800">
+            当前为预置内容预览：显示的知识点、材料与题目不属于真实 Evidence、Artifact 或学习进度；生成、辅导与评估提交已关闭。
           </p>
         )}
         {activeRoot && (

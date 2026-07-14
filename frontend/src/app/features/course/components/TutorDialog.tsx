@@ -8,6 +8,7 @@ import type { ChatAgent, ChatMessage, ChatSession } from '@/app/features/chat/ty
 import { resumeCourseTask, startCourseTask, tutorAnswerFromWorkflowStatus } from '../api';
 import { useCourseDispatch, useCourseState } from '../store';
 import { createCourseTaskLifecycle } from '../workflow/courseTaskLifecycle';
+import { useSelectedCourse } from '../catalog/useSelectedCourse';
 
 const tutorAgent: ChatAgent = {
   id: 'path',
@@ -52,6 +53,8 @@ function createSession(): ChatSession {
 
 export function TutorDialog() {
   const { taskContext, tutorSessions } = useCourseState();
+  const { course } = useSelectedCourse();
+  const isPreview = course?.contentStatus === 'preview';
   const courseDispatch = useCourseDispatch();
   const evidence = useEvidence();
   const traceDispatch = useAgentTraceDispatch();
@@ -150,6 +153,13 @@ export function TutorDialog() {
   const send = (questionOverride?: string) => {
     const question = (questionOverride ?? draft).trim();
     if (!question || generating) return;
+    if (isPreview) {
+      const userMessage = createMessage(session.id, 'user', question, 'sent');
+      const notice = createMessage(session.id, 'assistant', '当前课程仅开放预置内容预览，辅导工作流尚未就绪，因此不会创建运行记录或调用模型。', 'done');
+      setDraft('');
+      updateSession((current) => ({ ...current, messages: [...current.messages, userMessage, notice], updatedAt: new Date().toISOString() }));
+      return;
+    }
     cancelRef.current?.();
     const userMessage = createMessage(session.id, 'user', question, 'sent');
     const assistantMessage = createMessage(session.id, 'assistant', '', 'generating');
@@ -208,8 +218,8 @@ export function TutorDialog() {
 
   return (
     <div className="space-y-4">
-      <div className="rounded-xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-900">
-        当前学习：当前课程知识点
+      <div className={`rounded-xl px-4 py-3 text-sm ${isPreview ? 'border border-amber-200 bg-amber-50 text-amber-900' : 'border border-blue-100 bg-blue-50 text-blue-900'}`}>
+        当前学习：{isPreview ? '预置内容预览（辅导不可用）' : '当前课程知识点'}
         <span className="ml-2 text-xs text-blue-700">知识点 ID：{taskContext.kpId}</span>
       </div>
       <ConversationPane

@@ -15,6 +15,8 @@ class CourseCatalogItemDTO(BaseModel):
     title: str
     domain: str
     description: str | None = None
+    content_status: Literal["ready", "preview"]
+    unavailable_reason: str | None = None
     chapter_count: int
     knowledge_point_count: int
     resource_count: int
@@ -49,7 +51,7 @@ class CourseDetailDTO(CourseCatalogItemDTO):
     chapters: list[CourseChapterDTO]
     knowledge_points: list[CourseKnowledgePointDTO]
     source_platforms: list[str]
-    source_manifest: str
+    source_manifest: str | None = None
 
 
 class CourseGraphEdgeDTO(BaseModel):

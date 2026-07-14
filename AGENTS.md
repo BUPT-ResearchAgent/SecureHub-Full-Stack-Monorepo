@@ -2,7 +2,7 @@
 
 > 权威文档：`CLAUDE.md` 是项目宪法，本文件不复述细节，仅约束 Codex 子智能体的使用边界。
 > 文档冲突时以 `CLAUDE.md` 为准。
-> 最后更新：2026-07-14（Runtime v1.1 Wave 0-6 与 A3-S5~S7 均已 `real-accepted`；S8 保持 `planned` + `external-gate-open` 并暂缓执行，当前优先赛前 PPT/试题/可视化/证据评分准备）。
+> 最后更新：2026-07-14（v1.0 多课程真实 Catalog：Web 安全为 `ready`，密码学/网络攻防/安全开发为明确只读 `preview`；9 Agent/28 Skill/Runtime/SSE 冻结不变）。
 
 ---
 
@@ -48,6 +48,7 @@ D:/Nnutural/Desktop/BUPT大全/BUPT竞赛/26软件杯/Plan/2026-07-10_Agent_Run_
 | Spark Gate | Spark bearer key 为空；Spark primary、首 token 后受控中断、DeepSeek replacement 与 Spark cancel 均未执行。 | "Spark 已通过"、"用无效 key 或 fixture 制造 fallback 成功" |
 | COS / Storage | 2026-07-12 COS Runtime 已真实通过 upload/head/download/signed URL/delete；历史 451 仅为旧记录。GitHub 外 data 仍只确认 20 个既有同步样本，约 870 个对象未全量完成。 | "COS 仍被 451 阻塞"、"所有 data 已上传 COS"、"storage 是一个 agent" |
 | A3-S5~S7 | S5 assessment/persona/path refresh、S6 current-root Evidence/Trace/Provider replay、S7 fund loader/DeepSeek Research 链均已 `real-accepted`；S7 入口为 `POST /api/v1/research/fund-recommendations`，以 CurrentUser 绑定画像归属。 | "S5-S7 仍只有工程验收"、"浏览器可传 user_id"、"Spark Gate 阻断 S5-S7" |
+| 四课程 Catalog | `courses` 有四条稳定产品记录；只有 `WEBSEC-101` 可创建真实课程 root。三门 `preview` 仅可浏览预置内容，未知或 preview course 不回落 Web 安全。 | "四门都已真实 RAG/生成"、"preview 可借用 Web 安全 Evidence" |
 | 当前调度 | S8 保持 `planned` + `external-gate-open` 但暂缓执行；当前优先赛前 PPT/试题 Skill 评估、curated fallback、资料可视化和数据/案例/测试评分证据。 | "S8 已启动"、"S8 已取消"、"PPT 完成等于 Spark Gate 通过" |
 
 正式生命周期为 `planned -> in_progress -> code_complete -> engineering-accepted -> real-accepted`。`external-gate-open` 仅是正交 Gate 标记；“暂缓”只是资源调度，不新增状态。S8 的 Spark Gate 仍真实开放但当前不排期。DeepSeek/Skill 产物未达质量线时可使用显式 `pre-generated/curated` 内容，禁止冒充 live 或 fixture。COS Runtime gate 与 GitHub 外 data 全量同步仍是两个范围。
@@ -123,7 +124,14 @@ validate → guardrail → real RAG → evidence floor/snapshot → ContextBuild
 
 所有外部来源必须保留：`platform / source_url / author / published_at / fetched_at / license / rights_note`。
 
-统一知识资产层：所有 domain 共用 `documents + document_assets + chunks + knowledge_nodes + knowledge_edges`，禁止建并列表（`course_chunks` / `policy_chunks` / `bilibili_chunks` 等）。
+### 演示身份 / 教师端（2026-07-14）
+
+- `users.role` 是教师演示身份的唯一权威；前端不可用 localStorage 或 URL 参数伪造身份。
+- 演示 seed 包含学生、课程教师、科研导师、就业导师、综合教师五类账号；注册用户默认学生。
+- `/auth/login` 与 `/auth/me` 返回 `role`，`/teacher/context` 对学生必须返回 403。教师业务卡片仍可使用显式 demo 数据，但导航准入必须来自服务端角色。
+- 修改角色 schema、认证返回值或演示 seed 时，必须同时更新本文件、`.codex/AGENTS.md` 与 `CLAUDE.md`，并执行迁移与重新 seed。
+
+统一知识资产层：所有 domain 共用 `documents + document_assets + chunks + knowledge_nodes + knowledge_edges`，禁止建并列表（`course_chunks` / `policy_chunks` / `bilibili_chunks` 等）。`course_crypto`、`course_network_security`、`course_secure_development` 目前仅是 Catalog 受治理预览 domain，不开放 RAG/Skill，不修改冻结的 `applicable_domains`。
 
 对象存储规则：`runtime/` 用于应用运行时产物，`tmp/` 用于 smoke / 临时上传，`private/team-sync/` 用于团队私有同步。禁止上传 `.env*`、`SecretKey.csv`、`account.csv`、`.codegraph/**`、sqlite/db、raw MediaCrawler 数据；教材 PDF / `full.md` 只能在项目负责人明确确认后单独私有同步。
 

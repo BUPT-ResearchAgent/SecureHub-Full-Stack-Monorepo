@@ -35,6 +35,7 @@ class UserRepository(UUIDPKRepository[User]):
         display_name: str,
         hashed_password: str | None = None,
         is_active: bool = True,
+        role: str = "student",
     ) -> User:
         row = User(
             id=user_id,
@@ -42,6 +43,7 @@ class UserRepository(UUIDPKRepository[User]):
             display_name=display_name,
             hashed_password=hashed_password,
             is_active=is_active,
+            role=role,
         )
         self.session.add(row)
         await self.session.flush()

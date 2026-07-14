@@ -40,6 +40,7 @@ async def me(user: RequiredCurrentUserDep) -> AuthUser:
         email=user.email,
         display_name=user.display_name,
         is_active=user.is_active,
+        role=user.role,
     )
 
 

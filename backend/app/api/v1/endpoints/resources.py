@@ -12,6 +12,7 @@ from uuid import UUID
 from fastapi import APIRouter, Header, HTTPException, Query, Request, status
 
 from app.api.v1.endpoints.workflow_adapter import accepted_root_response, start_product_workflow, workflow_service
+from app.db.seeds._constants import resolve_course_product
 from app.deps import CurrentUserDep, SessionDep
 from app.repositories.resource.generated_resources import GeneratedResourceRepository
 from app.schemas.agent_control import WorkflowRunStartResponse
@@ -124,6 +125,11 @@ async def retry_resource(
         }
     )
     query = payload.query.strip() if payload.query and payload.query.strip() else f"Regenerate {row.resource_type}: {row.title}"
+    product = resolve_course_product(row.course_id)
+    if product is None:
+        raise HTTPException(status_code=404, detail={"code": "COURSE_NOT_FOUND", "message": "课程不存在或链接已失效。"})
+    if product.content_status != "ready":
+        raise HTTPException(status_code=409, detail={"code": "COURSE_CONTENT_NOT_READY", "message": product.unavailable_reason or "课程内容正在建设中，暂不能启动真实学习工作流。"})
     start = await start_product_workflow(
         _service(request),
         workflow="resource_generate_v1",
@@ -134,7 +140,7 @@ async def retry_resource(
             "kp_id": str(row.kp_id) if row.kp_id else None,
             "query": query,
             "options": options,
-            "domain": "course_websec",
+            "domain": product.domain,
         },
         mode=payload.mode,
         provider=payload.provider,

@@ -57,6 +57,7 @@ export function LearningCompanionPanel({
   className?: string;
 }) {
   const preset = useMemo(() => getCompanionPreset(course), [course]);
+  const isPreview = course.contentStatus === 'preview';
   const { taskContext, companionSessions } = useCourseState();
   const courseDispatch = useCourseDispatch();
   const [draft, setDraft] = useState('');
@@ -245,6 +246,16 @@ export function LearningCompanionPanel({
     const question = rawQuestion.trim();
     const imageAttachments = attachments;
     if ((!question && imageAttachments.length === 0) || isGenerating) return;
+    if (isPreview) {
+      setDraft('');
+      setAttachments([]);
+      updateMessages((current) => [
+        ...current,
+        { id: messageId('user'), role: 'user', content: question || '查看预置内容', status: 'done', evidence: [], attachments: imageAttachments },
+        { id: messageId('assistant'), role: 'assistant', content: '这是只读预置内容预览；课程辅导尚未就绪，因此没有创建工作流、AgentRun 或 Evidence Snapshot。', status: 'done', evidence: [] },
+      ]);
+      return;
+    }
     streamCancelRef.current?.();
 
     const assistantId = messageId('assistant');
@@ -346,7 +357,7 @@ export function LearningCompanionPanel({
           <div className="min-w-0">
             <p className="truncate text-[13px] font-medium text-slate-900">学习助手</p>
             <p className="truncate text-[11px] text-slate-500">
-              {course.title} · {course.currentKnowledgePoint}
+              {course.title} · {isPreview ? '预置内容预览（辅导关闭）' : course.currentKnowledgePoint}
             </p>
           </div>
         </div>
