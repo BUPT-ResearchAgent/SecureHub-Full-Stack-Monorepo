@@ -123,6 +123,13 @@ validate → guardrail → real RAG → evidence floor/snapshot → ContextBuild
 
 所有外部来源必须保留：`platform / source_url / author / published_at / fetched_at / license / rights_note`。
 
+### 演示身份 / 教师端（2026-07-14）
+
+- `users.role` 是教师演示身份的唯一权威；前端不可用 localStorage 或 URL 参数伪造身份。
+- 演示 seed 包含学生、课程教师、科研导师、就业导师、综合教师五类账号；注册用户默认学生。
+- `/auth/login` 与 `/auth/me` 返回 `role`，`/teacher/context` 对学生必须返回 403。教师业务卡片仍可使用显式 demo 数据，但导航准入必须来自服务端角色。
+- 修改角色 schema、认证返回值或演示 seed 时，必须同时更新本文件、`.codex/AGENTS.md` 与 `CLAUDE.md`，并执行迁移与重新 seed。
+
 统一知识资产层：所有 domain 共用 `documents + document_assets + chunks + knowledge_nodes + knowledge_edges`，禁止建并列表（`course_chunks` / `policy_chunks` / `bilibili_chunks` 等）。
 
 对象存储规则：`runtime/` 用于应用运行时产物，`tmp/` 用于 smoke / 临时上传，`private/team-sync/` 用于团队私有同步。禁止上传 `.env*`、`SecretKey.csv`、`account.csv`、`.codegraph/**`、sqlite/db、raw MediaCrawler 数据；教材 PDF / `full.md` 只能在项目负责人明确确认后单独私有同步。

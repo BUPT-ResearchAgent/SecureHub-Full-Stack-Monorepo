@@ -165,6 +165,13 @@ quiz_attempts / learning_events
 ```
 本文件 §4 与 §6 的状态标签**必须随代码同步更新**。
 
+### 3.5.1 演示身份 / 教师端（2026-07-14）
+
+- `users.role` 是教师演示身份的唯一权威；前端不可用 localStorage 或 URL 参数伪造身份。
+- 演示 seed 包含学生、课程教师、科研导师、就业导师、综合教师五类账号；注册用户默认学生。
+- `/auth/login` 与 `/auth/me` 返回 `role`，`/teacher/context` 对学生必须返回 403。教师业务卡片仍可使用显式 demo 数据，但导航准入必须来自服务端角色。
+- 修改角色 schema、认证返回值或演示 seed 时，必须同步更新本文件、根 `AGENTS.md` 与 `CLAUDE.md`，并执行迁移与重新 seed。
+
 ### 3.6 ❌ 不要绕开 RAG 直接调 LLM（生成必须经 Harness 完整链路）
 
 所有生成式 skill（除"创意发散"类如 `generate_research_topic` 显式声明外）**必须**经唯一 `SkillExecutor` 的真实检索链路：RuntimeEngine 先建立 root/step attempt/running `agent_runs`，SkillExecutor 执行 `rag.retrieve`、evidence snapshot、ContextBuilder、provider journal/call 与 strict parse，并把 Candidate Output 交回 WorkflowDefinition。QualityCheck 只可作为后续**显式独立 Workflow Node**执行；通过后 Artifact Saga 才可发布 artifact event。

@@ -50,3 +50,11 @@
 .workflow-orb-running {
   animation: workflow-orb-pulse 1.6s ease-out infinite;
 }
+
+@media (prefers-reduced-motion: reduce) {
+  .workflow-node-running,
+  .workflow-edge-active,
+  .workflow-orb-running {
+    animation: none;
+  }
+}

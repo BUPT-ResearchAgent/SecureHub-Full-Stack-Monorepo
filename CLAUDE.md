@@ -100,6 +100,13 @@ Scrapling、MediaCrawler、MindSpider 都是外部工具 / 数据采集参考，
 - 最近一次全量同步尝试已被项目负责人手动中止。继续同步前，优先补 `skip existing` / 断点续传 / manifest 增量追加 / 限速或并发控制，不要直接把半成品当作完成。
 - 上传门禁必须在后端校验：`UPLOAD_GATE_SECRET_HASH` + 常量时间比较；前端输入密钥只是演示入口，不得把明文密钥写入前端、`.env.example`、manifest、报告或 Git。
 
+### 0.1.5 演示身份与教师端（2026-07-14）
+
+- `users.role` 是演示身份的服务端权威字段，受迁移约束为 `student` / `course_teacher` / `research_mentor` / `career_mentor` / `hybrid`；新注册账号固定为 `student`。
+- 演示 seed 提供学生与四类教师的五个独立账号。迁移后执行 `uv run alembic upgrade head` 和 `uv run python -m app.db.seeds.seed_demo` 以补齐账号。
+- `/api/v1/auth/login` 与 `/api/v1/auth/me` 返回 role；`GET /api/v1/teacher/context` 只向教师身份返回可演示模块，学生账号为 403。前端不得再把教师身份写入 localStorage。
+- 教师页业务数据仍为明确标注的 demo/mock 展示数据；本次真实化的是账号身份、登录流和教师模块准入，不新增运行时 agent 或改变 RuntimeEngine 权威。
+
 ---
 
 ## 1. 项目一句话定位

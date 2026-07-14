@@ -20,6 +20,17 @@ DEMO_USER_EMAIL = "demo-student@securehub.local"
 DEMO_USER_NAME = "陈同学"
 DEMO_USER_PASSWORD = "SecureHub@2026"
 
+# Demo accounts are deliberately deterministic so presentation flows can be
+# reset without browser-local role state.  Passwords stay in the development
+# seed and are never returned by an API response.
+DEMO_ACCOUNTS: tuple[tuple[str, UUID, str, str], ...] = (
+    ("student", DEMO_USER_ID, DEMO_USER_EMAIL, DEMO_USER_NAME),
+    ("course_teacher", stable_id("user:demo-course-teacher"), "demo-course-teacher@securehub.local", "张老师"),
+    ("research_mentor", stable_id("user:demo-research-mentor"), "demo-research-mentor@securehub.local", "林老师"),
+    ("career_mentor", stable_id("user:demo-career-mentor"), "demo-career-mentor@securehub.local", "周老师"),
+    ("hybrid", stable_id("user:demo-hybrid-teacher"), "demo-hybrid-teacher@securehub.local", "王老师"),
+)
+
 DEMO_USER_DIMENSIONS: dict[str, object] = {
     "knowledge_basis": "中级 — 学过 Web 开发与计算机网络基础",
     "cognitive_style": "看 demo 上手，遇到边界条件再深挖文档",

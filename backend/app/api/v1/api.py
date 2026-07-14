@@ -19,6 +19,7 @@ from app.api.v1.endpoints import (
     resources,
     system,
     tutor,
+    teacher,
     uploads,
 )
 
@@ -48,6 +49,7 @@ api_router.include_router(
     tags=["policy"],
 )
 api_router.include_router(profile.router, tags=["profile"])
+api_router.include_router(teacher.router, tags=["teacher"])
 api_router.include_router(provider_credentials.router, tags=["provider-credentials"])
 api_router.include_router(courses.router, tags=["courses"])
 api_router.include_router(resources.router, tags=["resources"])

@@ -48,11 +48,21 @@ class LoginRequest(BaseModel):
         return _validate_email(value)
 
 
+AppRole = Literal[
+    "student",
+    "course_teacher",
+    "research_mentor",
+    "career_mentor",
+    "hybrid",
+]
+
+
 class AuthUser(BaseModel):
     id: UUID
     email: str
     display_name: str
     is_active: bool
+    role: AppRole
 
 
 class TokenResponse(BaseModel):
