@@ -10,6 +10,7 @@ from app.deps import (
     SettingsDep,
 )
 from app.schemas.auth import AuthUser, LoginRequest, RegisterRequest, TokenResponse
+from app.schemas.security import PasswordChangeRequest, PasswordComplianceDTO
 from app.services.identity.auth_service import AuthService
 
 router = APIRouter(prefix="/auth")
@@ -42,6 +43,16 @@ async def me(user: RequiredCurrentUserDep) -> AuthUser:
         is_active=user.is_active,
         role=user.role,
     )
+
+
+@router.post("/password/change", response_model=PasswordComplianceDTO)
+async def change_password(
+    payload: PasswordChangeRequest,
+    session: SessionDep,
+    settings: SettingsDep,
+    user: RequiredCurrentUserDep,
+) -> PasswordComplianceDTO:
+    return await AuthService(session, settings).change_password(user=user, payload=payload)
 
 
 @router.post("/logout")

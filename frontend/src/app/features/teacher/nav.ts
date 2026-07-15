@@ -12,6 +12,7 @@ import {
   FlaskConical,
   GraduationCap,
   LayoutDashboard,
+  RefreshCw,
   UserCircle,
   Users,
 } from 'lucide-react';
@@ -88,6 +89,13 @@ export const TEACHER_NAV: TeacherNavItem[] = [
     icon: Megaphone,
     visibleFor: ['course_teacher', 'research_mentor', 'career_mentor', 'hybrid'],
     description: '面向班级/学生的公告',
+  },
+  {
+    path: '/teacher/course-updates',
+    label: '课程更新',
+    icon: RefreshCw,
+    visibleFor: ['course_teacher', 'hybrid'],
+    description: '信号建议 · 教师处置',
   },
   {
     path: '/teacher/profile',

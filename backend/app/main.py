@@ -5,6 +5,7 @@ from app.api.router import api_router
 from app.core.config import get_settings
 from app.core.lifespan import lifespan
 from app.core.logging import configure_logging
+from app.services.security.api_risk_middleware import ApiRiskMiddleware
 
 settings = get_settings()
 configure_logging(debug=settings.DEBUG)
@@ -23,6 +24,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.add_middleware(ApiRiskMiddleware, enabled=True)
 
 app.include_router(api_router, prefix=settings.API_V1_PREFIX)
 
