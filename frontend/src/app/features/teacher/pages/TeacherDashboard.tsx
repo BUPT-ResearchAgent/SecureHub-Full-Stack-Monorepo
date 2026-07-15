@@ -116,6 +116,7 @@ function TodoStream() {
 }
 
 function CourseTeacherDashboard() {
+  const navigate = useNavigate();
   const [dashboard, setDashboard] = useState<TeacherProductionDashboard | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -171,6 +172,12 @@ function CourseTeacherDashboard() {
         <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
           <h2 className="text-sm font-semibold text-slate-800">教学闭环入口</h2>
           <p className="mt-2 text-xs leading-5 text-slate-500">从题库审核、班级真实作答聚合，到版本化作业、人工成绩发布和 typed syllabus 审核，均以数据库状态为准。</p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <button type="button" onClick={() => navigate('/teacher/materials')} className="rounded-lg border border-slate-200 px-2.5 py-1 text-xs text-slate-700 hover:bg-slate-50">资产治理</button>
+            <button type="button" onClick={() => navigate('/teacher/teaching-insights')} className="rounded-lg border border-slate-200 px-2.5 py-1 text-xs text-slate-700 hover:bg-slate-50">薄弱点与建议</button>
+            <button type="button" onClick={() => navigate('/teacher/assignments')} className="rounded-lg border border-slate-200 px-2.5 py-1 text-xs text-slate-700 hover:bg-slate-50">真实作业</button>
+            <button type="button" onClick={() => navigate('/teacher/syllabus')} className="rounded-lg border border-slate-200 px-2.5 py-1 text-xs text-slate-700 hover:bg-slate-50">教学大纲</button>
+          </div>
           <p className="mt-4 text-[11px] text-slate-400">最近计算：{new Date(dashboard.calculated_at).toLocaleString()}</p>
         </section>
       </div>

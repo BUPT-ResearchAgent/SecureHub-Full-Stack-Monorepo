@@ -71,6 +71,10 @@ class SyllabusVersionDTO(BaseModel):
     updated_at: datetime
 
 
+class SyllabusVersionListDTO(BaseModel):
+    items: list[SyllabusVersionDTO]
+
+
 class SyllabusDiffDTO(BaseModel):
     from_version_id: UUID | None = None
     to_version_id: UUID

@@ -41,14 +41,20 @@ const TeacherDashboard = lazy(() =>
 const TeacherCourses = lazy(() =>
   import('@/app/features/teacher/pages/TeacherCourses').then((m) => ({ default: m.TeacherCourses })),
 );
-const TeacherMaterials = lazy(() =>
-  import('@/app/features/teacher/pages/TeacherMaterials').then((m) => ({ default: m.TeacherMaterials })),
+const TeacherMaterialsReal = lazy(() =>
+  import('@/app/features/teacher/pages/TeacherMaterialsReal').then((m) => ({ default: m.TeacherMaterialsReal })),
 );
 const TeacherQuizBank = lazy(() =>
   import('@/app/features/teacher/pages/TeacherQuizBank').then((m) => ({ default: m.TeacherQuizBank })),
 );
 const TeacherAssignments = lazy(() =>
   import('@/app/features/teacher/pages/TeacherAssignments').then((m) => ({ default: m.TeacherAssignments })),
+);
+const TeacherTeachingInsights = lazy(() =>
+  import('@/app/features/teacher/pages/TeacherTeachingInsights').then((m) => ({ default: m.TeacherTeachingInsights })),
+);
+const TeacherSyllabus = lazy(() =>
+  import('@/app/features/teacher/pages/TeacherSyllabus').then((m) => ({ default: m.TeacherSyllabus })),
 );
 const TeacherStudents = lazy(() =>
   import('@/app/features/teacher/pages/TeacherStudents').then((m) => ({ default: m.TeacherStudents })),
@@ -118,9 +124,11 @@ export default function App() {
           >
             <Route path="/teacher" element={lazyPage(<TeacherDashboard />)} />
             <Route path="/teacher/courses" element={lazyPage(<TeacherCourses />)} />
-            <Route path="/teacher/materials" element={lazyPage(<TeacherMaterials />)} />
+            <Route path="/teacher/materials" element={lazyPage(<TeacherMaterialsReal />)} />
             <Route path="/teacher/quiz-bank" element={lazyPage(<TeacherQuizBank />)} />
             <Route path="/teacher/assignments" element={lazyPage(<TeacherAssignments />)} />
+            <Route path="/teacher/teaching-insights" element={lazyPage(<TeacherTeachingInsights />)} />
+            <Route path="/teacher/syllabus" element={lazyPage(<TeacherSyllabus />)} />
             <Route path="/teacher/students" element={lazyPage(<TeacherStudents />)} />
             <Route path="/teacher/research" element={lazyPage(<TeacherResearch />)} />
             <Route path="/teacher/career-mentoring" element={lazyPage(<TeacherCareerMentoring />)} />

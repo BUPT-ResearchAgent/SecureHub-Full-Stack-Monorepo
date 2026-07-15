@@ -214,6 +214,14 @@ class TeachingProductionRepository(BaseRepository):
     async def get_weakness_snapshot(self, snapshot_id: UUID) -> ClassWeaknessSnapshot | None:
         return await self.session.get(ClassWeaknessSnapshot, snapshot_id)
 
+    async def list_weakness_snapshots(self, *, course_id: UUID) -> Sequence[ClassWeaknessSnapshot]:
+        result = await self.session.execute(
+            select(ClassWeaknessSnapshot)
+            .where(ClassWeaknessSnapshot.course_id == course_id)
+            .order_by(ClassWeaknessSnapshot.computed_at.desc(), ClassWeaknessSnapshot.id)
+        )
+        return result.scalars().all()
+
     async def get_evidence_snapshot(self, evidence_snapshot_id: UUID) -> WorkflowEvidenceSnapshot | None:
         return await self.session.get(WorkflowEvidenceSnapshot, evidence_snapshot_id)
 
@@ -230,6 +238,14 @@ class TeachingProductionRepository(BaseRepository):
 
     async def get_recommendation(self, recommendation_id: UUID) -> TeachingRecommendation | None:
         return await self.session.get(TeachingRecommendation, recommendation_id)
+
+    async def list_recommendations(self, *, course_id: UUID) -> Sequence[TeachingRecommendation]:
+        result = await self.session.execute(
+            select(TeachingRecommendation)
+            .where(TeachingRecommendation.course_id == course_id)
+            .order_by(TeachingRecommendation.version_no.desc(), TeachingRecommendation.created_at.desc())
+        )
+        return result.scalars().all()
 
     async def get_assessment(self, assessment_id: UUID) -> Assessment | None:
         return await self.session.get(Assessment, assessment_id)
@@ -275,6 +291,18 @@ class TeachingProductionRepository(BaseRepository):
 
     async def get_assignment(self, assignment_id: UUID) -> AssessmentAssignment | None:
         return await self.session.get(AssessmentAssignment, assignment_id)
+
+    async def list_course_assignments(
+        self, *, course_id: UUID
+    ) -> Sequence[tuple[AssessmentAssignment, AssessmentVersion, Assessment]]:
+        result = await self.session.execute(
+            select(AssessmentAssignment, AssessmentVersion, Assessment)
+            .join(AssessmentVersion, AssessmentVersion.id == AssessmentAssignment.assessment_version_id)
+            .join(Assessment, Assessment.id == AssessmentVersion.assessment_id)
+            .where(Assessment.course_id == course_id)
+            .order_by(AssessmentAssignment.created_at.desc(), AssessmentAssignment.id)
+        )
+        return result.all()
 
     async def get_assignment_context(
         self, assignment_id: UUID
@@ -322,6 +350,21 @@ class TeachingProductionRepository(BaseRepository):
             )
         )
         return result.scalar_one_or_none()
+
+    async def list_assignment_submissions(
+        self, *, assignment_id: UUID
+    ) -> Sequence[tuple[AssessmentSubmission, User, AssessmentGradeDecision | None]]:
+        result = await self.session.execute(
+            select(AssessmentSubmission, User, AssessmentGradeDecision)
+            .join(User, User.id == AssessmentSubmission.student_id)
+            .outerjoin(
+                AssessmentGradeDecision,
+                AssessmentGradeDecision.submission_id == AssessmentSubmission.id,
+            )
+            .where(AssessmentSubmission.assignment_id == assignment_id)
+            .order_by(AssessmentSubmission.submitted_at.desc(), AssessmentSubmission.id)
+        )
+        return result.all()
 
     async def get_or_create_syllabus(self, *, course_id: UUID) -> CourseSyllabus | None:
         result = await self.session.execute(

@@ -61,6 +61,7 @@ from app.schemas.syllabus import (
     SyllabusExportRequest,
     SyllabusReviewRequest,
     SyllabusVersionDTO,
+    SyllabusVersionListDTO,
     TypedSyllabusContent,
 )
 from app.schemas.teacher_production import (
@@ -85,13 +86,19 @@ from app.schemas.teacher_production import (
     RecordSubjectiveSuggestionRequest,
     StudentPublishedResultDTO,
     SubmitAssessmentRequest,
+    TeacherAssignmentDTO,
+    TeacherAssignmentListDTO,
+    TeacherAssessmentSubmissionDTO,
+    TeacherAssessmentSubmissionListDTO,
     TeacherCourseDTO,
     TeacherCourseListDTO,
     TeacherDashboardDTO,
     TeachingRecommendationDTO,
     TeachingRecommendationDecisionRequest,
+    TeachingRecommendationListDTO,
     WeaknessKnowledgePointDTO,
     WeaknessSnapshotDTO,
+    WeaknessSnapshotListDTO,
     WeaknessSnapshotRequest,
 )
 
@@ -607,6 +614,15 @@ class TeacherProductionService:
             )
         return self._weakness_dto(existing)
 
+    async def list_weakness_snapshots(
+        self, *, actor: User, course_id: UUID
+    ) -> WeaknessSnapshotListDTO:
+        """Return only durable, in-scope aggregate snapshots for the teacher UI."""
+
+        await self._require_teacher_course(actor=actor, course_id=course_id)
+        rows = await self.repo.list_weakness_snapshots(course_id=course_id)
+        return WeaknessSnapshotListDTO(items=[self._weakness_dto(row) for row in rows])
+
     async def create_teaching_recommendation(
         self,
         *,
@@ -663,6 +679,15 @@ class TeacherProductionService:
         )
         return self._recommendation_dto(row)
 
+    async def list_teaching_recommendations(
+        self, *, actor: User, course_id: UUID
+    ) -> TeachingRecommendationListDTO:
+        """List persisted recommendation diffs without mutating course content."""
+
+        await self._require_teacher_course(actor=actor, course_id=course_id)
+        rows = await self.repo.list_recommendations(course_id=course_id)
+        return TeachingRecommendationListDTO(items=[self._recommendation_dto(row) for row in rows])
+
     async def decide_teaching_recommendation(
         self,
         *,
@@ -702,6 +727,37 @@ class TeacherProductionService:
     # ------------------------------------------------------------------
     # FG-05: versioned assessment / deterministic scoring / publication
     # ------------------------------------------------------------------
+
+    async def list_course_assignments(
+        self, *, actor: User, course_id: UUID
+    ) -> TeacherAssignmentListDTO:
+        """Read the durable assignment/version projection for an owned course."""
+
+        await self._require_teacher_course(actor=actor, course_id=course_id)
+        rows = await self.repo.list_course_assignments(course_id=course_id)
+        return TeacherAssignmentListDTO(
+            items=[
+                TeacherAssignmentDTO(
+                    id=assignment.id,
+                    course_id=assessment.course_id,
+                    assessment_id=assessment.id,
+                    assessment_version_id=version.id,
+                    logical_key=assessment.logical_key,
+                    kind=assessment.kind,  # type: ignore[arg-type]
+                    title=version.title,
+                    version_no=version.version_no,
+                    target_type=assignment.target_type,  # type: ignore[arg-type]
+                    teaching_class_id=assignment.teaching_class_id,
+                    group_id=assignment.group_id,
+                    student_id=assignment.student_id,
+                    due_at=assignment.due_at,
+                    allow_late=assignment.allow_late,
+                    status=assignment.status,  # type: ignore[arg-type]
+                    created_at=assignment.created_at,
+                )
+                for assignment, version, assessment in rows
+            ]
+        )
 
     async def create_assessment(
         self, *, actor: User, course_id: UUID, payload: AssessmentCreateRequest
@@ -918,6 +974,32 @@ class TeacherProductionService:
             },
         )
         return self._submission_dto(submission)
+
+    async def list_assignment_submissions(
+        self, *, actor: User, assignment_id: UUID
+    ) -> TeacherAssessmentSubmissionListDTO:
+        """Expose in-scope submitted work and durable grade decisions to its teacher."""
+
+        context = await self.repo.get_assignment_context(assignment_id)
+        if context is None:
+            raise TeacherProductionError("ASSESSMENT_SCOPE_DENIED", "评估布置不存在或不可访问。", 404)
+        _, _, assessment = context
+        await self._require_teacher_course(actor=actor, course_id=assessment.course_id)
+        rows = await self.repo.list_assignment_submissions(assignment_id=assignment_id)
+        return TeacherAssessmentSubmissionListDTO(
+            items=[
+                TeacherAssessmentSubmissionDTO(
+                    id=submission.id,
+                    assignment_id=submission.assignment_id,
+                    student_id=submission.student_id,
+                    student_display_name=student.display_name,
+                    status=submission.status,  # type: ignore[arg-type]
+                    submitted_at=submission.submitted_at,
+                    grade=self._grade_dto(grade) if grade is not None else None,
+                )
+                for submission, student, grade in rows
+            ]
+        )
 
     async def score_objective_submission(
         self, *, actor: User, submission_id: UUID
@@ -1142,6 +1224,18 @@ class TeacherProductionService:
     # ------------------------------------------------------------------
     # FG-06: typed syllabus / explicit review / export / rollback
     # ------------------------------------------------------------------
+
+    async def list_syllabus_versions(
+        self, *, actor: User, course_id: UUID
+    ) -> SyllabusVersionListDTO:
+        """Return the typed syllabus lineage for an owned course, newest first."""
+
+        await self._require_teacher_course(actor=actor, course_id=course_id)
+        syllabus = await self.repo.get_or_create_syllabus(course_id=course_id)
+        if syllabus is None:
+            return SyllabusVersionListDTO(items=[])
+        versions = await self.repo.list_syllabus_versions(syllabus.id)
+        return SyllabusVersionListDTO(items=[self._syllabus_dto(version) for version in versions])
 
     async def create_syllabus_version(
         self,

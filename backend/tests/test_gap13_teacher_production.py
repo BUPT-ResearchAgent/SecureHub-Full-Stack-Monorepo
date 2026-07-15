@@ -182,6 +182,8 @@ async def test_gap13_teacher_production_is_scoped_durable_and_reversible(sqlite_
         payload=WeaknessSnapshotRequest(minimum_sample=1),
     )
     assert weakness.sample_size == 1
+    weakness_rows = await service.list_weakness_snapshots(actor=teacher, course_id=COURSE_WEBSEC_ID)
+    assert [row.id for row in weakness_rows.items] == [weakness.id]
     recommendation = await service.create_teaching_recommendation(
         actor=teacher,
         course_id=COURSE_WEBSEC_ID,
@@ -195,6 +197,10 @@ async def test_gap13_teacher_production_is_scoped_durable_and_reversible(sqlite_
         ),
     )
     assert recommendation.status == "pending"
+    recommendation_rows = await service.list_teaching_recommendations(
+        actor=teacher, course_id=COURSE_WEBSEC_ID
+    )
+    assert [row.id for row in recommendation_rows.items] == [recommendation.id]
 
     # FG-05: version snapshot, class target, student submission, deterministic
     # objective score, Runtime-linked suggestion, manual override, publish.
@@ -228,6 +234,8 @@ async def test_gap13_teacher_production_is_scoped_durable_and_reversible(sqlite_
             reason="布置课堂作业",
         ),
     )
+    assignment_rows = await service.list_course_assignments(actor=teacher, course_id=COURSE_WEBSEC_ID)
+    assert [row.id for row in assignment_rows.items] == [assignment.id]
     submission = await service.submit_assessment(
         actor=student,
         assignment_id=assignment.id,
@@ -235,6 +243,9 @@ async def test_gap13_teacher_production_is_scoped_durable_and_reversible(sqlite_
             answers={str(objective.id): objective.answer, str(subjective.id): "主观作答"}
         ),
     )
+    submission_rows = await service.list_assignment_submissions(actor=teacher, assignment_id=assignment.id)
+    assert [row.id for row in submission_rows.items] == [submission.id]
+    assert submission_rows.items[0].student_display_name == student.display_name
     scored = await service.score_objective_submission(actor=teacher, submission_id=submission.id)
     assert scored.objective_score == 5
     suggested = await service.record_subjective_suggestion(
@@ -274,6 +285,8 @@ async def test_gap13_teacher_production_is_scoped_durable_and_reversible(sqlite_
         payload=SyllabusReviewRequest(decision="approve", reason="教师审核通过"),
     )
     assert approved.state == "published"
+    syllabus_rows = await service.list_syllabus_versions(actor=teacher, course_id=COURSE_WEBSEC_ID)
+    assert [row.id for row in syllabus_rows.items] == [approved.id]
     export = await service.export_syllabus_version(
         actor=teacher,
         version_id=approved.id,

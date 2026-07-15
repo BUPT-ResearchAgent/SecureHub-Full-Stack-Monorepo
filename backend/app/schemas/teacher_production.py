@@ -120,6 +120,10 @@ class WeaknessSnapshotDTO(BaseModel):
     computed_at: datetime
 
 
+class WeaknessSnapshotListDTO(BaseModel):
+    items: list[WeaknessSnapshotDTO]
+
+
 class CreateTeachingRecommendationRequest(BaseModel):
     source_snapshot_id: UUID
     evidence_snapshot_id: UUID
@@ -152,6 +156,10 @@ class TeachingRecommendationDTO(BaseModel):
     diff: dict[str, Any]
     status: Literal["pending", "adopted", "rejected", "superseded", "withdrawn"]
     created_at: datetime
+
+
+class TeachingRecommendationListDTO(BaseModel):
+    items: list[TeachingRecommendationDTO]
 
 
 class AssessmentCreateRequest(BaseModel):
@@ -234,6 +242,31 @@ class AssessmentAssignmentDTO(BaseModel):
     created_at: datetime
 
 
+class TeacherAssignmentDTO(BaseModel):
+    """Teacher-facing durable assignment projection, not a second assessment store."""
+
+    id: UUID
+    course_id: UUID
+    assessment_id: UUID
+    assessment_version_id: UUID
+    logical_key: str
+    kind: Literal["assignment", "exam"]
+    title: str
+    version_no: int = Field(ge=1)
+    target_type: Literal["class", "group", "student"]
+    teaching_class_id: UUID | None = None
+    group_id: UUID | None = None
+    student_id: UUID | None = None
+    due_at: datetime
+    allow_late: bool
+    status: Literal["active", "closed", "withdrawn"]
+    created_at: datetime
+
+
+class TeacherAssignmentListDTO(BaseModel):
+    items: list[TeacherAssignmentDTO]
+
+
 class SubmitAssessmentRequest(BaseModel):
     answers: dict[str, Any] = Field(default_factory=dict)
 
@@ -276,6 +309,22 @@ class GradeDecisionDTO(BaseModel):
     override_reason: str | None = None
     published_at: datetime | None = None
     withdrawn_at: datetime | None = None
+
+
+class TeacherAssessmentSubmissionDTO(BaseModel):
+    """Read projection for a teacher's in-scope submission and grade state."""
+
+    id: UUID
+    assignment_id: UUID
+    student_id: UUID
+    student_display_name: str
+    status: Literal["open", "submitted", "late", "locked"]
+    submitted_at: datetime | None = None
+    grade: GradeDecisionDTO | None = None
+
+
+class TeacherAssessmentSubmissionListDTO(BaseModel):
+    items: list[TeacherAssessmentSubmissionDTO]
 
 
 class StudentPublishedResultDTO(BaseModel):

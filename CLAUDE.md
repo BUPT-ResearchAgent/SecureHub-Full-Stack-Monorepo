@@ -127,6 +127,7 @@ Scrapling、MediaCrawler、MindSpider 都是外部工具 / 数据采集参考，
 - 教师生产入口必须先验证课程教师归属。课程资产只绑定统一知识资产层，状态由真实 `documents` 处理状态协调；仪表盘数字来自持久关系查询，不得以静态 KPI 冒充真实工作台。资产更正、撤回、软删除和恢复均须保留操作者、理由和业务审计。
 - 测评版本冻结已校验题目快照；客观题评分确定，主观题 AI 只可引用已成功的 AgentRun 和 Evidence Snapshot 作为建议。教师人工覆盖必须保存理由，学生只能读取已发布成绩；撤回会立即收回该可见性。
 - `course_syllabuses` / `course_syllabus_versions` 是 typed syllabus 的唯一版本层，不是普通文档别名。生成路径只接收已完成的 Harness AgentRun + Evidence Snapshot，证据不足返回 `SYLLABUS_EVIDENCE_INSUFFICIENT`；审核、发布、导出和显式回滚不得自动覆盖 `courses` 的 ready 内容。
+- 课程教师使用 `/teacher/materials`、`/teacher/teaching-insights`、`/teacher/assignments`、`/teacher/syllabus` 完成真实资产、弱点/建议、作业/成绩和 typed syllabus 操作。前端刷新只消费受权的持久化读投影；不得以 `MOCK_*`、静态 KPI 或 toast 替代服务端结果。
 
 ### 0.1.9 协作与运营治理 T4（2026-07-15）
 

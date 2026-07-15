@@ -1,616 +1,316 @@
-// Status: mock
+// Status: real
 
-import { useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { CheckCircle2, ClipboardCheck, Loader2, RefreshCw, Sparkles } from 'lucide-react';
+import { fetchTeachingClasses } from '../api/education';
+import { fetchWebsecQuizBank } from '../api/quizQuality';
 import {
-  ArrowLeft,
-  ArrowRight,
-  CalendarClock,
-  Check,
-  ClipboardCheck,
-  PlusCircle,
-  Trash2,
-  Users,
-  Wand2,
-  X,
-} from 'lucide-react';
-import { toast } from 'sonner';
-import { useActiveRole } from '../store';
-import { isTeacherRole } from '../roles';
+  assignTeacherAssessmentVersion,
+  createTeacherAssessment,
+  createTeacherAssessmentVersion,
+  fetchTeacherAssignmentSubmissions,
+  fetchTeacherCourseAssignments,
+  fetchTeacherProductionCourses,
+  overrideTeacherSubmissionGrade,
+  publishTeacherSubmissionGrade,
+  recordTeacherSubjectiveSuggestion,
+  scoreTeacherSubmissionObjective,
+  withdrawTeacherSubmissionGrade,
+  type TeacherAssessmentSubmission,
+  type TeacherAssignment,
+  type TeacherProductionCourse,
+} from '../api/teacherProduction';
 import { TeacherShell } from '../components/TeacherShell';
-import {
-  MOCK_ASSIGNMENTS,
-  MOCK_CLASSES,
-  MOCK_QUIZ_ITEMS,
-  MOCK_STUDENTS,
-  type MockAssignment,
-  type MockQuizItem,
-} from '@/lib/mock/teacher.mock';
-import { courseCatalog } from '@/app/features/course/catalog/courseCatalog';
+import { isTeacherRole } from '../roles';
+import { useActiveRole } from '../store';
+import type { TeachingClass } from '../types/education';
+import type { TeacherQuizBankItem } from '../types/quizQuality';
 
-type Tab = 'draft' | 'active' | 'closed';
+type SelectedQuizItem = { points: number; gradingMode: 'objective' | 'subjective' };
+
+function localDueAt(): string {
+  const value = new Date(Date.now() + 24 * 60 * 60 * 1000);
+  value.setSeconds(0, 0);
+  return new Date(value.getTime() - value.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
+}
+
+function defaultMode(item: TeacherQuizBankItem): 'objective' | 'subjective' {
+  return ['single_choice', 'multi_choice'].includes(item.type) ? 'objective' : 'subjective';
+}
+
+function readError(cause: unknown, fallback: string): string {
+  return cause instanceof Error ? cause.message : fallback;
+}
 
 export function TeacherAssignments() {
   const [role] = useActiveRole();
-  const [tab, setTab] = useState<Tab>('active');
-  const [items, setItems] = useState<MockAssignment[]>(MOCK_ASSIGNMENTS);
-  const [wizardOpen, setWizardOpen] = useState(false);
-  const [detail, setDetail] = useState<MockAssignment | null>(null);
+  const [courses, setCourses] = useState<TeacherProductionCourse[]>([]);
+  const [classes, setClasses] = useState<TeachingClass[]>([]);
+  const [courseId, setCourseId] = useState('');
+  const [classId, setClassId] = useState('');
+  const [quizItems, setQuizItems] = useState<TeacherQuizBankItem[]>([]);
+  const [selectedItems, setSelectedItems] = useState<Record<string, SelectedQuizItem>>({});
+  const [logicalKey, setLogicalKey] = useState(`assignment-${Date.now()}`);
+  const [title, setTitle] = useState('');
+  const [instructions, setInstructions] = useState('');
+  const [dueAt, setDueAt] = useState(localDueAt);
+  const [allowLate, setAllowLate] = useState(false);
+  const [assignments, setAssignments] = useState<TeacherAssignment[]>([]);
+  const [selectedAssignmentId, setSelectedAssignmentId] = useState('');
+  const [submissions, setSubmissions] = useState<TeacherAssessmentSubmission[]>([]);
+  const [agentRunId, setAgentRunId] = useState('');
+  const [evidenceSnapshotId, setEvidenceSnapshotId] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [creating, setCreating] = useState(false);
+  const [workingSubmissionId, setWorkingSubmissionId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
-  const view = useMemo(() => items.filter((a) => a.status === tab), [items, tab]);
+  const courseClasses = useMemo(() => classes.filter((item) => item.course_id === courseId), [classes, courseId]);
+  const publishableItems = useMemo(
+    () => quizItems.filter((item) => item.review_status === 'curated' && item.quality?.result === 'passed'),
+    [quizItems],
+  );
+
+  const loadCatalog = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const [courseResponse, classResponse, bankResponse] = await Promise.all([
+        fetchTeacherProductionCourses(),
+        fetchTeachingClasses(),
+        fetchWebsecQuizBank(),
+      ]);
+      setCourses(courseResponse.items);
+      setClasses(classResponse.items);
+      setQuizItems(bankResponse.items);
+      setCourseId((current) => current && courseResponse.items.some((course) => course.id === current)
+        ? current
+        : (courseResponse.items[0]?.id ?? ''));
+    } catch (cause) {
+      setError(readError(cause, '无法读取本人课程、教学班或真实题库。'));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  const loadAssignments = useCallback(async () => {
+    if (!courseId) {
+      setAssignments([]);
+      return;
+    }
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await fetchTeacherCourseAssignments(courseId);
+      setAssignments(response.items);
+      setSelectedAssignmentId((current) => current && response.items.some((item) => item.id === current)
+        ? current
+        : (response.items[0]?.id ?? ''));
+    } catch (cause) {
+      setError(readError(cause, '无法读取持久化作业版本和布置状态。'));
+    } finally {
+      setLoading(false);
+    }
+  }, [courseId]);
+
+  const loadSubmissions = useCallback(async () => {
+    if (!selectedAssignmentId) {
+      setSubmissions([]);
+      return;
+    }
+    try {
+      const response = await fetchTeacherAssignmentSubmissions(selectedAssignmentId);
+      setSubmissions(response.items);
+    } catch (cause) {
+      setError(readError(cause, '无法读取当前作业的真实提交和成绩状态。'));
+    }
+  }, [selectedAssignmentId]);
+
+  useEffect(() => { void loadCatalog(); }, [loadCatalog]);
+  useEffect(() => { void loadAssignments(); }, [loadAssignments]);
+  useEffect(() => { void loadSubmissions(); }, [loadSubmissions]);
+  useEffect(() => {
+    setClassId((current) => courseClasses.some((item) => item.id === current) ? current : (courseClasses[0]?.id ?? ''));
+    setSelectedItems({});
+  }, [courseClasses]);
+
+  const refresh = async () => {
+    await loadCatalog();
+    await loadAssignments();
+    await loadSubmissions();
+  };
+
+  const toggleItem = (item: TeacherQuizBankItem) => {
+    setSelectedItems((current) => {
+      if (current[item.id]) {
+        const next = { ...current };
+        delete next[item.id];
+        return next;
+      }
+      return { ...current, [item.id]: { points: 5, gradingMode: defaultMode(item) } };
+    });
+  };
+
+  const updateSelection = (id: string, patch: Partial<SelectedQuizItem>) => {
+    setSelectedItems((current) => current[id] ? { ...current, [id]: { ...current[id], ...patch } } : current);
+  };
+
+  const createAssignment = async () => {
+    const items = Object.entries(selectedItems);
+    if (!courseId || !classId || !logicalKey.trim() || !title.trim() || items.length === 0) {
+      setError('请填写逻辑键、标题、教学班，并选择至少一道已发布且质量通过的真实题目。');
+      return;
+    }
+    const parsedDueAt = new Date(dueAt);
+    if (Number.isNaN(parsedDueAt.getTime())) {
+      setError('截止时间无效。');
+      return;
+    }
+    setCreating(true);
+    setError(null);
+    try {
+      const assessment = await createTeacherAssessment(courseId, { kind: 'assignment', logical_key: logicalKey.trim() });
+      const version = await createTeacherAssessmentVersion(assessment.id, {
+        title: title.trim(),
+        ...(instructions.trim() ? { instructions: instructions.trim() } : {}),
+        items: items.map(([quizItemId, config], index) => ({
+          quiz_item_id: quizItemId,
+          position: index + 1,
+          points: config.points,
+          grading_mode: config.gradingMode,
+        })),
+      });
+      const assignment = await assignTeacherAssessmentVersion(version.id, {
+        target_type: 'class',
+        teaching_class_id: classId,
+        due_at: parsedDueAt.toISOString(),
+        allow_late: allowLate,
+        reason: '教师通过真实作业入口布置教学班作业。',
+      });
+      setLogicalKey(`assignment-${Date.now()}`);
+      setTitle('');
+      setInstructions('');
+      setSelectedItems({});
+      setSelectedAssignmentId(assignment.id);
+      await loadAssignments();
+    } catch (cause) {
+      setError(readError(cause, '创建作业、冻结题目版本或布置范围失败。'));
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const refreshAfterGrade = async () => {
+    await loadAssignments();
+    await loadSubmissions();
+  };
+
+  const scoreObjective = async (submission: TeacherAssessmentSubmission) => {
+    setWorkingSubmissionId(submission.id);
+    setError(null);
+    try {
+      await scoreTeacherSubmissionObjective(submission.id);
+      await refreshAfterGrade();
+    } catch (cause) {
+      setError(readError(cause, '客观题确定性评分失败。'));
+    } finally {
+      setWorkingSubmissionId(null);
+    }
+  };
+
+  const saveSuggestion = async (submission: TeacherAssessmentSubmission) => {
+    if (!agentRunId.trim() || !evidenceSnapshotId.trim()) {
+      setError('录入 AI 建议必须提供已成功的 AgentRun 和 Evidence Snapshot UUID。');
+      return;
+    }
+    setWorkingSubmissionId(submission.id);
+    setError(null);
+    try {
+      await recordTeacherSubjectiveSuggestion(submission.id, { agent_run_id: agentRunId.trim(), evidence_snapshot_id: evidenceSnapshotId.trim() });
+      await refreshAfterGrade();
+    } catch (cause) {
+      setError(readError(cause, 'AI 建议被服务端拒绝；不会作为最终成绩发布。'));
+    } finally {
+      setWorkingSubmissionId(null);
+    }
+  };
+
+  const override = async (submission: TeacherAssessmentSubmission) => {
+    const value = window.prompt('请输入教师最终分数：', submission.grade?.final_score?.toString() ?? '');
+    if (value === null) return;
+    const finalScore = Number(value);
+    const reason = window.prompt('请输入人工覆盖理由（将写入业务审计）：');
+    if (!reason?.trim() || !Number.isFinite(finalScore) || finalScore < 0) return;
+    setWorkingSubmissionId(submission.id);
+    setError(null);
+    try {
+      await overrideTeacherSubmissionGrade(submission.id, { final_score: finalScore, reason: reason.trim() });
+      await refreshAfterGrade();
+    } catch (cause) {
+      setError(readError(cause, '教师人工覆盖失败。'));
+    } finally {
+      setWorkingSubmissionId(null);
+    }
+  };
+
+  const publish = async (submission: TeacherAssessmentSubmission) => {
+    setWorkingSubmissionId(submission.id);
+    setError(null);
+    try {
+      await publishTeacherSubmissionGrade(submission.id);
+      await refreshAfterGrade();
+    } catch (cause) {
+      setError(readError(cause, '成绩必须经人工覆盖并带理由后才能发布。'));
+    } finally {
+      setWorkingSubmissionId(null);
+    }
+  };
+
+  const withdraw = async (submission: TeacherAssessmentSubmission) => {
+    const reason = window.prompt('请输入撤回成绩理由：');
+    if (!reason?.trim()) return;
+    setWorkingSubmissionId(submission.id);
+    setError(null);
+    try {
+      await withdrawTeacherSubmissionGrade(submission.id, reason.trim());
+      await refreshAfterGrade();
+    } catch (cause) {
+      setError(readError(cause, '撤回成绩失败。'));
+    } finally {
+      setWorkingSubmissionId(null);
+    }
+  };
 
   if (!isTeacherRole(role)) return null;
 
+  const bankMatchesCourse = quizItems.length > 0 && quizItems[0]?.knowledge_node_id && courses.some((course) => course.id === courseId && course.code === 'WEBSEC-101');
+
   return (
     <TeacherShell
-      title="作业管理"
-      subtitle="按状态分 3 个 tab；创建作业可从题库选 / 智能体即时生成 / 手动新建"
-      actions={
-        <button
-          type="button"
-          onClick={() => setWizardOpen(true)}
-          className="inline-flex items-center gap-1.5 rounded-full bg-rose-600 px-3 py-1.5 text-xs font-medium text-white shadow-sm hover:bg-rose-700"
-        >
-          <PlusCircle className="h-3.5 w-3.5" />
-          新建作业
-        </button>
-      }
+      title="真实作业与成绩发布"
+      subtitle="从质量通过的 Web 安全题目冻结版本，布置到本人教学班；AI 仅提供可追溯建议，最终成绩必须由教师覆盖并发布。"
+      actions={<button type="button" onClick={() => void refresh()} className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700"><RefreshCw className="h-3.5 w-3.5" />刷新持久化状态</button>}
     >
-      <div className="flex items-center gap-1 rounded-full bg-slate-100 p-1 text-xs">
-        {(['draft', 'active', 'closed'] as Tab[]).map((t) => {
-          const count = items.filter((a) => a.status === t).length;
-          const label = { draft: '未发布', active: '进行中', closed: '已截止' }[t];
-          return (
-            <button
-              key={t}
-              type="button"
-              onClick={() => setTab(t)}
-              className={`rounded-full px-3 py-1 ${
-                tab === t ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500'
-              }`}
-            >
-              {label} <span className="ml-1 text-[10px] text-slate-400">({count})</span>
-            </button>
-          );
-        })}
-      </div>
-
-      {view.length === 0 ? (
-        <div className="rounded-2xl border border-dashed border-slate-300 bg-white/50 p-12 text-center text-sm text-slate-500">
-          暂无相关作业
+      {error && <section className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">{error}</section>}
+      <section className="mt-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+        <div className="flex flex-wrap items-end gap-3">
+          <label className="grid gap-1 text-xs text-slate-600">本人课程<select value={courseId} onChange={(event) => setCourseId(event.target.value)} className="min-w-60 rounded-lg border border-slate-200 px-3 py-2 text-sm">{courses.length === 0 && <option value="">暂无课程</option>}{courses.map((course) => <option key={course.id} value={course.id}>{course.code} · {course.title}</option>)}</select></label>
+          <label className="grid gap-1 text-xs text-slate-600">教学班<select value={classId} onChange={(event) => setClassId(event.target.value)} className="min-w-52 rounded-lg border border-slate-200 px-3 py-2 text-sm">{courseClasses.length === 0 && <option value="">暂无可用教学班</option>}{courseClasses.map((item) => <option key={item.id} value={item.id}>{item.name}（{item.student_count} 人）</option>)}</select></label>
+          <label className="grid gap-1 text-xs text-slate-600">截止时间<input type="datetime-local" value={dueAt} onChange={(event) => setDueAt(event.target.value)} className="rounded-lg border border-slate-200 px-3 py-2 text-sm" /></label>
+          <label className="flex items-center gap-2 pb-2 text-xs text-slate-600"><input type="checkbox" checked={allowLate} onChange={(event) => setAllowLate(event.target.checked)} />允许迟交</label>
         </div>
-      ) : (
-        <div className="grid gap-3 md:grid-cols-2">
-          {view.map((a) => (
-            <article
-              key={a.id}
-              className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition-shadow hover:shadow-md"
-            >
-              <div className="border-b border-slate-100 px-4 py-3">
-                <div className="flex items-center justify-between gap-2">
-                  <p className="text-sm font-semibold text-slate-800">{a.title}</p>
-                  <div className="flex shrink-0 items-center gap-1.5">
-                    {a.kind === 'persona_dialogue' && (
-                      <span className="inline-flex items-center gap-1 rounded-full bg-violet-100 px-2 py-0.5 text-[10px] font-medium text-violet-700">
-                        画像对话
-                      </span>
-                    )}
-                    <StatusPill status={a.status} />
-                  </div>
-                </div>
-                <p className="mt-1 text-[11px] text-slate-500">
-                  {courseCatalog.find((c) => c.id === a.courseId)?.title ?? a.courseId} ·{' '}
-                  {MOCK_CLASSES.find((cl) => cl.id === a.classId)?.name ?? a.classId}
-                </p>
-              </div>
-              <div className="space-y-2 px-4 py-3 text-xs">
-                <div className="flex items-center justify-between">
-                  <span className="text-slate-500">截止</span>
-                  <span className="inline-flex items-center gap-1 text-slate-700">
-                    <CalendarClock className="h-3 w-3" />
-                    {new Date(a.dueAt).toLocaleString('zh-CN')}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-slate-500">
-                    {a.kind === 'persona_dialogue' ? '已完成 / 班级' : '提交 / 学生'}
-                  </span>
-                  <span className="text-slate-700">
-                    {a.submittedCount} / {a.studentCount}
-                  </span>
-                </div>
-                {a.kind === 'persona_dialogue' ? (
-                  <div className="flex items-center justify-between">
-                    <span className="text-slate-500">在进行中 / 未开始</span>
-                    <span className="text-slate-700">
-                      {a.inProgressCount ?? 0} · {Math.max(0, a.studentCount - a.submittedCount - (a.inProgressCount ?? 0))}
-                    </span>
-                  </div>
-                ) : (
-                  <div className="flex items-center justify-between">
-                    <span className="text-slate-500">已批改 / 平均分</span>
-                    <span className="text-slate-700">
-                      {a.gradedCount} · {a.averageScore.toFixed(1)}
-                    </span>
-                  </div>
-                )}
-                <p className="text-slate-500 line-clamp-2">{a.description}</p>
-                <div className="flex justify-end gap-1.5 pt-1">
-                  <button
-                    type="button"
-                    onClick={() => setDetail(a)}
-                    className="rounded-full border border-slate-200 px-2.5 py-1 text-[11px] text-slate-700 hover:bg-slate-50"
-                  >
-                    详情
-                  </button>
-                  {a.status === 'draft' && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setItems((prev) =>
-                          prev.map((it) =>
-                            it.id === a.id
-                              ? { ...it, status: 'active', publishedAt: new Date().toISOString() }
-                              : it,
-                          ),
-                        );
-                        toast.success('已发布');
-                      }}
-                      className="rounded-full bg-emerald-600 px-2.5 py-1 text-[11px] font-medium text-white hover:bg-emerald-700"
-                    >
-                      发布
-                    </button>
-                  )}
-                  {a.status === 'active' && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setItems((prev) =>
-                          prev.map((it) => (it.id === a.id ? { ...it, status: 'closed' } : it)),
-                        );
-                        toast('已提前截止');
-                      }}
-                      className="rounded-full border border-rose-200 px-2.5 py-1 text-[11px] text-rose-700 hover:bg-rose-50"
-                    >
-                      提前截止
-                    </button>
-                  )}
-                </div>
-              </div>
-            </article>
-          ))}
-        </div>
-      )}
+        <div className="mt-3 grid gap-2 md:grid-cols-2"><input value={logicalKey} onChange={(event) => setLogicalKey(event.target.value)} placeholder="评估逻辑键（同课程唯一）" className="rounded-lg border border-slate-200 px-3 py-2 text-xs" /><input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="作业标题" className="rounded-lg border border-slate-200 px-3 py-2 text-xs" /></div>
+        <textarea value={instructions} onChange={(event) => setInstructions(event.target.value)} placeholder="作业说明（可选）" rows={2} className="mt-2 w-full rounded-lg border border-slate-200 px-3 py-2 text-xs" />
+        {!bankMatchesCourse && <p className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">本轮只深化 WEBSEC-101；请选择该课程后才能使用真实、已发布且质量通过的题目。</p>}
+        {bankMatchesCourse && <div className="mt-3 grid gap-2 lg:grid-cols-2">{publishableItems.map((item) => { const chosen = selectedItems[item.id]; return <label key={item.id} className={`rounded-xl border p-3 text-xs ${chosen ? 'border-brand-blue-300 bg-brand-blue-50/40' : 'border-slate-200'}`}><div className="flex items-start gap-2"><input type="checkbox" checked={Boolean(chosen)} onChange={() => toggleItem(item)} className="mt-0.5" /><div className="min-w-0 flex-1"><p className="font-medium text-slate-800">{item.question}</p><p className="mt-1 text-slate-500">{item.knowledge_node_name} · {item.type} · Evidence {item.evidence.length}</p>{chosen && <div className="mt-2 flex gap-2"><input type="number" min={0.1} step={0.5} value={chosen.points} onChange={(event) => updateSelection(item.id, { points: Number(event.target.value) || 0.1 })} aria-label={`${item.canonical_key} 分值`} className="w-20 rounded border border-slate-200 px-2 py-1" /><select value={chosen.gradingMode} onChange={(event) => updateSelection(item.id, { gradingMode: event.target.value as SelectedQuizItem['gradingMode'] })} className="rounded border border-slate-200 px-2 py-1"><option value="objective">客观题</option><option value="subjective">主观题</option></select></div>}</div></div></label>; })}{publishableItems.length === 0 && <p className="rounded-xl border border-dashed border-slate-300 p-5 text-center text-xs text-slate-500">没有可用于冻结版本的已发布、质量通过题目。</p>}</div>}
+        <button type="button" disabled={creating || !bankMatchesCourse} onClick={() => void createAssignment()} className="mt-4 inline-flex items-center gap-1.5 rounded-lg bg-brand-blue-600 px-3 py-2 text-xs font-medium text-white disabled:opacity-50"><ClipboardCheck className="h-3.5 w-3.5" />{creating ? '正在冻结并布置…' : '创建版本并布置作业'}</button>
+      </section>
 
-      {wizardOpen && (
-        <AssignmentWizard
-          onClose={() => setWizardOpen(false)}
-          onCreated={(a) => {
-            setItems((prev) => [a, ...prev]);
-            setWizardOpen(false);
-            setTab(a.status);
-            toast.success(a.status === 'active' ? '已发布作业' : '已保存为未发布草稿');
-          }}
-        />
-      )}
-
-      {detail && (
-        <AssignmentDetailDrawer
-          assignment={detail}
-          onClose={() => setDetail(null)}
-        />
-      )}
+      {loading && <div className="mt-4 flex items-center gap-2 rounded-2xl border border-slate-200 bg-white p-5 text-sm text-slate-500"><Loader2 className="h-4 w-4 animate-spin" />正在读取真实作业状态…</div>}
+      {!loading && <div className="mt-4 grid gap-4 xl:grid-cols-[0.9fr_1.1fr]">
+        <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm"><div className="flex items-center justify-between"><div><h2 className="text-sm font-semibold text-slate-800">已布置作业</h2><p className="mt-1 text-xs text-slate-500">刷新后仍从 assessment/版本/布置关系读取。</p></div><span className="rounded-full bg-slate-100 px-2 py-1 text-xs text-slate-600">{assignments.length} 条</span></div><div className="mt-3 space-y-2">{assignments.map((assignment) => <button type="button" key={assignment.id} onClick={() => setSelectedAssignmentId(assignment.id)} className={`w-full rounded-xl border p-3 text-left text-xs ${selectedAssignmentId === assignment.id ? 'border-brand-blue-300 bg-brand-blue-50/40' : 'border-slate-200 hover:bg-slate-50'}`}><p className="font-medium text-slate-800">{assignment.title} · v{assignment.version_no}</p><p className="mt-1 text-slate-500">{assignment.logical_key} · 截止 {new Date(assignment.due_at).toLocaleString('zh-CN')}</p><p className="mt-1 text-slate-400">状态：{assignment.status} · {assignment.allow_late ? '允许迟交' : '不允许迟交'}</p></button>)}{assignments.length === 0 && <p className="rounded-xl border border-dashed border-slate-300 p-6 text-center text-xs text-slate-500">尚无持久化作业；不会展示 mock 作业卡片。</p>}</div></section>
+        <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm"><div><h2 className="text-sm font-semibold text-slate-800">提交、AI 建议与人工发布</h2><p className="mt-1 text-xs text-slate-500">AI 建议必须引用已成功的 AgentRun 与 Evidence Snapshot；教师覆盖理由是发布前置条件。</p></div><div className="mt-3 grid gap-2 md:grid-cols-2"><input value={agentRunId} onChange={(event) => setAgentRunId(event.target.value)} placeholder="成功 AgentRun UUID（AI 建议）" className="rounded-lg border border-slate-200 px-3 py-2 text-xs" /><input value={evidenceSnapshotId} onChange={(event) => setEvidenceSnapshotId(event.target.value)} placeholder="Evidence Snapshot UUID（AI 建议）" className="rounded-lg border border-slate-200 px-3 py-2 text-xs" /></div><div className="mt-3 space-y-3">{submissions.map((submission) => { const grade = submission.grade; const busy = workingSubmissionId === submission.id; return <article key={submission.id} className="rounded-xl border border-slate-200 p-3"><div className="flex flex-wrap justify-between gap-2"><div><p className="text-sm font-medium text-slate-800">{submission.student_display_name}</p><p className="mt-1 text-xs text-slate-500">提交状态：{submission.status} · {submission.submitted_at ? new Date(submission.submitted_at).toLocaleString('zh-CN') : '尚未提交'}</p></div><span className="rounded-full bg-slate-100 px-2 py-1 text-xs text-slate-700">{grade?.status ?? '尚未评分'}</span></div><p className="mt-2 text-xs text-slate-600">客观分：{grade?.objective_score ?? '—'} · AI 建议：{grade?.ai_suggested_score ?? '—'} · 最终分：{grade?.final_score ?? '—'}</p>{grade?.override_reason && <p className="mt-1 text-xs text-slate-500">人工理由：{grade.override_reason}</p>}<div className="mt-3 flex flex-wrap justify-end gap-2"><button type="button" disabled={busy || !['submitted', 'late'].includes(submission.status)} onClick={() => void scoreObjective(submission)} className="rounded-lg border border-slate-200 px-2.5 py-1 text-xs text-slate-700 disabled:opacity-50">客观题评分</button><button type="button" disabled={busy || !['submitted', 'late'].includes(submission.status)} onClick={() => void saveSuggestion(submission)} className="inline-flex items-center gap-1 rounded-lg border border-violet-200 px-2.5 py-1 text-xs text-violet-800 disabled:opacity-50"><Sparkles className="h-3.5 w-3.5" />录入 AI 建议</button><button type="button" disabled={busy || grade?.status === 'published'} onClick={() => void override(submission)} className="rounded-lg border border-brand-blue-200 px-2.5 py-1 text-xs text-brand-blue-800 disabled:opacity-50">人工覆盖</button>{grade?.status === 'teacher_reviewed' && <button type="button" disabled={busy} onClick={() => void publish(submission)} className="inline-flex items-center gap-1 rounded-lg border border-emerald-200 px-2.5 py-1 text-xs text-emerald-800"><CheckCircle2 className="h-3.5 w-3.5" />发布成绩</button>}{grade?.status === 'published' && <button type="button" disabled={busy} onClick={() => void withdraw(submission)} className="rounded-lg border border-rose-200 px-2.5 py-1 text-xs text-rose-800">撤回成绩</button>}</div></article>; })}{selectedAssignmentId && submissions.length === 0 && <p className="rounded-xl border border-dashed border-slate-300 p-6 text-center text-xs text-slate-500">当前作业尚无真实学生提交。</p>}{!selectedAssignmentId && <p className="rounded-xl border border-dashed border-slate-300 p-6 text-center text-xs text-slate-500">选择一条作业后读取提交与成绩状态。</p>}</div></section>
+      </div>}
     </TeacherShell>
-  );
-}
-
-function StatusPill({ status }: { status: MockAssignment['status'] }) {
-  const map: Record<MockAssignment['status'], { label: string; cls: string }> = {
-    draft: { label: '未发布', cls: 'bg-slate-100 text-slate-700' },
-    active: { label: '进行中', cls: 'bg-brand-blue-50 text-brand-blue-700' },
-    closed: { label: '已截止', cls: 'bg-emerald-50 text-emerald-700' },
-  };
-  const info = map[status];
-  return <span className={`rounded-full px-2 py-0.5 text-[11px] ${info.cls}`}>{info.label}</span>;
-}
-
-type WizardSource = 'bank' | 'generate' | 'manual';
-
-function AssignmentWizard({
-  onClose,
-  onCreated,
-}: {
-  onClose: () => void;
-  onCreated: (a: MockAssignment) => void;
-}) {
-  const [step, setStep] = useState(1);
-  const [source, setSource] = useState<WizardSource>('bank');
-  const [selectedQuiz, setSelectedQuiz] = useState<string[]>([]);
-  const [classId, setClassId] = useState<string>(MOCK_CLASSES[0].id);
-  const [title, setTitle] = useState('');
-  const [description, setDescription] = useState('');
-  const [dueAt, setDueAt] = useState('2026-06-25T16:00');
-  const [allowLate, setAllowLate] = useState(false);
-  const [autoGrade, setAutoGrade] = useState(true);
-
-  const approvedQuiz = MOCK_QUIZ_ITEMS.filter((q) => q.status === 'approved');
-
-  const toggleQuiz = (id: string) =>
-    setSelectedQuiz((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
-
-  const studentsInClass = MOCK_STUDENTS.filter((s) => s.classId === classId);
-  const totalScore = selectedQuiz.length * 10;
-  const canProceed = useMemo(() => {
-    if (step === 1) return selectedQuiz.length > 0 || source === 'manual';
-    if (step === 2) return !!classId;
-    if (step === 3) return title.trim().length > 0;
-    return true;
-  }, [step, selectedQuiz, classId, title, source]);
-
-  const submit = (publish: boolean) => {
-    const cls = MOCK_CLASSES.find((c) => c.id === classId);
-    const newAssignment: MockAssignment = {
-      id: `as-${Date.now()}`,
-      title: title.trim() || '未命名作业',
-      status: publish ? 'active' : 'draft',
-      courseId: courseCatalog[0]?.id ?? 'web-security-foundation',
-      classId,
-      dueAt: new Date(dueAt).toISOString(),
-      publishedAt: publish ? new Date().toISOString() : undefined,
-      description: description.trim() || '由智能体辅助生成的作业。',
-      quizIds: selectedQuiz.length > 0 ? selectedQuiz : ['placeholder'],
-      totalScore: Math.max(totalScore, 100),
-      studentCount: cls?.studentCount ?? 30,
-      submittedCount: 0,
-      gradedCount: 0,
-      averageScore: 0,
-    };
-    onCreated(newAssignment);
-  };
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50" onClick={onClose}>
-      <div
-        className="w-full max-w-3xl rounded-2xl bg-white p-5 shadow-2xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <header className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <ClipboardCheck className="h-4 w-4 text-rose-600" />
-            <h2 className="text-sm font-semibold text-slate-800">新建作业</h2>
-            <span className="text-[11px] text-slate-400">Step {step} / 4</span>
-          </div>
-          <button type="button" onClick={onClose} className="text-slate-400 hover:text-slate-600">
-            <X className="h-4 w-4" />
-          </button>
-        </header>
-
-        <div className="mt-4">
-          {step === 1 && (
-            <div className="space-y-3">
-              <div className="grid grid-cols-3 gap-2 text-xs">
-                {([
-                  { value: 'bank', label: '从题库选', desc: '复用已批准题目' },
-                  { value: 'generate', label: '智能体即时生成', desc: '调 competition_advisor' },
-                  { value: 'manual', label: '手动新建', desc: '自由编写题面' },
-                ] as { value: WizardSource; label: string; desc: string }[]).map((s) => (
-                  <button
-                    key={s.value}
-                    type="button"
-                    onClick={() => setSource(s.value)}
-                    className={`rounded-xl border p-3 text-left ${
-                      source === s.value
-                        ? 'border-rose-500 bg-rose-50/60'
-                        : 'border-slate-200 hover:border-slate-300'
-                    }`}
-                  >
-                    <p className="text-sm font-medium text-slate-800">{s.label}</p>
-                    <p className="text-[11px] text-slate-500">{s.desc}</p>
-                  </button>
-                ))}
-              </div>
-
-              {source === 'bank' && (
-                <ul className="max-h-72 space-y-1.5 overflow-y-auto rounded-xl border border-slate-200 bg-slate-50 p-2">
-                  {approvedQuiz.length === 0 ? (
-                    <li className="rounded-lg bg-white p-3 text-xs text-slate-500">
-                      题库暂无"已批准"题目；可先在 /teacher/quiz-bank 生成并批准。
-                    </li>
-                  ) : (
-                    approvedQuiz.map((q) => {
-                      const active = selectedQuiz.includes(q.id);
-                      return (
-                        <li
-                          key={q.id}
-                          className={`rounded-lg border bg-white p-2 text-xs ${active ? 'border-rose-300 bg-rose-50/60' : 'border-slate-100'}`}
-                        >
-                          <label className="flex items-start gap-2">
-                            <input
-                              type="checkbox"
-                              checked={active}
-                              onChange={() => toggleQuiz(q.id)}
-                              className="mt-0.5 h-3.5 w-3.5"
-                            />
-                            <div className="flex-1">
-                              <p className="text-slate-800">{q.question}</p>
-                              <p className="mt-0.5 text-[11px] text-slate-400">
-                                {q.knowledgePoint} · 质量 {(q.qualityScore * 100).toFixed(0)}
-                              </p>
-                            </div>
-                          </label>
-                        </li>
-                      );
-                    })
-                  )}
-                </ul>
-              )}
-              {source === 'generate' && (
-                <div className="rounded-xl border border-violet-200 bg-violet-50/40 p-3 text-xs text-violet-800">
-                  <p className="font-medium">需要先到 /teacher/quiz-bank 触发生成器吗？</p>
-                  <p className="mt-1">
-                    保持当前流程：完成 4 步向导后将以"题库占位"创建作业，可在题库批准后回填。
-                  </p>
-                </div>
-              )}
-              {source === 'manual' && (
-                <p className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs text-slate-500">
-                  手动新建模式将在作业详情页提供题面编辑器（mock）。
-                </p>
-              )}
-
-              <p className="text-[11px] text-slate-400">已选 {selectedQuiz.length} 题 · 预计总分 {totalScore}</p>
-            </div>
-          )}
-
-          {step === 2 && (
-            <div className="space-y-3">
-              <p className="text-xs text-slate-500">选择班级（mock 提供 3 个）。</p>
-              <div className="grid grid-cols-3 gap-2">
-                {MOCK_CLASSES.map((c) => (
-                  <button
-                    key={c.id}
-                    type="button"
-                    onClick={() => setClassId(c.id)}
-                    className={`rounded-xl border p-3 text-left text-xs ${
-                      classId === c.id
-                        ? 'border-rose-500 bg-rose-50/60'
-                        : 'border-slate-200 hover:border-slate-300'
-                    }`}
-                  >
-                    <p className="text-sm font-medium text-slate-800">{c.name}</p>
-                    <p className="text-[11px] text-slate-500">{c.studentCount} 名学生</p>
-                  </button>
-                ))}
-              </div>
-              <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">
-                <p className="flex items-center gap-1">
-                  <Users className="h-3 w-3" /> 选中：{studentsInClass.length} 名学生
-                </p>
-                <div className="mt-2 flex flex-wrap gap-1.5">
-                  {studentsInClass.slice(0, 16).map((s) => (
-                    <span key={s.id} className="rounded-full bg-white px-2 py-0.5 text-[11px]">
-                      {s.avatar} {s.name}
-                    </span>
-                  ))}
-                  {studentsInClass.length > 16 && (
-                    <span className="rounded-full bg-white px-2 py-0.5 text-[11px] text-slate-400">
-                      +{studentsInClass.length - 16}
-                    </span>
-                  )}
-                </div>
-              </div>
-            </div>
-          )}
-
-          {step === 3 && (
-            <div className="space-y-3 text-xs">
-              <label className="block">
-                <span className="text-slate-500">作业标题</span>
-                <input
-                  value={title}
-                  onChange={(e) => setTitle(e.target.value)}
-                  className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2"
-                  placeholder="例如：第 4 周 · OWASP Top 10 综合训练"
-                />
-              </label>
-              <label className="block">
-                <span className="text-slate-500">描述（markdown）</span>
-                <textarea
-                  value={description}
-                  onChange={(e) => setDescription(e.target.value)}
-                  rows={4}
-                  className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2"
-                  placeholder="本作业涵盖 Web 攻击面 + 漏洞复盘 …"
-                />
-              </label>
-              <div className="grid gap-2 sm:grid-cols-3">
-                <label className="block">
-                  <span className="text-slate-500">截止时间</span>
-                  <input
-                    type="datetime-local"
-                    value={dueAt}
-                    onChange={(e) => setDueAt(e.target.value)}
-                    className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2"
-                  />
-                </label>
-                <label className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2">
-                  <input
-                    type="checkbox"
-                    checked={allowLate}
-                    onChange={(e) => setAllowLate(e.target.checked)}
-                  />
-                  <span>允许迟交</span>
-                </label>
-                <label className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2">
-                  <input
-                    type="checkbox"
-                    checked={autoGrade}
-                    onChange={(e) => setAutoGrade(e.target.checked)}
-                  />
-                  <span>启用自动批改（AI）</span>
-                </label>
-              </div>
-            </div>
-          )}
-
-          {step === 4 && (
-            <div className="space-y-3 text-xs">
-              <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-                <p className="font-medium text-slate-800">{title || '未命名作业'}</p>
-                <p className="mt-1 text-slate-500">{description || '尚未填写描述'}</p>
-                <p className="mt-2 text-slate-500">
-                  班级：{MOCK_CLASSES.find((c) => c.id === classId)?.name} · 学生 {studentsInClass.length} 人
-                </p>
-                <p className="text-slate-500">截止：{new Date(dueAt).toLocaleString('zh-CN')}</p>
-                <p className="text-slate-500">题量：{selectedQuiz.length} · 自动批改：{autoGrade ? '开启' : '关闭'}</p>
-              </div>
-              <div className="rounded-xl border border-amber-200 bg-amber-50/60 p-3 text-amber-800">
-                <Wand2 className="mr-1 inline-block h-3 w-3" />
-                发布后将进入"进行中" tab，自动通知所选学生（mock 不发真实通知）。
-              </div>
-            </div>
-          )}
-        </div>
-
-        <footer className="mt-4 flex items-center justify-between">
-          <button
-            type="button"
-            onClick={() => setStep((s) => Math.max(1, s - 1))}
-            disabled={step === 1}
-            className="inline-flex items-center gap-1 rounded-full border border-slate-200 px-3 py-1.5 text-xs text-slate-700 disabled:opacity-40"
-          >
-            <ArrowLeft className="h-3 w-3" /> 上一步
-          </button>
-          <div className="flex items-center gap-2">
-            {step < 4 && (
-              <button
-                type="button"
-                onClick={() => setStep((s) => s + 1)}
-                disabled={!canProceed}
-                className="inline-flex items-center gap-1 rounded-full bg-rose-600 px-4 py-1.5 text-xs font-medium text-white hover:bg-rose-700 disabled:opacity-40"
-              >
-                下一步 <ArrowRight className="h-3 w-3" />
-              </button>
-            )}
-            {step === 4 && (
-              <>
-                <button
-                  type="button"
-                  onClick={() => submit(false)}
-                  className="rounded-full border border-slate-200 px-3 py-1.5 text-xs text-slate-700 hover:bg-slate-50"
-                >
-                  保存为草稿
-                </button>
-                <button
-                  type="button"
-                  onClick={() => submit(true)}
-                  className="inline-flex items-center gap-1 rounded-full bg-rose-600 px-4 py-1.5 text-xs font-medium text-white hover:bg-rose-700"
-                >
-                  <Check className="h-3 w-3" />
-                  发布
-                </button>
-              </>
-            )}
-          </div>
-        </footer>
-      </div>
-    </div>
-  );
-}
-
-function AssignmentDetailDrawer({
-  assignment,
-  onClose,
-}: {
-  assignment: MockAssignment;
-  onClose: () => void;
-}) {
-  const students = MOCK_STUDENTS.filter((s) => s.classId === assignment.classId).slice(0, 8);
-  const completionRate = assignment.studentCount
-    ? Math.round((assignment.submittedCount / assignment.studentCount) * 100)
-    : 0;
-  return (
-    <div className="fixed inset-0 z-40 bg-slate-900/30" onClick={onClose}>
-      <aside
-        className="absolute right-0 top-0 flex h-full w-full max-w-md flex-col gap-4 bg-white p-5 shadow-2xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <header className="flex items-center justify-between">
-          <div>
-            <p className="text-sm font-semibold text-slate-800">{assignment.title}</p>
-            <p className="text-[11px] text-slate-400">
-              {MOCK_CLASSES.find((c) => c.id === assignment.classId)?.name} · 截止 {new Date(assignment.dueAt).toLocaleString('zh-CN')}
-            </p>
-          </div>
-          <button type="button" onClick={onClose} className="text-slate-400 hover:text-slate-600">
-            <X className="h-4 w-4" />
-          </button>
-        </header>
-        <section className="grid grid-cols-4 gap-2 text-center text-xs">
-          <div className="rounded-lg bg-slate-50 p-2">
-            <p className="text-[11px] text-slate-400">完成率</p>
-            <p className="mt-1 text-lg font-semibold">{completionRate}%</p>
-          </div>
-          <div className="rounded-lg bg-slate-50 p-2">
-            <p className="text-[11px] text-slate-400">平均分</p>
-            <p className="mt-1 text-lg font-semibold">{assignment.averageScore.toFixed(1)}</p>
-          </div>
-          <div className="rounded-lg bg-slate-50 p-2">
-            <p className="text-[11px] text-slate-400">未提交</p>
-            <p className="mt-1 text-lg font-semibold">{assignment.studentCount - assignment.submittedCount}</p>
-          </div>
-          <div className="rounded-lg bg-slate-50 p-2">
-            <p className="text-[11px] text-slate-400">AI 已批改</p>
-            <p className="mt-1 text-lg font-semibold">{assignment.gradedCount}</p>
-          </div>
-        </section>
-        <section>
-          <h3 className="mb-2 text-xs font-semibold text-slate-700">学生提交（演示数据）</h3>
-          <ul className="space-y-1.5 text-xs">
-            {students.map((s, idx) => {
-              const submitted = idx < assignment.submittedCount;
-              const graded = idx < assignment.gradedCount;
-              return (
-                <li
-                  key={s.id}
-                  className="flex items-center justify-between rounded-lg border border-slate-100 bg-white px-3 py-2"
-                >
-                  <span className="flex items-center gap-2">
-                    <span>{s.avatar}</span>
-                    <span className="text-slate-800">{s.name}</span>
-                  </span>
-                  {graded ? (
-                    <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] text-emerald-700">
-                      已批改 · {(70 + ((idx * 13) % 30)).toFixed(0)} 分
-                    </span>
-                  ) : submitted ? (
-                    <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] text-amber-700">
-                      已提交 · 待批改
-                    </span>
-                  ) : (
-                    <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-500">未提交</span>
-                  )}
-                </li>
-              );
-            })}
-          </ul>
-        </section>
-        <section>
-          <h3 className="mb-2 text-xs font-semibold text-slate-700">自动批改建议（mock）</h3>
-          <ul className="space-y-1.5 text-xs text-slate-600">
-            <li className="rounded-lg bg-emerald-50 px-2 py-1.5">
-              <Check className="mr-1 inline-block h-3 w-3 text-emerald-600" />
-              17 份已批改提交可直接采纳 AI 建议分数
-            </li>
-            <li className="rounded-lg bg-amber-50 px-2 py-1.5">
-              ⚠️ 3 份代码题答案接近 0 分，建议教师人工复核
-            </li>
-            <li className="rounded-lg bg-slate-50 px-2 py-1.5 text-slate-500">
-              <Trash2 className="mr-1 inline-block h-3 w-3" />
-              提示：草稿状态可使用"删除"按钮（mock 未启用）
-            </li>
-          </ul>
-        </section>
-      </aside>
-    </div>
   );
 }

@@ -8,6 +8,7 @@
 
 | Route | 作用 | 状态/证据规则 |
 | --- | --- | --- |
+| `GET /api/v1/teacher/production/courses/{course_id}/syllabus/versions` | 读取当前课程完整 typed 版本链 | 刷新后返回同一 `course_syllabuses` lineage；不把普通文档投影成大纲。 |
 | `POST /api/v1/teacher/production/courses/{course_id}/syllabus/versions` | 人工创建或编辑 typed 版本 | 内容须符合 `TypedSyllabusContent`（目标、模块、知识点、活动、评估、资源）；知识点必须属于该课程。 |
 | `POST /api/v1/teacher/production/courses/{course_id}/syllabus/generate` | 由既有生成结果建立 typed 版本 | 只接收成功 Runtime AgentRun 和其 Evidence Snapshot；缺证据返回 `SYLLABUS_EVIDENCE_INSUFFICIENT`。该路由不直接调用 Provider。 |
 | `POST /api/v1/teacher/production/syllabus/versions/{version_id}/review` | 审核、发布、驳回或撤回 | 发布才可成为课程当前可见版本；审核决定和理由持久化。 |
