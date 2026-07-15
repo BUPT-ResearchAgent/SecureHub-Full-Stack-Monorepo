@@ -10,16 +10,19 @@ Seeds:
 - 1 placeholder ``documents`` row per knowledge point + 4 ``chunks`` per
   document = 68 chunks total. Embeddings stay ``NULL`` with
   ``embedding_status='pending'`` for the embedding pipeline to fill in.
-- 5 SQL injection ``quiz_items`` bound to the SQL injection knowledge node.
+- 21 curated ``quiz_items`` covering all 17 frozen knowledge points, each
+  bound to one existing evidence chunk and validated deterministically.
 """
 
 import asyncio
 from datetime import datetime, timezone
 from hashlib import sha256
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models.learning.quiz_item import QuizItem
+from app.db.models.learning.quiz_quality import QuizItemEvidence
 from app.db.models.knowledge.chunk import Chunk
 from app.db.seeds._constants import (
     COURSE_WEBSEC_CODE,
@@ -43,6 +46,7 @@ from app.repositories.knowledge.document_assets import DocumentAssetRepository
 from app.repositories.knowledge.documents import DocumentRepository
 from app.repositories.knowledge.knowledge_graph import KnowledgeGraphRepository
 from app.repositories.storage.storage_objects import StorageObjectRepository
+from app.services.learning.quiz_quality_service import QuizQualityService
 
 CHUNKS_PER_DOC = 4
 DOMAIN = "course_websec"
@@ -198,9 +202,11 @@ TOPIC_HINTS: dict[str, list[str]] = {
     ],
 }
 
-SQL_INJECTION_QUIZ_ITEMS: list[dict[str, object]] = [
+WEBSEC_QUIZ_ITEMS: list[dict[str, object]] = [
     {
         "id": stable_id("quiz:websec:sql-injection:definition"),
+        "canonical_key": "websec:v1:sql-injection:definition",
+        "kp_slug": "sql-injection",
         "type": "single_choice",
         "question": "SQL 注入的核心成因是什么？",
         "options": [
@@ -210,10 +216,13 @@ SQL_INJECTION_QUIZ_ITEMS: list[dict[str, object]] = [
             "浏览器执行了用户提交的 JavaScript",
         ],
         "answer": "把未受信任输入拼接进 SQL 语句，导致查询结构可被改变",
+        "explanation": "SQL 注入的关键在于不可信输入改变了 SQL 的语法结构；参数化查询能把数据与语句结构分离。",
         "difficulty": 2,
     },
     {
         "id": stable_id("quiz:websec:sql-injection:parameterized-query"),
+        "canonical_key": "websec:v1:sql-injection:parameterized-query",
+        "kp_slug": "sql-injection",
         "type": "single_choice",
         "question": "下列哪项是防御 SQL 注入最稳定的主要方式？",
         "options": [
@@ -223,10 +232,13 @@ SQL_INJECTION_QUIZ_ITEMS: list[dict[str, object]] = [
             "把所有请求都改成 POST",
         ],
         "answer": "参数化查询 / 预编译语句",
+        "explanation": "参数化查询让数据库将变量视作数据，而不是可拼接进查询结构的语法。",
         "difficulty": 2,
     },
     {
         "id": stable_id("quiz:websec:sql-injection:impact"),
+        "canonical_key": "websec:v1:sql-injection:impact",
+        "kp_slug": "sql-injection",
         "type": "multi_choice",
         "question": "SQL 注入可能造成哪些影响？",
         "options": [
@@ -236,10 +248,13 @@ SQL_INJECTION_QUIZ_ITEMS: list[dict[str, object]] = [
             "自动阻止所有 XSS",
         ],
         "answer": "绕过认证;读取敏感数据;修改数据库记录",
+        "explanation": "SQL 注入可能影响鉴权、数据保密性和完整性；它不会天然阻止 XSS。",
         "difficulty": 3,
     },
     {
         "id": stable_id("quiz:websec:sql-injection:xss-difference"),
+        "canonical_key": "websec:v1:sql-injection:xss-difference",
+        "kp_slug": "sql-injection",
         "type": "single_choice",
         "question": "SQL 注入与 XSS 的主要区别是什么？",
         "options": [
@@ -249,15 +264,195 @@ SQL_INJECTION_QUIZ_ITEMS: list[dict[str, object]] = [
             "两者没有区别，只是名称不同",
         ],
         "answer": "SQL 注入主要影响后端数据库查询，XSS 主要影响浏览器端脚本执行上下文",
+        "explanation": "两类漏洞都源于不可信输入处理不当，但受影响的解释器和安全边界不同。",
         "difficulty": 3,
     },
     {
         "id": stable_id("quiz:websec:sql-injection:least-privilege"),
+        "canonical_key": "websec:v1:sql-injection:least-privilege",
+        "kp_slug": "sql-injection",
         "type": "short_answer",
         "question": "为什么最小权限数据库账号能降低 SQL 注入的影响范围？",
         "options": None,
         "answer": "即使查询被注入，应用账号也只能执行必要的读写操作，不能随意改表、删库或访问无关敏感数据。",
+        "explanation": "最小权限不能消除注入根因，但可以降低被利用时可访问数据和可执行操作的范围。",
         "difficulty": 4,
+    },
+    {
+        "id": stable_id("quiz:websec:http-basics:https-boundary"),
+        "canonical_key": "websec:v1:http-basics:https-boundary",
+        "kp_slug": "http-basics",
+        "type": "single_choice",
+        "question": "HTTPS 相比 HTTP 为传输中的请求主要增加了什么安全能力？",
+        "options": ["TLS 提供的机密性、完整性和服务端身份校验", "自动消除所有业务逻辑漏洞", "让浏览器不再保存 Cookie", "禁止服务器记录日志"],
+        "answer": "TLS 提供的机密性、完整性和服务端身份校验",
+        "explanation": "HTTPS 保护传输通道，但输入校验、授权和业务逻辑仍需要应用层正确实现。",
+        "difficulty": 1,
+    },
+    {
+        "id": stable_id("quiz:websec:same-origin:cors-boundary"),
+        "canonical_key": "websec:v1:same-origin:cors-boundary",
+        "kp_slug": "same-origin",
+        "type": "multi_choice",
+        "question": "同源策略与 CORS 的正确关系包括哪些？",
+        "options": ["同源策略默认限制页面脚本读取其他源的响应", "CORS 是由服务端响应头声明的跨源读取授权机制", "CORS 可以替代服务端的身份鉴别", "跨源请求是否可读取响应应由浏览器按策略判断"],
+        "answer": "同源策略默认限制页面脚本读取其他源的响应;CORS 是由服务端响应头声明的跨源读取授权机制;跨源请求是否可读取响应应由浏览器按策略判断",
+        "explanation": "CORS 解决浏览器跨源读取的授权问题，不能替代服务端对用户和资源的授权校验。",
+        "difficulty": 2,
+    },
+    {
+        "id": stable_id("quiz:websec:cookie-session:httponly"),
+        "canonical_key": "websec:v1:cookie-session:httponly",
+        "kp_slug": "cookie-session",
+        "type": "single_choice",
+        "question": "为会话 Cookie 设置 HttpOnly 属性的主要目的是什么？",
+        "options": ["减少页面脚本直接读取 Cookie 的机会", "让 Cookie 只在内网发送", "自动验证用户密码", "让 Cookie 永不过期"],
+        "answer": "减少页面脚本直接读取 Cookie 的机会",
+        "explanation": "HttpOnly 可降低部分 XSS 读取 Cookie 的风险；还需要配合 Secure、SameSite、会话轮换和服务端校验。",
+        "difficulty": 2,
+    },
+    {
+        "id": stable_id("quiz:websec:sql-injection-blind:time-based"),
+        "canonical_key": "websec:v1:sql-injection-blind:time-based",
+        "kp_slug": "sql-injection-blind",
+        "type": "short_answer",
+        "question": "在不直接回显查询结果时，时间型盲注通常利用什么可观察信号判断条件？",
+        "options": None,
+        "answer": "利用条件成立与否导致的可控响应延迟差异来判断。",
+        "explanation": "时间型盲注依赖响应时间差异这一侧信道；防御仍以参数化查询和最小权限为核心。",
+        "difficulty": 4,
+    },
+    {
+        "id": stable_id("quiz:websec:xss-reflected:output-encoding"),
+        "canonical_key": "websec:v1:xss-reflected:output-encoding",
+        "kp_slug": "xss-reflected",
+        "type": "single_choice",
+        "question": "防御反射型 XSS 时，最应依据什么选择输出编码方式？",
+        "options": ["数据最终进入的 HTML、属性、URL 或 JavaScript 上下文", "用户使用的浏览器品牌", "请求是否使用 POST", "页面字体大小"],
+        "answer": "数据最终进入的 HTML、属性、URL 或 JavaScript 上下文",
+        "explanation": "输出编码必须匹配具体上下文；单一通用替换不能覆盖所有解释器边界。",
+        "difficulty": 3,
+    },
+    {
+        "id": stable_id("quiz:websec:xss-stored:persistence"),
+        "canonical_key": "websec:v1:xss-stored:persistence",
+        "kp_slug": "xss-stored",
+        "type": "multi_choice",
+        "question": "存储型 XSS 的风险特征包括哪些？",
+        "options": ["恶意内容可能被保存后展示给其他访问者", "输出位置若缺少上下文编码会放大影响", "只要使用 HTTPS 就不会发生", "内容审核与安全渲染可作为附加防线"],
+        "answer": "恶意内容可能被保存后展示给其他访问者;输出位置若缺少上下文编码会放大影响;内容审核与安全渲染可作为附加防线",
+        "explanation": "存储型 XSS 会跨越时间和用户传播；HTTPS 不会改变浏览器如何解释页面内容。",
+        "difficulty": 3,
+    },
+    {
+        "id": stable_id("quiz:websec:xss-dom:sink"),
+        "canonical_key": "websec:v1:xss-dom:sink",
+        "kp_slug": "xss-dom",
+        "type": "short_answer",
+        "question": "DOM-based XSS 审计时，为什么要同时追踪不可信 source 和危险 sink？",
+        "options": None,
+        "answer": "因为只有不可信数据流入会被解释执行或解析的危险 sink 时，才构成可利用的 DOM XSS 路径。",
+        "explanation": "审计需要建立 source 到 sink 的数据流，而不是只凭某个 API 名称判断漏洞。",
+        "difficulty": 4,
+    },
+    {
+        "id": stable_id("quiz:websec:csrf:token-defense"),
+        "canonical_key": "websec:v1:csrf:token-defense",
+        "kp_slug": "csrf",
+        "type": "single_choice",
+        "question": "CSRF Token 防御的核心校验是什么？",
+        "options": ["服务端验证请求携带的不可预测令牌与当前会话关联", "客户端把令牌写进页面标题", "只允许 GET 请求修改数据", "关闭全部 Cookie"],
+        "answer": "服务端验证请求携带的不可预测令牌与当前会话关联",
+        "explanation": "Token 应由服务端生成和校验，并可与 SameSite Cookie、Origin/Referer 检查等机制配合。",
+        "difficulty": 3,
+    },
+    {
+        "id": stable_id("quiz:websec:file-upload:validation"),
+        "canonical_key": "websec:v1:file-upload:validation",
+        "kp_slug": "file-upload",
+        "type": "multi_choice",
+        "question": "安全处理文件上传时应采取哪些措施？",
+        "options": ["在服务端按允许列表校验类型和大小", "将上传文件存放在不可直接执行的隔离位置", "仅依赖浏览器提供的 Content-Type", "为文件生成服务端名称并限制访问路径"],
+        "answer": "在服务端按允许列表校验类型和大小;将上传文件存放在不可直接执行的隔离位置;为文件生成服务端名称并限制访问路径",
+        "explanation": "客户端元数据不可信；校验、隔离存储和受控访问应共同实施。",
+        "difficulty": 3,
+    },
+    {
+        "id": stable_id("quiz:websec:ssrf:allowlist"),
+        "canonical_key": "websec:v1:ssrf:allowlist",
+        "kp_slug": "ssrf",
+        "type": "single_choice",
+        "question": "防御 SSRF 的较稳妥设计是什么？",
+        "options": ["按业务用途维护可访问目标的允许列表并限制网络出口", "允许服务端访问用户提交的任何 URL", "只过滤 URL 中的一个关键字", "把请求超时时间设为无限"],
+        "answer": "按业务用途维护可访问目标的允许列表并限制网络出口",
+        "explanation": "SSRF 防御需要 URL 解析、目标允许列表、DNS/IP 校验和网络分段等多层控制。",
+        "difficulty": 4,
+    },
+    {
+        "id": stable_id("quiz:websec:deserialization:boundary"),
+        "canonical_key": "websec:v1:deserialization:boundary",
+        "kp_slug": "deserialization",
+        "type": "short_answer",
+        "question": "为何不应反序列化来自不可信边界的对象数据？",
+        "options": None,
+        "answer": "不可信对象数据可能触发意外类型构造、危险方法调用或状态篡改，应改用受限数据格式和严格模式校验。",
+        "explanation": "反序列化边界应只接收最小必要数据，并采用白名单类型或安全的数据交换格式。",
+        "difficulty": 4,
+    },
+    {
+        "id": stable_id("quiz:websec:rce:execution-boundary"),
+        "canonical_key": "websec:v1:rce:execution-boundary",
+        "kp_slug": "rce",
+        "type": "single_choice",
+        "question": "降低命令执行风险的首选工程原则是什么？",
+        "options": ["避免把不可信输入拼接进命令解释器，并优先使用无 shell 的受限接口", "把命令字符串写得更长", "只在前端隐藏执行按钮", "把错误信息返回给所有用户"],
+        "answer": "避免把不可信输入拼接进命令解释器，并优先使用无 shell 的受限接口",
+        "explanation": "应尽可能避免调用命令解释器；必要时使用参数化 API、允许列表和低权限隔离。",
+        "difficulty": 4,
+    },
+    {
+        "id": stable_id("quiz:websec:auth-bypass:server-authorization"),
+        "canonical_key": "websec:v1:auth-bypass:server-authorization",
+        "kp_slug": "auth-bypass",
+        "type": "multi_choice",
+        "question": "防止认证绕过与越权时，服务端应坚持哪些原则？",
+        "options": ["每个受保护操作在服务端执行身份与对象级授权检查", "仅依赖前端隐藏菜单", "将资源所属关系与当前用户绑定校验", "对拒绝访问记录可审计原因"],
+        "answer": "每个受保护操作在服务端执行身份与对象级授权检查;将资源所属关系与当前用户绑定校验;对拒绝访问记录可审计原因",
+        "explanation": "浏览器 URL、按钮和前端 role 都不构成授权证据；授权必须在服务端针对目标对象执行。",
+        "difficulty": 3,
+    },
+    {
+        "id": stable_id("quiz:websec:waf-bypass:defense-in-depth"),
+        "canonical_key": "websec:v1:waf-bypass:defense-in-depth",
+        "kp_slug": "waf-bypass",
+        "type": "short_answer",
+        "question": "为什么 WAF 不能替代应用自身的输入校验和安全编码？",
+        "options": None,
+        "answer": "WAF 只能提供外层检测和缓解，无法理解所有业务语义，应用仍必须在信任边界实施输入校验、参数化和授权控制。",
+        "explanation": "WAF 应作为纵深防御的一层，而不是将根因修复外包给规则匹配。",
+        "difficulty": 4,
+    },
+    {
+        "id": stable_id("quiz:websec:secure-coding:repair-loop"),
+        "canonical_key": "websec:v1:secure-coding:repair-loop",
+        "kp_slug": "secure-coding",
+        "type": "single_choice",
+        "question": "安全缺陷修复闭环至少应包含什么？",
+        "options": ["定位根因、实施修复、补充回归测试并复核剩余风险", "只修改页面文案", "只把问题加入待办列表", "删除异常日志"],
+        "answer": "定位根因、实施修复、补充回归测试并复核剩余风险",
+        "explanation": "可验证的修复需要覆盖根因、测试证据和残余风险，而不是仅关闭一个表面现象。",
+        "difficulty": 2,
+    },
+    {
+        "id": stable_id("quiz:websec:owasp-top10:governance"),
+        "canonical_key": "websec:v1:owasp-top10:governance",
+        "kp_slug": "owasp-top10",
+        "type": "multi_choice",
+        "question": "使用 OWASP Top 10 进行课程复盘时，哪些做法正确？",
+        "options": ["把它作为风险分类和学习检查清单", "结合本系统资产、数据流和威胁模型确定优先级", "将其视为覆盖所有安全问题的唯一标准", "把具体修复措施回链到证据和测试"],
+        "answer": "把它作为风险分类和学习检查清单;结合本系统资产、数据流和威胁模型确定优先级;把具体修复措施回链到证据和测试",
+        "explanation": "OWASP Top 10 是沟通和学习框架，实际治理还需要结合系统上下文与可验证的修复证据。",
+        "difficulty": 2,
     },
 ]
 
@@ -538,33 +733,75 @@ async def _seed(session: AsyncSession) -> dict[str, int]:
         await chunks.bulk_create(chunk_rows)
         chunk_count += len(chunk_rows)
 
-    # ---- SQL injection quiz items ----
-    sql_node_pk = seed_node_ids["sql-injection"]
-    for item in SQL_INJECTION_QUIZ_ITEMS:
+    # ---- Curated WebSec quiz bank + durable evidence bindings ----
+    # ``curated`` here means deliberately selected course content.  It is not
+    # a claim that a Codex quality run performed human approval; automated
+    # reports retain ``reviewed_by = NULL`` and the source remains ``seeded``.
+    for item in WEBSEC_QUIZ_ITEMS:
         quiz_id = item["id"]
+        kp_slug = str(item["kp_slug"])
+        kp_id = seed_node_ids[kp_slug]
         existing_quiz = await session.get(QuizItem, quiz_id)
         if existing_quiz is None:
             session.add(
                 QuizItem(
                     id=quiz_id,
-                    kp_id=sql_node_pk,
+                    kp_id=kp_id,
+                    canonical_key=str(item["canonical_key"]),
+                    content_version=1,
                     type=str(item["type"]),
                     question=str(item["question"]),
                     options=item["options"],
                     answer=str(item["answer"]),
+                    explanation=str(item["explanation"]),
                     difficulty=int(item["difficulty"]),
+                    review_status="curated",
+                    source_status="seeded",
                     generated_by_skill=None,
                 )
             )
             quiz_count += 1
         else:
-            existing_quiz.kp_id = sql_node_pk
+            existing_quiz.kp_id = kp_id
+            existing_quiz.canonical_key = str(item["canonical_key"])
+            existing_quiz.content_version = 1
             existing_quiz.type = str(item["type"])
             existing_quiz.question = str(item["question"])
             existing_quiz.options = item["options"]
             existing_quiz.answer = str(item["answer"])
+            existing_quiz.explanation = str(item["explanation"])
             existing_quiz.difficulty = int(item["difficulty"])
+            existing_quiz.review_status = "curated"
+            existing_quiz.source_status = "seeded"
             await session.flush()
+
+        evidence_chunk_id = chunk_id(kp_slug, 1)
+        existing_evidence = await session.scalar(
+            select(QuizItemEvidence).where(
+                QuizItemEvidence.quiz_item_id == quiz_id,
+                QuizItemEvidence.chunk_id == evidence_chunk_id,
+            )
+        )
+        if existing_evidence is None:
+            session.add(
+                QuizItemEvidence(
+                    id=stable_id(f"quiz-evidence:websec:{item['canonical_key']}:{evidence_chunk_id}"),
+                    quiz_item_id=quiz_id,
+                    chunk_id=evidence_chunk_id,
+                    citation_label=f"{kp_slug} 课程证据切片 1",
+                )
+            )
+
+    await session.flush()
+    quality_run = await QuizQualityService(session).validate_course(course_id=course_pk)
+    if quality_run.result != "passed":
+        raise RuntimeError(
+            "WEBSEC-101 curated quiz seed did not pass deterministic quality validation: "
+            + ", ".join(
+                f"{sample.canonical_key}:{'/'.join(sample.failure_codes)}"
+                for sample in quality_run.failure_samples
+            )
+        )
 
     return {
         "courses": course_count,

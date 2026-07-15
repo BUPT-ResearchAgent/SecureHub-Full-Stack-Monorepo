@@ -5,8 +5,10 @@
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel
 
-from app.deps import RequiredCurrentUserDep
+from app.deps import RequiredCurrentUserDep, SessionDep
 from app.schemas.auth import AppRole
+from app.schemas.quiz_quality import QuizBankListDTO, QuizQualityRunDTO
+from app.services.learning.quiz_quality_service import QuizQualityError, QuizQualityService
 
 router = APIRouter(prefix="/teacher")
 
@@ -39,6 +41,45 @@ async def teacher_context(user: RequiredCurrentUserDep) -> TeacherDemoContext:
         allowed_modules=list(allowed_modules),
         is_demo_account=user.email.endswith("@securehub.local"),
     )
+
+
+def _raise_quiz_quality_error(exc: QuizQualityError) -> None:
+    raise HTTPException(
+        status_code=exc.status_code,
+        detail={"code": exc.code, "message": exc.message},
+    ) from exc
+
+
+@router.get("/quiz-bank/websec", response_model=QuizBankListDTO)
+async def get_websec_quiz_bank(
+    user: RequiredCurrentUserDep,
+    session: SessionDep,
+) -> QuizBankListDTO:
+    """Return the durable, teacher-scoped WEBSEC-101 bank and quality state."""
+
+    try:
+        return await QuizQualityService(session).list_teacher_bank(actor=user)
+    except QuizQualityError as exc:
+        _raise_quiz_quality_error(exc)
+
+
+@router.post("/quiz-bank/websec/validate", response_model=QuizQualityRunDTO)
+async def validate_websec_quiz_bank(
+    user: RequiredCurrentUserDep,
+    session: SessionDep,
+) -> QuizQualityRunDTO:
+    """Persist a reproducible rule-based quality report; not a human approval."""
+
+    try:
+        result = await QuizQualityService(session).validate_for_teacher(actor=user)
+        await session.commit()
+        return result
+    except QuizQualityError as exc:
+        await session.rollback()
+        _raise_quiz_quality_error(exc)
+    except Exception:
+        await session.rollback()
+        raise
 
 
 __all__ = ["router"]

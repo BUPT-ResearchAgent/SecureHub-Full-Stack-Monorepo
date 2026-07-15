@@ -35,6 +35,36 @@ import type {
   SupportedTaskIntent,
 } from './types';
 
+export type CuratedCourseQuizItem = {
+  id: string;
+  canonical_key: string;
+  content_version: number;
+  knowledge_node_id: string;
+  knowledge_node_name: string;
+  type: 'single_choice' | 'multi_choice' | 'fill' | 'short_answer' | 'code';
+  question: string;
+  options: string[];
+  answer: string;
+  explanation: string;
+  difficulty: number;
+  review_status: 'curated';
+  source_status: 'seeded' | 'curated' | 'generated' | 'imported' | 'legacy-migrated';
+  evidence: Array<{ chunk_id: string; citation_label?: string | null }>;
+  quality: {
+    validator_version: string;
+    input_fingerprint: string;
+    result: 'pending' | 'passed' | 'failed';
+    failure_codes: string[];
+    reviewed_at?: string | null;
+  } | null;
+};
+
+export type CuratedCourseQuizResponse = {
+  course_id: string;
+  course_code: 'WEBSEC-101';
+  items: CuratedCourseQuizItem[];
+};
+
 const workflowRunClient = new WorkflowRunClient();
 const UUID_PATTERN = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i;
 
@@ -109,6 +139,11 @@ export type CourseProgressActivity = {
 
 export function fetchCourseGraph(courseId: string): Promise<CourseGraphApiResponse> {
   return apiGet<CourseGraphApiResponse>(`/api/v1/courses/${encodeURIComponent(courseId)}/graph`);
+}
+
+/** Reads only durable, curated, quality-passed WEBSEC-101 items. */
+export function fetchCuratedCourseQuizItems(courseId: string): Promise<CuratedCourseQuizResponse> {
+  return apiGet<CuratedCourseQuizResponse>(`/api/v1/courses/${encodeURIComponent(courseId)}/quiz-items`);
 }
 
 export function fetchCoursePath(courseId: string): Promise<CoursePathApiResponse> {

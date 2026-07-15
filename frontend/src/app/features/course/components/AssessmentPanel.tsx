@@ -22,7 +22,14 @@ import { getMockQuizItemsForCourse } from '@/lib/mock/courses.mock';
 import { isMockMode } from '@/lib/mock';
 import { normalizePersonaDimension } from '@/lib/persona-dimension-map';
 import type { CapabilityDTO } from '@/lib/sse.types';
-import { assessmentReportFromWorkflowStatus, recordCourseProgress, startCourseTask, workflowRunClient } from '../api';
+import {
+  assessmentReportFromWorkflowStatus,
+  fetchCuratedCourseQuizItems,
+  recordCourseProgress,
+  startCourseTask,
+  workflowRunClient,
+  type CuratedCourseQuizItem,
+} from '../api';
 import { useCourseDispatch, useCourseState } from '../store';
 import { createCourseTaskLifecycle } from '../workflow/courseTaskLifecycle';
 import { parseCourseQuiz, type CourseQuizQuestion } from './QuizResourceView';
@@ -51,7 +58,7 @@ type LoopEvent = {
   text: string;
 };
 
-type AssessmentQuestion = Pick<CourseQuizQuestion, 'id' | 'type' | 'prompt' | 'options'>;
+type AssessmentQuestion = Pick<CourseQuizQuestion, 'id' | 'type' | 'prompt' | 'options'> & { kpId?: string };
 type AssessmentAnswer = string | string[];
 type SubmittedAnswer = AssessmentSubmittedAnswer;
 
@@ -68,6 +75,20 @@ function hasAnswer(value: AssessmentAnswer | undefined): boolean {
   return Array.isArray(value) ? value.length > 0 : Boolean(value?.trim());
 }
 
+function curatedItemToAssessmentQuestion(item: CuratedCourseQuizItem): AssessmentQuestion {
+  return {
+    id: item.id,
+    type: item.type === 'multi_choice'
+      ? 'multiple'
+      : item.type === 'short_answer' || item.type === 'fill' || item.type === 'code'
+        ? 'short'
+        : 'single',
+    prompt: item.question,
+    options: item.options,
+    kpId: item.knowledge_node_id,
+  };
+}
+
 export function AssessmentPanel() {
   const navigate = useNavigate();
   const { assessment, taskContext, resources, workflowRoots } = useCourseState();
@@ -75,6 +96,7 @@ export function AssessmentPanel() {
   const { course } = useSelectedCourse();
   const presenterMode = isMockMode();
   const isPreview = course?.contentStatus === 'preview';
+  const isWebsec = course?.code === 'WEBSEC-101';
   const quizResource = useMemo(
     () => resources.find((resource) => resource.type === 'quiz' && resource.status === 'ready') ?? null,
     [resources],
@@ -84,15 +106,47 @@ export function AssessmentPanel() {
     () => parseCourseQuiz(quizArtifact.resource.content).map(({ id, type, prompt, options }) => ({ id, type, prompt, options })),
     [quizArtifact.resource.content],
   );
+  const [curatedQuestions, setCuratedQuestions] = useState<AssessmentQuestion[]>([]);
+  const [curatedQuizLoading, setCuratedQuizLoading] = useState(false);
+  const [curatedQuizError, setCuratedQuizError] = useState('');
+  useEffect(() => {
+    if (presenterMode || !isWebsec || !course) {
+      setCuratedQuestions([]);
+      setCuratedQuizError('');
+      setCuratedQuizLoading(false);
+      return;
+    }
+    let disposed = false;
+    setCuratedQuizLoading(true);
+    setCuratedQuizError('');
+    void fetchCuratedCourseQuizItems(course.id)
+      .then((response) => {
+        if (!disposed) setCuratedQuestions(response.items.map(curatedItemToAssessmentQuestion));
+      })
+      .catch((cause: unknown) => {
+        if (!disposed) setCuratedQuizError(cause instanceof Error ? cause.message : '无法读取已校验题库。');
+      })
+      .finally(() => {
+        if (!disposed) setCuratedQuizLoading(false);
+      });
+    return () => {
+      disposed = true;
+    };
+  }, [course, isWebsec, presenterMode]);
   const questions = useMemo<AssessmentQuestion[]>(
-    () => (presenterMode || isPreview) && course ? getMockQuizItemsForCourse(course.previewContentKey ?? course.id).map((item) => ({
-        id: item.id,
-        type: 'single' as const,
-        prompt: item.prompt,
-        kp: item.kp,
-        options: item.options,
-      })) : realQuestions,
-    [course?.id, course?.previewContentKey, isPreview, presenterMode, realQuestions],
+    () => {
+      if ((presenterMode || isPreview) && course) {
+        return getMockQuizItemsForCourse(course.previewContentKey ?? course.id).map((item) => ({
+          id: item.id,
+          type: 'single' as const,
+          prompt: item.prompt,
+          kpId: item.kp,
+          options: item.options,
+        }));
+      }
+      return isWebsec ? curatedQuestions : realQuestions;
+    },
+    [course?.id, course?.previewContentKey, curatedQuestions, isPreview, isWebsec, presenterMode, realQuestions],
   );
   const [answers, setAnswers] = useState<Record<string, AssessmentAnswer>>({});
   const [loading, setLoading] = useState(false);
@@ -189,7 +243,12 @@ export function AssessmentPanel() {
     setCourseNextRecommendation('');
     const submitted = questions
       .filter((question) => hasAnswer(answers[question.id]))
-      .map((question) => ({ id: question.id, prompt: question.prompt, answer: answers[question.id]! }));
+      .map((question) => ({
+        id: question.id,
+        prompt: question.prompt,
+        answer: answers[question.id]!,
+        kpId: question.kpId,
+      }));
     setSubmittedAnswers(submitted);
 
     startCourseTask({
@@ -200,12 +259,12 @@ export function AssessmentPanel() {
           .map((question) => ({
             quiz_item_id: question.id,
             answer: question.answer,
-            kp_id: taskContext.kpId,
+            kp_id: question.kpId ?? taskContext.kpId,
             question: question.prompt,
             options: questions.find((candidate) => candidate.id === question.id)?.options ?? [],
             question_type: questions.find((candidate) => candidate.id === question.id)?.type ?? 'single',
           })),
-        quizArtifactId: quizArtifact.resource.id,
+        quizArtifactId: isWebsec ? `websec-quiz-bank:${course?.id ?? taskContext.courseId}` : quizArtifact.resource.id,
       },
     }, createCourseTaskLifecycle('run_assessment', dispatch, {
       onProgress(progress) {
@@ -289,8 +348,14 @@ export function AssessmentPanel() {
             </div>
           ) : !presenterMode && (
             <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">
-              {!quizResource && (
-                <div className="flex flex-wrap items-center justify-between gap-2">
+            {isWebsec ? (
+              <div>
+                {curatedQuizLoading && '正在读取通过质量校验的 WEBSEC-101 题库…'}
+                {curatedQuizError && `题库读取失败：${curatedQuizError}`}
+                {!curatedQuizLoading && !curatedQuizError && `当前评估使用 ${questions.length} 道已精选、已通过质量校验的持久化题目。`}
+              </div>
+            ) : !quizResource && (
+              <div className="flex flex-wrap items-center justify-between gap-2">
                   <span>请先在资源工作台生成真实测验资源；非 PresenterMode 不显示固定题目或本地评分。</span>
                   <button
                     type="button"
@@ -300,10 +365,10 @@ export function AssessmentPanel() {
                     前往生成测验
                   </button>
                 </div>
-              )}
-              {quizResource && quizArtifact.isLoading && '正在读取已生成的真实测验资源...'}
-              {quizResource && quizArtifact.error && `测验资源读取失败：${quizArtifact.error}`}
-              {quizResource && !quizArtifact.isLoading && !quizArtifact.error && !realQuestions.length && '测验资源内容无法解析，请在资源工作台重新生成练习题。'}
+            )}
+            {!isWebsec && quizResource && quizArtifact.isLoading && '正在读取已生成的真实测验资源...'}
+            {!isWebsec && quizResource && quizArtifact.error && `测验资源读取失败：${quizArtifact.error}`}
+            {!isWebsec && quizResource && !quizArtifact.isLoading && !quizArtifact.error && !realQuestions.length && '测验资源内容无法解析，请在资源工作台重新生成练习题。'}
             </div>
           )}
           {questions.map((question, index) => (
