@@ -19,6 +19,18 @@ const Forum = lazy(() => import('@/app/pages/Forum').then((module) => ({ default
 const Careers = lazy(() => import('@/app/pages/Careers').then((module) => ({ default: module.Careers })));
 const Tasks = lazy(() => import('@/app/pages/Tasks').then((module) => ({ default: module.Tasks })));
 const Profile = lazy(() => import('@/app/pages/Profile').then((module) => ({ default: module.Profile })));
+const MessageInbox = lazy(() =>
+  import('@/app/features/messages/MessageInbox').then((module) => ({ default: module.MessageInbox })),
+);
+const AdminGovernance = lazy(() =>
+  import('@/app/features/admin/AdminGovernance').then((module) => ({ default: module.AdminGovernance })),
+);
+const FairnessGovernance = lazy(() =>
+  import('@/app/features/fairness/FairnessGovernance').then((module) => ({ default: module.FairnessGovernance })),
+);
+const FairnessAppeals = lazy(() =>
+  import('@/app/features/fairness/FairnessAppeals').then((module) => ({ default: module.FairnessAppeals })),
+);
 
 const TeacherLayout = lazy(() =>
   import('@/app/features/teacher/TeacherLayout').then((m) => ({ default: m.TeacherLayout })),
@@ -49,6 +61,9 @@ const TeacherCareerMentoring = lazy(() =>
 );
 const TeacherNotices = lazy(() =>
   import('@/app/features/teacher/pages/TeacherNotices').then((m) => ({ default: m.TeacherNotices })),
+);
+const TeacherCourseUpdates = lazy(() =>
+  import('@/app/features/teacher/pages/TeacherCourseUpdates').then((m) => ({ default: m.TeacherCourseUpdates })),
 );
 const TeacherProfile = lazy(() =>
   import('@/app/features/teacher/pages/TeacherProfile').then((m) => ({ default: m.TeacherProfile })),
@@ -91,6 +106,7 @@ export default function App() {
             <Route path="/careers" element={lazyPage(<Careers />)} />
             <Route path="/tasks" element={lazyPage(<Tasks />)} />
             <Route path="/profile" element={lazyPage(<Profile />)} />
+            <Route path="/messages" element={lazyPage(<MessageInbox />)} />
             <Route path="/home" element={<Navigate to="/workspace" replace />} />
           </Route>
           <Route
@@ -109,8 +125,12 @@ export default function App() {
             <Route path="/teacher/research" element={lazyPage(<TeacherResearch />)} />
             <Route path="/teacher/career-mentoring" element={lazyPage(<TeacherCareerMentoring />)} />
             <Route path="/teacher/notices" element={lazyPage(<TeacherNotices />)} />
+            <Route path="/teacher/course-updates" element={lazyPage(<TeacherCourseUpdates />)} />
             <Route path="/teacher/profile" element={lazyPage(<TeacherProfile />)} />
           </Route>
+          <Route path="/admin" element={<ProtectedRoute>{lazyPage(<AdminGovernance />)}</ProtectedRoute>} />
+          <Route path="/fairness" element={<ProtectedRoute>{lazyPage(<FairnessGovernance />)}</ProtectedRoute>} />
+          <Route path="/fairness/appeals" element={<ProtectedRoute>{lazyPage(<FairnessAppeals />)}</ProtectedRoute>} />
           <Route path="/showcase" element={<ProtectedRoute>{lazyPage(<Showcase />)}</ProtectedRoute>} />
           <Route path="/showcase/play/:sceneId" element={<ProtectedRoute>{lazyPage(<ShowcasePlay />)}</ProtectedRoute>} />
           <Route path="*" element={<Navigate to="/" replace />} />

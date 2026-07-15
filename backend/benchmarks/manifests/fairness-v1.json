@@ -1,0 +1,12 @@
+{
+  "dataset_kind": "fairness",
+  "semantic_version": "1.0.0",
+  "label_schema_version": "fairness-review-label-v1",
+  "source_note": "冻结的非用户评测样本，只验证聚合阈值告警的复现性；不得作为真实群体效果或任何个体处分依据。",
+  "data_file": "fairness-v1.jsonl",
+  "data_sha256": "1c40d26c992b7adc7417b50d381731f1f3c0cd7e1e6b51c4325e840d7972e262",
+  "annotation_rules": "review_required 表示冻结计算应转人工复核；within_threshold 表示不触发复核。仅含不可识别 cohort 标签。",
+  "formula": "binary confusion matrix against the frozen expected_label",
+  "thresholds": {"positive_label": "review_required"},
+  "positive_label": "review_required"
+}

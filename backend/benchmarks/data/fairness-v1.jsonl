@@ -1,0 +1,4 @@
+{"case_key":"fairness-001","expected_label":"within_threshold","predicted_label":"within_threshold","group_key":"cohort","group_value":"A"}
+{"case_key":"fairness-002","expected_label":"within_threshold","predicted_label":"review_required","group_key":"cohort","group_value":"A"}
+{"case_key":"fairness-003","expected_label":"review_required","predicted_label":"review_required","group_key":"cohort","group_value":"B"}
+{"case_key":"fairness-004","expected_label":"review_required","predicted_label":"within_threshold","group_key":"cohort","group_value":"B"}
