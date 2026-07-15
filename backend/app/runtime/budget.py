@@ -123,6 +123,7 @@ class BudgetController:
         provider: str,
         usage: dict[str, Any] | None,
         cost_usd: float = 0.0,
+        node_limit_tokens: int | None = None,
     ) -> dict[str, Any]:
         snapshot = cls.snapshot(raw)
         incoming = cls._usage(usage, cost_usd=cost_usd)
@@ -135,6 +136,8 @@ class BudgetController:
         provider_usage = cls._add(snapshot.provider_usage.get(provider, BudgetUsage()), incoming, provider_call=True)
         if snapshot.limits.max_tokens is not None and root.total_tokens > snapshot.limits.max_tokens:
             raise BudgetExceeded("root token budget exhausted")
+        if node_limit_tokens is not None and node.total_tokens > node_limit_tokens:
+            raise BudgetExceeded(f"node:{node_id} token budget exhausted")
         if snapshot.limits.max_cost_usd is not None and root.cost_usd > snapshot.limits.max_cost_usd:
             raise BudgetExceeded("root cost budget exhausted")
         return cls._write(

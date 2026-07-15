@@ -75,7 +75,9 @@ export function createCourseTaskLifecycle(
       downstream.onWorkflowState?.(state);
     },
     onWorkflowEvent(event: WorkflowEvent) {
-      if (event.event_type === 'artifact') projectArtifact(event, 'generating');
+      // Artifact events describe a pending root until its terminal success.
+      // Publishing them early would replace the last ready resource with an
+      // incomplete projection when a later QualityCheck/root step fails.
       downstream.onWorkflowEvent?.(event);
     },
     onWorkflowTerminal(status: WorkflowRunStatusResponse, state: WorkflowRunViewState) {

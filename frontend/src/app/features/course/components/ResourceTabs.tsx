@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Briefcase, FilePenLine, FlaskConical, History, PlayCircle, Trophy } from 'lucide-react';
+import { Briefcase, FilePenLine, FlaskConical, History, PlayCircle, Square, Trophy } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { ErrorBoundary } from '@/app/components/ErrorBoundary';
 import { LLMErrorState, LoadingState } from '@/app/components/StateView';
@@ -12,7 +12,7 @@ import { isWorkflowDraftReplacement } from '@/lib/workflow-run.types';
 import { useCourseDispatch, useCourseState } from '../store';
 import type { ResourceItem, ResourceType } from '../types';
 import { resourceTypeIcon, resourceTypeLabel } from '../utils';
-import { recordCourseProgress, retryCourseResource, startCourseResourcePack, startCourseTask } from '../api';
+import { cancelCourseTask, recordCourseProgress, retryCourseResource, startCourseResourcePack, startCourseTask } from '../api';
 import { createCourseTaskLifecycle } from '../workflow/courseTaskLifecycle';
 import { DocResourceView } from './DocResourceView';
 import { LabResourceView } from './LabResourceView';
@@ -36,6 +36,15 @@ import type { ResourceVariantKind, ResourceVersion } from '@/lib/types/resource-
 
 const resourceTypes: ResourceType[] = ['doc', 'ppt', 'mindmap', 'quiz', 'lab', 'video', 'readings'];
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+type GenerationAttempt = {
+  status: 'idle' | 'generating' | 'cancelling' | 'cancelled' | 'failed';
+  runId?: string;
+  errorCode?: string;
+  errorMessage?: string;
+};
+
+const IDLE_ATTEMPT: GenerationAttempt = { status: 'idle' };
 
 function fallbackResource(type: ResourceType): ResourceItem {
   return {
@@ -102,8 +111,11 @@ export function ResourceTabs() {
   const cancelRef = useRef<() => void>();
   const activeStreamTypeRef = useRef<ResourceType>('doc');
   const persistedSignaturesRef = useRef<Record<string, string>>({});
+  const pendingArtifactsRef = useRef<Partial<Record<ResourceType, ResourceItem>>>({});
+  const pendingEvidenceRef = useRef<Partial<Record<ResourceType, ResourceItem['evidenceRefs']>>>({});
   const [active, setActive] = useState<ResourceType>('doc');
   const [resources, setResources] = useState<Partial<Record<ResourceType, ResourceItem>>>(() => initialResourceMap(storedResources));
+  const [attempts, setAttempts] = useState<Partial<Record<ResourceType, GenerationAttempt>>>({});
   const [progressText, setProgressText] = useState('');
   const [replayOpen, setReplayOpen] = useState(false);
   const [debateOpen, setDebateOpen] = useState(false);
@@ -119,10 +131,15 @@ export function ResourceTabs() {
     [course?.id, course?.previewContentKey, isPreview],
   );
   const resource = resources[active] ?? fallbackResource(active);
+  const activeAttempt = attempts[active] ?? IDLE_ATTEMPT;
+  const runningAttempt = Object.values(attempts).find(
+    (attempt) => attempt?.status === 'generating' || attempt?.status === 'cancelling',
+  );
+  const hasActiveGeneration = Boolean(runningAttempt);
   const artifactProjection = useRealResourceArtifact(resource);
   const previewResource = artifactProjection.resource;
-  const isGenerating = resource.status === 'generating';
-  const isReconnecting = resource.errorCode === 'sse_reconnecting';
+  const isGenerating = activeAttempt.status === 'generating' || activeAttempt.status === 'cancelling';
+  const isReconnecting = activeAttempt.errorCode === 'sse_reconnecting';
   const selectedResourceTypes = useMemo(() => resourceTypes, []);
 
   useEffect(() => {
@@ -133,6 +150,9 @@ export function ResourceTabs() {
   // previously generated Web 安全 artifact from appearing in a preview course.
   useEffect(() => {
     setResources({});
+    setAttempts({});
+    pendingArtifactsRef.current = {};
+    pendingEvidenceRef.current = {};
     setProgressText('');
   }, [taskContext.courseId]);
 
@@ -151,6 +171,102 @@ export function ResourceTabs() {
       const previous = current[type] ?? fallbackResource(type);
       const next = update(previous);
       return { ...current, [type]: next };
+    });
+  };
+
+  const beginAttempt = (type: ResourceType) => {
+    delete pendingArtifactsRef.current[type];
+    pendingEvidenceRef.current[type] = [];
+    setAttempts((current) => ({
+      ...current,
+      [type]: { status: 'generating' },
+    }));
+    updateResource(type, (previous) => previous.status === 'ready'
+      ? previous
+      : {
+          ...fallbackResource(type),
+          title: `正在生成${resourceTypeLabel(type)}`,
+          status: 'generating',
+          content: '',
+        });
+  };
+
+  const attachRunToAttempt = (type: ResourceType, runId: string) => {
+    setAttempts((current) => ({
+      ...current,
+      [type]: {
+        ...(current[type] ?? IDLE_ATTEMPT),
+        status: 'generating',
+        runId,
+        errorCode: undefined,
+        errorMessage: undefined,
+      },
+    }));
+  };
+
+  const addPendingEvidence = (type: ResourceType, chunk: ResourceItem['evidenceRefs'][number]) => {
+    const current = pendingEvidenceRef.current[type] ?? [];
+    if (!current.some((item) => item.chunk_id === chunk.chunk_id)) {
+      pendingEvidenceRef.current[type] = [...current, chunk];
+    }
+  };
+
+  const attachPendingArtifact = (type: ResourceType, resourceId: string, title: string, qualityScore?: number | null) => {
+    pendingArtifactsRef.current[type] = {
+      id: resourceId,
+      type,
+      title,
+      status: 'generating',
+      content: '',
+      evidenceRefs: pendingEvidenceRef.current[type] ?? [],
+      qualityScore: qualityScore ?? undefined,
+    };
+  };
+
+  const completeAttempt = (type: ResourceType, qualityScore?: number | null) => {
+    const pending = pendingArtifactsRef.current[type];
+    if (!pending || !UUID_PATTERN.test(pending.id)) {
+      failAttempt(type, 'ARTIFACT_MISSING', '工作流已结束，但资源没有完成 Artifact Saga。请重试本次生成。');
+      return;
+    }
+    updateResource(type, () => ({
+      ...pending,
+      status: 'ready',
+      qualityScore: qualityScore ?? pending.qualityScore,
+      errorCode: undefined,
+      errorMessage: undefined,
+    }));
+    delete pendingArtifactsRef.current[type];
+    delete pendingEvidenceRef.current[type];
+    setAttempts((current) => ({ ...current, [type]: IDLE_ATTEMPT }));
+  };
+
+  const failAttempt = (
+    type: ResourceType,
+    errorCode: string,
+    errorMessage: string,
+    status: 'failed' | 'cancelled' = 'failed',
+  ) => {
+    delete pendingArtifactsRef.current[type];
+    delete pendingEvidenceRef.current[type];
+    setAttempts((current) => ({
+      ...current,
+      [type]: { status, errorCode, errorMessage, runId: current[type]?.runId },
+    }));
+    setResources((current) => {
+      const previous = current[type];
+      if (previous?.status === 'ready') return current;
+      return {
+        ...current,
+        [type]: status === 'cancelled'
+          ? fallbackResource(type)
+          : {
+              ...fallbackResource(type),
+              status: 'failed',
+              errorCode,
+              errorMessage,
+            },
+      };
     });
   };
 
@@ -176,35 +292,26 @@ export function ResourceTabs() {
     cancelRef.current?.();
     activeStreamTypeRef.current = targetType;
     setProgressText('正在校验输入');
-    updateResource(targetType, (previous) => ({
-      ...previous,
-      status: 'generating',
-      content: '',
-      evidenceRefs: [],
-      errorCode: undefined,
-      errorMessage: undefined,
-    }));
+    beginAttempt(targetType);
 
     cancelRef.current = startCourseTask({
       intent: 'generate_resource',
       context: taskContext,
       payload: { resourceType: targetType, options: { tone: 'case_driven' } },
     }, createCourseTaskLifecycle('generate_resource', courseDispatch, {
+        onWorkflowStart(start) {
+          attachRunToAttempt(targetType, start.run_id);
+        },
         onWorkflowEvent(event) {
           if (!isWorkflowDraftReplacement(event)) return;
-          updateResource(targetType, (previous) => ({ ...previous, content: '' }));
+          delete pendingArtifactsRef.current[targetType];
         },
         onProgress(progress) {
           setProgressText(`${progress.node_name} · ${progress.percentage ?? 0}%`);
         },
         onEvidence(chunk) {
           evidence.pushEvidence([chunk]);
-          updateResource(targetType, (previous) => ({
-            ...previous,
-            evidenceRefs: previous.evidenceRefs.some((item) => item.chunk_id === chunk.chunk_id)
-              ? previous.evidenceRefs
-              : [...previous.evidenceRefs, chunk],
-          }));
+          addPendingEvidence(targetType, chunk);
         },
         // Producer streams are strict JSON for the durable artifact. The
         // learner sees real node progress here; rendering those transport
@@ -213,13 +320,7 @@ export function ResourceTabs() {
         onArtifact(artifact) {
           const artifactType = artifact.resource_type ?? targetType;
           activeStreamTypeRef.current = artifactType;
-          updateResource(artifactType, (previous) => ({
-            ...previous,
-            id: artifact.resource_id,
-            type: artifactType,
-            title: artifact.title,
-            status: 'generating',
-          }));
+          attachPendingArtifact(artifactType, artifact.resource_id, artifact.title, artifact.quality_score);
         },
         onTrace(run) {
           traceDispatch({ type: 'upsertRun', run });
@@ -227,35 +328,43 @@ export function ResourceTabs() {
         onDone(done) {
           setProgressText('');
           const doneType = activeStreamTypeRef.current ?? targetType;
-          updateResource(doneType, (previous) => ({
-            ...previous,
-            status: 'ready',
-            errorCode: undefined,
-            errorMessage: undefined,
-            qualityScore: done.quality_score,
-          }));
+          if (done.status === 'cancelled') {
+            failAttempt(doneType, 'WORKFLOW_CANCELLED', '本次生成已取消，上一版资源保持不变。', 'cancelled');
+            return;
+          }
+          completeAttempt(doneType, done.quality_score);
         },
         onWorkflowTerminal(status) {
-          if (status.status === 'succeeded') persistResourceCompletion(status.run_id);
+          if (status.status === 'succeeded') {
+            persistResourceCompletion(status.run_id);
+            return;
+          }
+          if (status.status === 'cancelled') {
+            failAttempt(targetType, 'WORKFLOW_CANCELLED', '本次生成已取消，上一版资源保持不变。', 'cancelled');
+            return;
+          }
+          failAttempt(
+            targetType,
+            status.error?.code ?? `WORKFLOW_${status.status.toUpperCase()}`,
+            status.error?.message ?? `资源生成以 ${status.status} 状态结束。`,
+          );
         },
         onError(error) {
           if (error.code === 'sse_reconnecting') {
             setProgressText(error.message);
-            updateResource(targetType, (previous) => ({
-              ...previous,
-              status: 'generating',
-              errorCode: error.code,
-              errorMessage: error.message,
+            setAttempts((current) => ({
+              ...current,
+              [targetType]: {
+                ...(current[targetType] ?? IDLE_ATTEMPT),
+                status: 'generating',
+                errorCode: error.code,
+                errorMessage: error.message,
+              },
             }));
             return;
           }
           setProgressText('');
-          updateResource(targetType, (previous) => ({
-            ...previous,
-            status: 'failed',
-            errorCode: error.code,
-            errorMessage: error.message,
-          }));
+          failAttempt(targetType, error.code ?? 'WORKFLOW_CLIENT_ERROR', error.message);
         },
     }), { mode: presenterMode ? 'fixture' : 'real' });
   };
@@ -268,40 +377,25 @@ export function ResourceTabs() {
     cancelRef.current?.();
     setBundleGenerating(true);
     setProgressText('正在创建完整资源包');
-    setResources((current) => {
-      const next = { ...current };
-      resourceTypes.filter((type) => type !== 'readings').forEach((type) => {
-        const previous = next[type] ?? fallbackResource(type);
-        next[type] = {
-          ...previous,
-          status: 'generating',
-          content: '',
-          evidenceRefs: [],
-          errorCode: undefined,
-          errorMessage: undefined,
-        };
-      });
-      return next;
-    });
+    const bundleTypes = resourceTypes.filter((type) => type !== 'readings');
+    bundleTypes.forEach(beginAttempt);
 
     cancelRef.current = startCourseResourcePack(taskContext, createCourseTaskLifecycle('generate_resource', courseDispatch, {
+      onWorkflowStart(start) {
+        bundleTypes.forEach((type) => attachRunToAttempt(type, start.run_id));
+      },
       onProgress(progress) {
         setProgressText(`${progress.node_name} · ${progress.percentage ?? 0}%`);
       },
       onEvidence(chunk) {
         evidence.pushEvidence([chunk]);
+        bundleTypes.forEach((type) => addPendingEvidence(type, chunk));
       },
       onToken() {},
       onArtifact(artifact) {
         const artifactType = artifact.resource_type;
         activeStreamTypeRef.current = artifactType;
-        updateResource(artifactType, (previous) => ({
-          ...previous,
-          id: artifact.resource_id,
-          type: artifactType,
-          title: artifact.title,
-          status: 'generating',
-        }));
+        attachPendingArtifact(artifactType, artifact.resource_id, artifact.title, artifact.quality_score);
       },
       onTrace(run) {
         traceDispatch({ type: 'upsertRun', run });
@@ -309,24 +403,32 @@ export function ResourceTabs() {
       onDone(done) {
         setProgressText('');
         setBundleGenerating(false);
-        setResources((current) => Object.fromEntries(
-          Object.entries(current).map(([type, item]) => [
+        if (done.status === 'cancelled') {
+          bundleTypes.forEach((type) => failAttempt(
             type,
-            item?.status === 'generating'
-              ? UUID_PATTERN.test(item.id)
-                ? { ...item, status: 'ready', qualityScore: done.quality_score }
-                : {
-                    ...item,
-                    status: 'failed',
-                    errorCode: 'ARTIFACT_MISSING',
-                    errorMessage: '资源包已结束，但该资源没有完成 Artifact Saga。请单独重试此资源。',
-                  }
-              : item,
-          ]),
-        ) as Partial<Record<ResourceType, ResourceItem>>);
+            'WORKFLOW_CANCELLED',
+            '本次完整资源包生成已取消，上一版资源保持不变。',
+            'cancelled',
+          ));
+          return;
+        }
+        bundleTypes.forEach((type) => completeAttempt(type, done.quality_score));
       },
       onWorkflowTerminal(status) {
-        if (status.status === 'succeeded') persistResourceCompletion(status.run_id);
+        setBundleGenerating(false);
+        if (status.status === 'succeeded') {
+          persistResourceCompletion(status.run_id);
+          return;
+        }
+        const cancelled = status.status === 'cancelled';
+        bundleTypes.forEach((type) => failAttempt(
+          type,
+          cancelled ? 'WORKFLOW_CANCELLED' : (status.error?.code ?? `WORKFLOW_${status.status.toUpperCase()}`),
+          cancelled
+            ? '本次完整资源包生成已取消，上一版资源保持不变。'
+            : (status.error?.message ?? `完整资源包生成以 ${status.status} 状态结束。`),
+          cancelled ? 'cancelled' : 'failed',
+        ));
       },
       onError(error) {
         if (error.code === 'sse_reconnecting') {
@@ -335,14 +437,7 @@ export function ResourceTabs() {
         }
         setProgressText('');
         setBundleGenerating(false);
-        setResources((current) => Object.fromEntries(
-          Object.entries(current).map(([type, item]) => [
-            type,
-            item?.status === 'generating'
-              ? { ...item, status: 'failed', errorCode: error.code, errorMessage: error.message }
-              : item,
-          ]),
-        ) as Partial<Record<ResourceType, ResourceItem>>);
+        bundleTypes.forEach((type) => failAttempt(type, error.code ?? 'WORKFLOW_CLIENT_ERROR', error.message));
       },
     }), { mode: presenterMode ? 'fixture' : 'real' });
   };
@@ -358,40 +453,47 @@ export function ResourceTabs() {
     }
     cancelRef.current?.();
     setProgressText(`正在重新生成${resourceTypeLabel(active)}`);
-    updateResource(active, (previous) => ({
-      ...previous,
-      status: 'generating',
-      content: '',
-      evidenceRefs: [],
-      errorCode: undefined,
-      errorMessage: undefined,
-    }));
+    beginAttempt(active);
     cancelRef.current = retryCourseResource(resource.id, createCourseTaskLifecycle('generate_resource', courseDispatch, {
+      onWorkflowStart(start) {
+        attachRunToAttempt(active, start.run_id);
+      },
       onProgress(progress) {
         setProgressText(`${progress.node_name} · ${progress.percentage ?? 0}%`);
       },
       onEvidence(chunk) {
         evidence.pushEvidence([chunk]);
+        addPendingEvidence(active, chunk);
       },
       onToken() {},
       onArtifact(artifact) {
-        updateResource(artifact.resource_type, (previous) => ({
-          ...previous,
-          id: artifact.resource_id,
-          type: artifact.resource_type,
-          title: artifact.title,
-          status: 'generating',
-        }));
+        attachPendingArtifact(artifact.resource_type, artifact.resource_id, artifact.title, artifact.quality_score);
       },
       onTrace(run) {
         traceDispatch({ type: 'upsertRun', run });
       },
       onDone(done) {
         setProgressText('');
-        updateResource(active, (previous) => ({ ...previous, status: 'ready', qualityScore: done.quality_score }));
+        if (done.status === 'cancelled') {
+          failAttempt(active, 'WORKFLOW_CANCELLED', '本次重新生成已取消，上一版资源保持不变。', 'cancelled');
+          return;
+        }
+        completeAttempt(active, done.quality_score);
       },
       onWorkflowTerminal(status) {
-        if (status.status === 'succeeded') persistResourceCompletion(status.run_id);
+        if (status.status === 'succeeded') {
+          persistResourceCompletion(status.run_id);
+          return;
+        }
+        const cancelled = status.status === 'cancelled';
+        failAttempt(
+          active,
+          cancelled ? 'WORKFLOW_CANCELLED' : (status.error?.code ?? `WORKFLOW_${status.status.toUpperCase()}`),
+          cancelled
+            ? '本次重新生成已取消，上一版资源保持不变。'
+            : (status.error?.message ?? `资源重新生成以 ${status.status} 状态结束。`),
+          cancelled ? 'cancelled' : 'failed',
+        );
       },
       onError(error) {
         if (error.code === 'sse_reconnecting') {
@@ -399,14 +501,51 @@ export function ResourceTabs() {
           return;
         }
         setProgressText('');
-        updateResource(active, (previous) => ({
-          ...previous,
-          status: 'failed',
-          errorCode: error.code,
-          errorMessage: error.message,
-        }));
+        failAttempt(active, error.code ?? 'WORKFLOW_CLIENT_ERROR', error.message);
       },
     }), { mode: presenterMode ? 'fixture' : 'real' });
+  };
+
+  const cancelActiveGeneration = () => {
+    const runId = runningAttempt?.runId;
+    if (!runId) return;
+    const affectedTypes = resourceTypes.filter((type) => attempts[type]?.runId === runId);
+    setProgressText('正在取消生成任务…');
+    setAttempts((current) => {
+      const next = { ...current };
+      affectedTypes.forEach((type) => {
+        next[type] = { ...(current[type] ?? IDLE_ATTEMPT), status: 'cancelling' };
+      });
+      return next;
+    });
+    void cancelCourseTask(runId)
+      .then((response) => {
+        if (response.status !== 'cancelled') return;
+        setProgressText('');
+        setBundleGenerating(false);
+        affectedTypes.forEach((type) => failAttempt(
+          type,
+          'WORKFLOW_CANCELLED',
+          '本次生成已取消，上一版资源保持不变。',
+          'cancelled',
+        ));
+      })
+      .catch((cause: unknown) => {
+        const message = cause instanceof Error ? cause.message : '取消请求失败，请稍后重试。';
+        setProgressText(`取消请求失败：${message}`);
+        setAttempts((current) => {
+          const next = { ...current };
+          affectedTypes.forEach((type) => {
+            next[type] = {
+              ...(current[type] ?? IDLE_ATTEMPT),
+              status: 'generating',
+              errorCode: 'CANCEL_REQUEST_FAILED',
+              errorMessage: message,
+            };
+          });
+          return next;
+        });
+      });
   };
 
   useEffect(() => {
@@ -494,27 +633,41 @@ export function ResourceTabs() {
             );
           })}
         </div>
-        <button
-          type="button"
-          onClick={() => startGeneration()}
-          disabled={isPreview || isGenerating || bundleGenerating}
-          className="inline-flex items-center gap-2 rounded-lg bg-brand-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
-        >
-          <PlayCircle className="h-4 w-4" />
-          {isPreview ? '内容建设中' : `生成${resourceTypeLabel(active)}`}
-        </button>
-        <button
-          type="button"
-          onClick={startResourcePack}
-          disabled={isPreview || isGenerating || bundleGenerating}
-          className="inline-flex items-center gap-2 rounded-lg border border-brand-blue-200 bg-brand-blue-50 px-4 py-2 text-sm font-medium text-brand-blue-700 hover:bg-brand-blue-100 disabled:cursor-not-allowed disabled:opacity-60"
-        >
-          <PlayCircle className="h-4 w-4" />
-          {isPreview ? '资源包建设中' : '生成完整资源包'}
-        </button>
+        {hasActiveGeneration ? (
+          <button
+            type="button"
+            onClick={cancelActiveGeneration}
+            disabled={!runningAttempt?.runId || runningAttempt.status === 'cancelling'}
+            className="inline-flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-sm font-medium text-red-700 hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            <Square className="h-3.5 w-3.5 fill-current" />
+            {runningAttempt?.status === 'cancelling' ? '正在取消' : '取消生成'}
+          </button>
+        ) : (
+          <>
+            <button
+              type="button"
+              onClick={() => startGeneration()}
+              disabled={isPreview || bundleGenerating}
+              className="inline-flex items-center gap-2 rounded-lg bg-brand-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              <PlayCircle className="h-4 w-4" />
+              {isPreview ? '内容建设中' : `生成${resourceTypeLabel(active)}`}
+            </button>
+            <button
+              type="button"
+              onClick={startResourcePack}
+              disabled={isPreview || bundleGenerating}
+              className="inline-flex items-center gap-2 rounded-lg border border-brand-blue-200 bg-brand-blue-50 px-4 py-2 text-sm font-medium text-brand-blue-700 hover:bg-brand-blue-100 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              <PlayCircle className="h-4 w-4" />
+              {isPreview ? '资源包建设中' : '生成完整资源包'}
+            </button>
+          </>
+        )}
       </div>
 
-      {isReconnecting && <LLMErrorState code={resource.errorCode} message={resource.errorMessage} />}
+      {isReconnecting && <LLMErrorState code={activeAttempt.errorCode} message={activeAttempt.errorMessage} />}
       {(isGenerating || bundleGenerating) && !isReconnecting && <LoadingState text={progressText || '正在生成中…'} />}
       {resource.status === 'ready' && artifactProjection.isLoading && <LoadingState text="正在读取已持久化的资源产物…" />}
       {resource.status === 'ready' && artifactProjection.error && (
@@ -524,8 +677,17 @@ export function ResourceTabs() {
           onRetry={artifactProjection.refresh}
         />
       )}
-      {resource.status === 'failed' && (
-        <LLMErrorState code={resource.errorCode} message={resource.errorMessage ?? '资源生成失败'} onRetry={() => startGeneration()} />
+      {(activeAttempt.status === 'failed' || resource.status === 'failed') && (
+        <LLMErrorState
+          code={activeAttempt.errorCode ?? resource.errorCode}
+          message={activeAttempt.errorMessage ?? resource.errorMessage ?? '资源生成失败'}
+          onRetry={resource.status === 'ready' ? retryPersistedResource : () => startGeneration()}
+        />
+      )}
+      {activeAttempt.status === 'cancelled' && (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+          本次生成已取消。{resource.status === 'ready' ? '上一版资源仍可继续查看。' : '当前没有可展示的已完成资源。'}
+        </div>
       )}
 
       {resource.status === 'ready' && UUID_PATTERN.test(resource.id) && (
@@ -555,7 +717,7 @@ export function ResourceTabs() {
         />
       )}
 
-      <div className="relative">
+      {(resource.status === 'ready' || resource.status === 'idle') && <div className="relative">
         <div className="absolute right-4 top-4 z-10 flex items-center gap-2">
           <ResourceQualityBadge score={resource.qualityScore} />
           {presenterMode && resource.status === 'ready' && (
@@ -581,7 +743,7 @@ export function ResourceTabs() {
         <ErrorBoundary resetKey={active}>
           {renderResource()}
         </ErrorBoundary>
-      </div>
+      </div>}
 
       {presenterMode && debateOpen && resource.status === 'ready' && (
         <AgentDebatePanel debate={buildAgentDebate(active)} autoPlay />

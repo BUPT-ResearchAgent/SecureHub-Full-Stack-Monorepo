@@ -61,6 +61,7 @@ export type ArtifactEvent = {
     resource_type: ResourceType;
     object_key?: string;
     title: string;
+    quality_score?: number | null;
   };
 };
 
@@ -75,6 +76,7 @@ export type DoneEvent = {
     run_id: string;
     final_output_ref: string;
     quality_score: number;
+    status?: 'succeeded' | 'cancelled';
   };
 };
 

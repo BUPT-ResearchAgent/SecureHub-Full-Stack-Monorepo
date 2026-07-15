@@ -19,6 +19,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import get_settings
+from app.db.models.knowledge.knowledge_node import KnowledgeNode
 from app.db.seeds._constants import resolve_course_product
 from app.db.models.workflow_runtime import WorkflowApproval, WorkflowProviderCall, WorkflowRun, WorkflowStepAttempt
 from app.repositories.identity.provider_credentials import ProviderCredentialRepository
@@ -141,6 +142,11 @@ class WorkflowApplicationService:
 
         async with self.sessionmaker() as session:
             await self._preflight_course_content(
+                workflow_name=definition.name,
+                validated_input=validated_input,
+            )
+            await self._canonicalise_resource_topic(
+                session,
                 workflow_name=definition.name,
                 validated_input=validated_input,
             )
@@ -656,6 +662,50 @@ class WorkflowApplicationService:
         # the product's canonical UUID/domain only after readiness succeeds.
         validated_input["course_id"] = str(product.id)
         validated_input["domain"] = product.domain
+
+    @staticmethod
+    async def _canonicalise_resource_topic(
+        session: AsyncSession,
+        *,
+        workflow_name: str,
+        validated_input: dict[str, Any],
+    ) -> None:
+        """Bind resource generation to the server-owned knowledge-point title."""
+        if workflow_name != "resource_generate_v1":
+            return
+        raw_kp_id = validated_input.get("kp_id")
+        if raw_kp_id is None:
+            return
+        try:
+            kp_id = UUID(str(raw_kp_id))
+            course_id = UUID(str(validated_input["course_id"]))
+        except (KeyError, TypeError, ValueError) as exc:
+            raise WorkflowApplicationError(
+                "KNOWLEDGE_POINT_NOT_FOUND",
+                "知识点不存在或不属于当前课程。",
+                status_code=404,
+            ) from exc
+        node = await session.get(KnowledgeNode, kp_id)
+        canonical_domain = str(validated_input.get("domain") or "")
+        if (
+            node is None
+            or node.course_id != course_id
+            or node.domain != canonical_domain
+        ):
+            raise WorkflowApplicationError(
+                "KNOWLEDGE_POINT_NOT_FOUND",
+                "知识点不存在或不属于当前课程。",
+                status_code=404,
+            )
+
+        options = validated_input.get("options")
+        retry = isinstance(options, dict) and bool(options.get("retry_source_resource_id"))
+        action = "Regenerate" if retry else "Generate"
+        resource_type = str(validated_input.get("resource_type") or "resource")
+        validated_input["query"] = (
+            f'{action} {resource_type} course resource for knowledge point "{node.name}". '
+            "Use only evidence relevant to this knowledge point."
+        )
 
     @staticmethod
     async def _hydrate_fund_profile(
