@@ -17,6 +17,7 @@ from app.schemas.syllabus import (
     SyllabusExportRequest,
     SyllabusReviewRequest,
     SyllabusVersionDTO,
+    SyllabusVersionListDTO,
 )
 from app.schemas.teacher_production import (
     AssessmentAssignmentDTO,
@@ -39,11 +40,15 @@ from app.schemas.teacher_production import (
     RecordSubjectiveSuggestionRequest,
     StudentPublishedResultDTO,
     SubmitAssessmentRequest,
+    TeacherAssignmentListDTO,
+    TeacherAssessmentSubmissionListDTO,
     TeacherCourseListDTO,
     TeacherDashboardDTO,
     TeachingRecommendationDTO,
     TeachingRecommendationDecisionRequest,
+    TeachingRecommendationListDTO,
     WeaknessSnapshotDTO,
+    WeaknessSnapshotListDTO,
     WeaknessSnapshotRequest,
     AssignmentCreateRequest,
 )
@@ -238,6 +243,24 @@ async def create_weakness_snapshot(
         _raise_domain_error(exc)
 
 
+@router.get(
+    "/teacher/production/courses/{course_id}/weakness-snapshots",
+    response_model=WeaknessSnapshotListDTO,
+)
+async def list_weakness_snapshots(
+    course_id: UUID,
+    session: SessionDep,
+    user: RequiredCurrentUserDep,
+) -> WeaknessSnapshotListDTO:
+    try:
+        return await TeacherProductionService(session).list_weakness_snapshots(
+            actor=user, course_id=course_id
+        )
+    except TeacherProductionError as exc:
+        await session.rollback()
+        _raise_domain_error(exc)
+
+
 @router.post(
     "/teacher/production/courses/{course_id}/teaching-recommendations",
     response_model=TeachingRecommendationDTO,
@@ -260,6 +283,24 @@ async def create_teaching_recommendation(
         _raise_domain_error(exc)
 
 
+@router.get(
+    "/teacher/production/courses/{course_id}/teaching-recommendations",
+    response_model=TeachingRecommendationListDTO,
+)
+async def list_teaching_recommendations(
+    course_id: UUID,
+    session: SessionDep,
+    user: RequiredCurrentUserDep,
+) -> TeachingRecommendationListDTO:
+    try:
+        return await TeacherProductionService(session).list_teaching_recommendations(
+            actor=user, course_id=course_id
+        )
+    except TeacherProductionError as exc:
+        await session.rollback()
+        _raise_domain_error(exc)
+
+
 @router.post(
     "/teacher/production/teaching-recommendations/{recommendation_id}/decision",
     response_model=TeachingRecommendationDTO,
@@ -276,6 +317,24 @@ async def decide_teaching_recommendation(
         )
         await session.commit()
         return result
+    except TeacherProductionError as exc:
+        await session.rollback()
+        _raise_domain_error(exc)
+
+
+@router.get(
+    "/teacher/production/courses/{course_id}/assignments",
+    response_model=TeacherAssignmentListDTO,
+)
+async def list_course_assignments(
+    course_id: UUID,
+    session: SessionDep,
+    user: RequiredCurrentUserDep,
+) -> TeacherAssignmentListDTO:
+    try:
+        return await TeacherProductionService(session).list_course_assignments(
+            actor=user, course_id=course_id
+        )
     except TeacherProductionError as exc:
         await session.rollback()
         _raise_domain_error(exc)
@@ -363,6 +422,24 @@ async def submit_assessment_assignment(
         )
         await session.commit()
         return result
+    except TeacherProductionError as exc:
+        await session.rollback()
+        _raise_domain_error(exc)
+
+
+@router.get(
+    "/teacher/production/assessment-assignments/{assignment_id}/submissions",
+    response_model=TeacherAssessmentSubmissionListDTO,
+)
+async def list_assignment_submissions(
+    assignment_id: UUID,
+    session: SessionDep,
+    user: RequiredCurrentUserDep,
+) -> TeacherAssessmentSubmissionListDTO:
+    try:
+        return await TeacherProductionService(session).list_assignment_submissions(
+            actor=user, assignment_id=assignment_id
+        )
     except TeacherProductionError as exc:
         await session.rollback()
         _raise_domain_error(exc)
@@ -483,6 +560,24 @@ async def student_published_assessment_result(
     try:
         return await TeacherProductionService(session).get_student_published_result(
             actor=user, assignment_id=assignment_id
+        )
+    except TeacherProductionError as exc:
+        await session.rollback()
+        _raise_domain_error(exc)
+
+
+@router.get(
+    "/teacher/production/courses/{course_id}/syllabus/versions",
+    response_model=SyllabusVersionListDTO,
+)
+async def list_syllabus_versions(
+    course_id: UUID,
+    session: SessionDep,
+    user: RequiredCurrentUserDep,
+) -> SyllabusVersionListDTO:
+    try:
+        return await TeacherProductionService(session).list_syllabus_versions(
+            actor=user, course_id=course_id
         )
     except TeacherProductionError as exc:
         await session.rollback()

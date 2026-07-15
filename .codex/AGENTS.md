@@ -191,6 +191,7 @@ quiz_attempts / learning_events
 - 所有 `/api/v1/teacher/production/*` 写读必须服务端验证有效课程教师归属。资产生命周期基于真实 `documents` / `document_assets`，并把操作者、对象、理由、结果写入 `governance_audit_events`；Dashboard KPI 必须是可查询口径而非静态值。
 - assessment 版本冻结通过 T2 质量门的题目快照；主观题 AI 结果只作建议，必须关联已接受的 `agent_runs` 与 Evidence Snapshot。教师覆盖理由、成绩发布/撤回状态均持久化，学生仅能查询已发布结果。
 - typed syllabus 只存入 `course_syllabuses` / `course_syllabus_versions`，生成只能消费 Harness 已完成且有 Evidence Snapshot 的输入；证据不足稳定拒绝。审核/发布/显式回滚不能写回或自动覆盖现有 `courses` 内容，普通文档不能冒充 syllabus。
+- 课程教师真实前端入口固定为 `/teacher/materials`、`/teacher/teaching-insights`、`/teacher/assignments`、`/teacher/syllabus`；它们只调用 `/teacher/production` 的受权读写 API，刷新时读取 assets、snapshot/recommendation、assignment/submission、typed-syllabus version 的持久化投影，不得回退到 `MOCK_*` 常量或展示伪成功。
 
 ### 3.5.5 协作与运营治理 T4（2026-07-15）
 

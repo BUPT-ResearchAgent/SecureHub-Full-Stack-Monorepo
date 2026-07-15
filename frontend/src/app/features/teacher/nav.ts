@@ -1,10 +1,11 @@
-// Status: mock
+// Status: partial-real
 //
 // 教师端动态 navItems：按身份过滤。综合型教师看到全部。
 
 import type { LucideIcon } from 'lucide-react';
 import {
   Bell as Megaphone,
+  BrainCircuit,
   BookOpen,
   Briefcase,
   ClipboardCheck,
@@ -13,6 +14,7 @@ import {
   GraduationCap,
   LayoutDashboard,
   RefreshCw,
+  ScrollText,
   UserCircle,
   Users,
 } from 'lucide-react';
@@ -61,6 +63,20 @@ export const TEACHER_NAV: TeacherNavItem[] = [
     icon: ClipboardCheck,
     visibleFor: ['course_teacher', 'hybrid'],
     description: '布置作业 · 自动批改建议',
+  },
+  {
+    path: '/teacher/teaching-insights',
+    label: '薄弱点与建议',
+    icon: BrainCircuit,
+    visibleFor: ['course_teacher', 'hybrid'],
+    description: '真实聚合 · Evidence 建议',
+  },
+  {
+    path: '/teacher/syllabus',
+    label: '教学大纲',
+    icon: ScrollText,
+    visibleFor: ['course_teacher', 'hybrid'],
+    description: 'typed 版本 · 审核导出',
   },
   {
     path: '/teacher/students',
