@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { apiGet } from '@/lib/api';
-import type { ResourceItem, ResourceType } from '../types';
+import type { PptDeckLayoutId, PptDeckSlide, PptDeckSpec, ResourceItem, ResourceType } from '../types';
 
 type PersistedResourceArtifact = {
   id: string;
@@ -32,6 +32,9 @@ function stringValue(value: unknown): string | undefined {
 function objectArray(value: unknown): Array<Record<string, unknown>> {
   return Array.isArray(value) ? value.filter(isRecord) : [];
 }
+
+const PptLayoutIds = new Set<PptDeckLayoutId>(['cover', 'statement', 'timeline', 'compare', 'cards', 'closing']);
+const UNSAFE_PPT_TEXT = /<\s*\/?\s*script|eval\s*\(|new\s+function|innerhtml|document\.write|javascript:/i;
 
 function extractOutput(content: Record<string, unknown> | undefined): Record<string, unknown> {
   let output: Record<string, unknown> = content ?? {};
@@ -80,6 +83,63 @@ function asQuizContent(output: Record<string, unknown>): string | undefined {
 
 function stringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string' && Boolean(item.trim())) : [];
+}
+
+function hasUnsafePptText(value: unknown): boolean {
+  if (typeof value === 'string') return UNSAFE_PPT_TEXT.test(value);
+  if (Array.isArray(value)) return value.some(hasUnsafePptText);
+  if (isRecord(value)) return Object.values(value).some(hasUnsafePptText);
+  return false;
+}
+
+function asPptDeckSpec(value: unknown): PptDeckSpec | undefined {
+  if (!isRecord(value) || hasUnsafePptText(value)) return undefined;
+  const title = stringValue(value.title);
+  const theme = stringValue(value.theme) ?? 'securehub_swiss_orange';
+  const slides: PptDeckSlide[] = [];
+  objectArray(value.slides).forEach((slide) => {
+    const layoutId = stringValue(slide.layout_id);
+    const slideTitle = stringValue(slide.title);
+    const claim = stringValue(slide.claim);
+    const bullets = stringArray(slide.bullets);
+    const evidenceRefs = stringArray(slide.evidence_refs);
+    if (!layoutId || !PptLayoutIds.has(layoutId as PptDeckLayoutId) || !slideTitle || !claim || !bullets.length || !evidenceRefs.length) {
+      return;
+    }
+    const codeDemo = isRecord(slide.code_demo)
+      ? {
+          language: stringValue(slide.code_demo.language),
+          before: stringValue(slide.code_demo.before),
+          after: stringValue(slide.code_demo.after),
+          caption: stringValue(slide.code_demo.caption),
+        }
+      : undefined;
+    slides.push({
+      layout_id: layoutId as PptDeckLayoutId,
+      title: slideTitle,
+      claim,
+      bullets,
+      code_demo: codeDemo && Object.values(codeDemo).some(Boolean) ? codeDemo : undefined,
+      evidence_refs: evidenceRefs,
+      speaker_note: stringValue(slide.speaker_note),
+    });
+  });
+  if (!title || slides.length < 3) return undefined;
+  return { title, theme, slides };
+}
+
+type PptProjection = {
+  content?: string;
+  deckSpec?: PptDeckSpec;
+  renderMode?: string;
+};
+
+function asPptProjection(output: Record<string, unknown>): PptProjection {
+  return {
+    content: asPptMarkdown(output),
+    deckSpec: asPptDeckSpec(output.deck_spec),
+    renderMode: output.render_mode === 'securehub_swiss_v1' ? 'securehub_swiss_v1' : undefined,
+  };
 }
 
 function asLabMarkdown(output: Record<string, unknown>): string | undefined {
@@ -213,12 +273,16 @@ export function useRealResourceArtifact(resource: ResourceItem): ResourceArtifac
     };
   }, [resource.id, resource.status, requestVersion]);
 
-  const content = projectArtifactContent(resource.type, persisted?.content) ?? resource.content;
+  const output = extractOutput(persisted?.content);
+  const pptProjection = resource.type === 'ppt' ? asPptProjection(output) : {};
+  const content = (resource.type === 'ppt' ? pptProjection.content : projectArtifactContent(resource.type, persisted?.content)) ?? resource.content;
   return {
     resource: {
       ...resource,
       title: persisted?.title ?? resource.title,
       content,
+      deckSpec: pptProjection.deckSpec ?? resource.deckSpec,
+      renderMode: pptProjection.renderMode ?? resource.renderMode,
       qualityScore: persisted?.quality_score ?? resource.qualityScore,
     },
     isLoading,
