@@ -48,6 +48,20 @@ class LoginRequest(BaseModel):
         return _validate_email(value)
 
 
+class PasswordRemediationRequest(BaseModel):
+    """Anonymous, current-password-verified completion of a forced remediation."""
+
+    email: str = Field(min_length=3, max_length=255)
+    current_password: str = Field(min_length=1, max_length=128)
+    new_password: str = Field(min_length=8, max_length=128)
+    reason: str = Field(default="用户完成密码整改", min_length=1, max_length=2000)
+
+    @field_validator("email")
+    @classmethod
+    def validate_email(cls, value: str) -> str:
+        return _validate_email(value)
+
+
 AppRole = Literal[
     "student",
     "course_teacher",

@@ -13,7 +13,7 @@ is introduced.
 """
 
 from collections.abc import Sequence
-from uuid import NAMESPACE_URL, uuid5
+from uuid import NAMESPACE_URL, UUID, uuid5
 
 import sqlalchemy as sa
 from alembic import op
@@ -402,7 +402,16 @@ def upgrade() -> None:
               )
             """
         ).bindparams(
-            grant_id=_stable_id("role-grant:demo-course-teacher:administrator:v1"), role_id=admin_role_id
+            sa.bindparam(
+                "grant_id",
+                value=UUID(_stable_id("role-grant:demo-course-teacher:administrator:v1")),
+                type_=postgresql.UUID(as_uuid=True),
+            ),
+            sa.bindparam(
+                "role_id",
+                value=UUID(admin_role_id),
+                type_=postgresql.UUID(as_uuid=True),
+            ),
         )
     )
 

@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - **文档目的**：作为"安枢智梯 SecureHub / CyberLadder"项目所有后续 Claude Code / Codex / Cursor 会话的默认上下文。任何在本仓库工作的 AI 助手（或新加入的工程师）应当**首先读完本文件**，再开始触碰代码。
 - **读者**：本项目团队成员；后续接入的 AI 编码助手；A3 赛题答辩评委（架构理解参考）。
-- **最后更新时间**：2026-07-15（T2 已为唯一 Web 安全 `ready` 课程建立可复现题库质量、Evidence 绑定及真实教师/课程读取；T1 教学关系、固定 9 Agent、28 Skill binding、Runtime 与七类 SSE 均不变）。
+- **最后更新时间**：2026-07-16（PR #51 的 T0～T7 功能补强已合并；`868b4904` 收敛资源生成预算、主题、终态与 durable cancel，固定 9 Agent/28 Skill 和 Swiss v1 视觉契约不变）。
 - **本文件的权威性**：在仓库层面，本文件 > `README.md` / `docs/architecture.md` / `docs/backend-overview.md`。当本文件与代码现状冲突时，**以代码为准并立即更新本文件**；当本文件与外部 4 份文档冲突时，**以本文件 §19 的"差异说明"为准**。
 
 ### 阅读约定（什么时候回读外部文档？）
@@ -33,13 +33,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ---
 
-## 0A. 当前阶段与统一语言规范（2026-07-14）
+## 0A. 当前阶段与统一语言规范（2026-07-16）
 
 > 本节用于修正 2026-07-08 前后文档中的阶段漂移。后续回答、任务提示词、PR 描述均按本节措辞执行。
 
 | 维度 | 统一口径 |
 |---|---|
-| 当前阶段 | **Runtime v1.1 Wave 0-6 已签收，A3-S5~S7 均为 `real-accepted`**；S8 保持 `planned` + `external-gate-open`，Spark primary/DeepSeek replacement/Spark cancel 规划保留但暂缓执行；当前优先赛前 PPT/试题 Skill 评估、curated fallback、资料可视化、数据/案例/测试证据与评分机制 |
+| 当前阶段 | **Runtime v1.1 Wave 0-6 已签收，A3-S5~S7 均为 `real-accepted`**；PR #51 已合并 T0～T7 功能补强，Prompt 13 不再是当前待执行任务。`868b4904` 是合并后的资源生成可靠性修复；S8 仍为 `planned` + `external-gate-open`，Spark Gate 保留且暂缓 |
 | Runtime 核心 | `RuntimeEngine`、`SecureHubStateMachine`、framework-neutral `WorkflowDefinition`、唯一 `SkillExecutor`、PostgreSQL durable store/outbox、Worker/lease/fencing/recovery 均已落地 |
 | 产品路径 | `/profile/chat`、`/courses/{id}/plan`、`/courses/{id}/resources/generate`、`/tutor/ask`、`/assessment/run` 都是 `WorkflowApplicationService` adapter，复用唯一可查询 root UUID |
 | A3-S5~S7 | S5 使用 `assessment_update_v2` atomic audit；S6 从同一 durable root 投影 Evidence/Agent/QualityCheck/Provider/Artifact/control；S7 使用独立 `fund_recommendation_v1`、固定 9 Agent/28 bindings、`domain=fund` 共享知识资产和 server-side profile snapshot |
@@ -47,6 +47,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | 阶段状态 | 正式生命周期为 `planned -> in_progress -> code_complete -> engineering-accepted -> real-accepted`；`external-gate-open` 仅是正交 Gate 标记，不能替代或拼接为生命周期状态 |
 | 真实联调证据 | Golden Slice 与五条产品路径均以 `real / deepseek / deepseek-v4-pro` 成功；五路径共 17 条 `agent_runs`/Provider Call。cancel root `2daf935b-e3b7-4dbe-af34-d792dffc66d3` 为 `cancelled`，21 条 live/replay SSE 一致且终态后无 token/artifact |
 | 前端与 SSE | `WorkflowRunClient` 使用 typed reducer、Last-Event-ID、durable gap replay、duplicate dedupe 与 provider stream replacement；对外事件固定七类 |
+| 资源生成 / PPT | `resource_generate_v1` 区分单次 Provider cap 与累计节点预算，保留一次显式 QualityCheck 返工；服务端按 `kp_id` 锁定知识点主题。失败/取消保留上一版 ready artifact，成功才原子替换；取消调用 durable API。`00457ae0` 的 Swiss v1 视觉链未改 |
 | 不可倒退语义 | real 失败不得进入 fixture；QualityCheck 不得内嵌/放宽；Redis 不是任务、lease、state 或 event 真相；Provider unknown 不假装 exactly-once |
 | COS Runtime Gate | 2026-07-12 以进程级 `STORAGE_PROVIDER=cos` 真实完成 upload、head、download、signed URL、delete；此前 HTTP 451 仅为历史记录。此结论不等于 GitHub 外 data 已全量同步 |
 | 当前外部 Gate | `XFYUN_API_KEY` 为空；Spark primary、首 token 后受控中断、真实 DeepSeek draft replacement 与 Spark cancel 均未执行、未伪造。该 Gate 未取消，但当前暂缓排期；赛前物料完成不能替代 Spark 验收 |
@@ -205,6 +206,13 @@ quiz_attempts / learning_events
 - `20260715_1084` 的 `password_policies` / `account_password_compliance` 与 `api_request_audit_events` / `api_risk_rules` / `api_risk_events` / `api_risk_actions` 是 FG-07/FG-08 的唯一持久层；只引用既有 `users` 与 T4 active 管理授权，绝不复制身份、课程、画像或知识资产。
 - 密码 hash 只允许存在于 `users.hashed_password`。旧策略整改只依据账号合规记录的 `evaluated_policy_version`，不能扫描/读取/反推 hash；注册、本人改密、管理员重置只在请求明文存活期间校验 active policy。策略激活必须留下有期限、原因和审计的 break-glass，不能锁死所有管理员。
 - `/api/v1/*` 风险中间件只写 HMAC 化 IP/设备、路由模板、方法、响应码、桶化尺寸/速率、可选 actor、受限 correlation id、脱敏版本/保留期；禁止 Authorization、Cookie、密码、token、原始 payload、完整 IP/设备值。只有 active `administrator` 可管理规则、解除/复核事件；Provider limiter 不构成全站 API 风控。
+
+### 3.5.7 资源生成终态与 PPT（2026-07-16）
+
+- `NodeDefinition.provider_max_tokens` 仅在显式设置时进入 definition serialization；旧 workflow digest/预算行为不得漂移。`resource_generate_v1.producer` 单次 cap 为 2400、累计预算为 8000，且最多一次 QualityCheck 返工。
+- defect code/message 必须进入 durable checkpoint 并反馈给返工；资源主题由服务端校验 `kp_id`、课程和 domain 后构造。不得用前端标题主导 RAG，也不得绕过或放宽显式 QualityCheck。
+- 前端 generation attempt 不得覆盖上一版 ready artifact。只有 root `succeeded` 后原子切换；失败或取消结束 loading 并保留旧版本。`WorkflowRunClient.cancel(runId)` 是真实取消，unsubscribe 不是取消。
+- `00457ae0` 的 Swiss v1 schema/prompt/fixture/renderer 是冻结视觉基线；`868b4904` 只修执行与状态链。真实外部故障仍须诚实失败，本修复不关闭 Spark Gate。
 
 ### 3.6 ❌ 不要绕开 RAG 直接调 LLM（生成必须经 Harness 完整链路）
 

@@ -20,7 +20,7 @@ from app.db.models.identity.user import User
 from app.repositories.identity.capabilities import UserCapabilityRepository
 from app.repositories.identity.profiles import UserProfileRepository
 from app.repositories.identity.users import UserRepository
-from app.schemas.auth import AuthUser, LoginRequest, RegisterRequest, TokenResponse
+from app.schemas.auth import AuthUser, LoginRequest, PasswordRemediationRequest, RegisterRequest, TokenResponse
 from app.schemas.security import PasswordChangeRequest, PasswordComplianceDTO
 from app.services.security.security_service import SecurityDomainError, SecurityGovernanceService
 
@@ -129,6 +129,37 @@ class AuthService:
                 "当前账号需要按最新密码策略完成整改后再登录。",
             )
         return self._token_response(user)
+
+    async def remediate_password(self, payload: PasswordRemediationRequest) -> PasswordComplianceDTO:
+        """Complete a forced remediation without issuing a normal session first."""
+
+        email = payload.email.strip().lower()
+        user = await self.users.get_by_email(email)
+        if user is None or not verify_password(payload.current_password, user.hashed_password):
+            raise _auth_error(status.HTTP_401_UNAUTHORIZED, "INVALID_CREDENTIALS", "账号或密码错误")
+        if not user.is_active:
+            raise _auth_error(status.HTTP_403_FORBIDDEN, "USER_DISABLED", "账号已停用")
+
+        try:
+            compliance = await self.security_governance.evaluate_login_compliance(user=user)
+        except SecurityDomainError as err:
+            await self.session.rollback()
+            raise _auth_error(err.status_code, err.code, err.message) from err
+        if compliance.login_allowed:
+            raise _auth_error(
+                status.HTTP_409_CONFLICT,
+                "PASSWORD_REMEDIATION_NOT_REQUIRED",
+                "当前账号不需要使用受限密码整改入口。",
+            )
+
+        return await self.change_password(
+            user=user,
+            payload=PasswordChangeRequest(
+                current_password=payload.current_password,
+                new_password=payload.new_password,
+                reason=payload.reason,
+            ),
+        )
 
     async def change_password(self, *, user: User, payload: PasswordChangeRequest) -> PasswordComplianceDTO:
         try:

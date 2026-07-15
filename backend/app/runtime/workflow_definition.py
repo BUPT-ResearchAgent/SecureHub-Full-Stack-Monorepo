@@ -49,6 +49,7 @@ class NodeDefinition:
     risk_level: Literal["low", "medium", "high"] = "low"
     approval_required: bool = False
     budget_tokens: int | None = None
+    provider_max_tokens: int | None = None
 
     def __post_init__(self) -> None:
         if not self.node_id:
@@ -64,9 +65,11 @@ class NodeDefinition:
             raise ValueError("node max_concurrency must be positive")
         if self.budget_tokens is not None and self.budget_tokens < 1:
             raise ValueError("node budget_tokens must be positive")
+        if self.provider_max_tokens is not None and self.provider_max_tokens < 1:
+            raise ValueError("node provider_max_tokens must be positive")
 
     def serializable(self) -> dict[str, Any]:
-        return {
+        payload = {
             "node_id": self.node_id,
             "kind": self.kind,
             "agent_name": self.agent_name,
@@ -82,6 +85,11 @@ class NodeDefinition:
             "approval_required": self.approval_required,
             "budget_tokens": self.budget_tokens,
         }
+        # Omitting the unset extension preserves every pre-existing workflow
+        # digest and therefore compatibility for roots already in flight.
+        if self.provider_max_tokens is not None:
+            payload["provider_max_tokens"] = self.provider_max_tokens
+        return payload
 
 
 @dataclass(frozen=True)

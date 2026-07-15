@@ -12,10 +12,19 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from sqlalchemy.ext.compiler import compiles
 
 from app.db.base import Base
+from app.db.models.education.education_domain import GovernanceAuditEvent
+from app.db.models.governance.governance import RoleDefinition, UserRoleGrant
 from app.db.models.identity.user import User
 from app.db.models.identity.user_capability import UserCapability
 from app.db.models.identity.user_profile import UserProfile
-from app.db.seeds._constants import DEMO_ACCOUNTS, DEMO_USER_EMAIL, DEMO_USER_PASSWORD
+from app.db.models.security.account_security import AccountPasswordCompliance, PasswordPolicy
+from app.db.seeds._constants import (
+    DEMO_ACCOUNTS,
+    DEMO_USER_EMAIL,
+    DEMO_USER_PASSWORD,
+    SECURITY_REMEDIATION_DEMO_USER_EMAIL,
+    SECURITY_REMEDIATION_DEMO_USER_PASSWORD,
+)
 from app.db.seeds.seed_demo_user import run as seed_demo_user
 from app.db.session import get_session
 from app.main import app
@@ -46,7 +55,16 @@ def auth_client(tmp_path: Path) -> Iterator[TestClient]:
         async with engine.begin() as conn:
             await conn.run_sync(
                 Base.metadata.create_all,
-                tables=[User.__table__, UserProfile.__table__, UserCapability.__table__],
+                tables=[
+                    User.__table__,
+                    UserProfile.__table__,
+                    UserCapability.__table__,
+                    PasswordPolicy.__table__,
+                    AccountPasswordCompliance.__table__,
+                    GovernanceAuditEvent.__table__,
+                    RoleDefinition.__table__,
+                    UserRoleGrant.__table__,
+                ],
             )
         async with sessionmaker() as session:
             await seed_demo_user(session)
@@ -152,6 +170,19 @@ def test_demo_account_can_login(auth_client: TestClient) -> None:
     assert body["user"]["display_name"] == "陈同学"
     assert body["user"]["role"] == "student"
     assert body["access_token"]
+
+
+def test_password_remediation_demo_account_is_deterministically_blocked(auth_client: TestClient) -> None:
+    response = auth_client.post(
+        "/api/v1/auth/login",
+        json={
+            "email": SECURITY_REMEDIATION_DEMO_USER_EMAIL,
+            "password": SECURITY_REMEDIATION_DEMO_USER_PASSWORD,
+        },
+    )
+
+    assert response.status_code == 403
+    assert response.json()["detail"]["code"] == "PASSWORD_REMEDIATION_REQUIRED"
 
 
 def test_teacher_demo_account_has_server_issued_role_and_context(auth_client: TestClient) -> None:

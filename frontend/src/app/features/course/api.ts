@@ -427,6 +427,11 @@ export function startCourseTask(
   return startWorkflowStream(createCourseTaskRequest(command), handlers, options.mode ?? 'real');
 }
 
+/** Requests durable cancellation; this is intentionally distinct from unsubscribing the SSE view. */
+export function cancelCourseTask(runId: string) {
+  return workflowRunClient.cancel(runId);
+}
+
 /** Starts the additive v2 six-resource bundle without changing the five task intents. */
 export function startCourseResourcePack(
   context: CourseTaskContext,
@@ -505,6 +510,7 @@ function dispatchWorkflowEvent(event: WorkflowEvent, handlers: WorkflowProductHa
         resource_type: payload.resource_type,
         object_key: payload.object_key ?? undefined,
         title: payload.title,
+        quality_score: payload.quality_score,
       });
       return;
     }
@@ -529,6 +535,7 @@ function dispatchWorkflowEvent(event: WorkflowEvent, handlers: WorkflowProductHa
         run_id: event.workflow_run_id,
         final_output_ref: payload.final_output_ref ?? '',
         quality_score: payload.quality_score ?? 0,
+        status: payload.status,
       });
       return;
     }

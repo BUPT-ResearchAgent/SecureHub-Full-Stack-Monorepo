@@ -121,6 +121,7 @@ class TypedWorkflowState(MutableMapping[str, dict[str, Any]]):
         normalized = [
             {
                 "code": str(item.get("code") or item.get("taxonomy") or "unknown"),
+                "message": str(item.get("message") or item.get("reason") or "")[:400],
                 "target": str(item.get("target_node") or item.get("resource_type") or ""),
             }
             for item in defects
@@ -128,9 +129,33 @@ class TypedWorkflowState(MutableMapping[str, dict[str, Any]]):
         ]
         normalized.sort(key=lambda item: (item["code"], item["target"]))
         signature = {"node_id": node_id, "defects": normalized}
-        repeated = signature in self.defect_history
+        repeat_key = [(item["code"], item["target"]) for item in normalized]
+        repeated = any(
+            str(previous.get("node_id") or "") == node_id
+            and [
+                (str(item.get("code") or ""), str(item.get("target") or ""))
+                for item in previous.get("defects", [])
+                if isinstance(item, dict)
+            ] == repeat_key
+            for previous in self.defect_history
+            if isinstance(previous, dict)
+        )
         self.defect_history.append(signature)
         return repeated
+
+    def latest_defect_signature(self) -> dict[str, Any] | None:
+        """Return a detached copy of the latest durable QualityCheck feedback."""
+        for item in reversed(self.defect_history):
+            if not isinstance(item, dict):
+                continue
+            defects = item.get("defects")
+            if not isinstance(defects, list):
+                continue
+            return {
+                "node_id": str(item.get("node_id") or ""),
+                "defects": [dict(defect) for defect in defects if isinstance(defect, dict)],
+            }
+        return None
 
     def checkpoint_payload(self) -> dict[str, Any]:
         return {

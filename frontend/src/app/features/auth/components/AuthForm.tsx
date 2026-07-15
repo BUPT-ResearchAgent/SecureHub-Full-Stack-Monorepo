@@ -7,14 +7,16 @@ import { Checkbox } from '@/app/components/ui/checkbox';
 import { Input } from '@/app/components/ui/input';
 import { Label } from '@/app/components/ui/label';
 import { ApiError } from '@/lib/api';
+import * as authApi from '../api';
 import { useAuth } from '../store';
 import { PasswordField } from './PasswordField';
 import { PasswordStrengthMeter, evaluatePasswordStrength } from './PasswordStrength';
 import { DEMO_ACCOUNTS, getDemoAccount, resolvePostLoginPath } from '../demoAccounts';
-import type { AppRole } from '../types';
 
 type AuthFormMode = 'login' | 'register';
-type FieldErrors = Partial<Record<'email' | 'password' | 'displayName' | 'confirmPassword', string>>;
+type FieldErrors = Partial<
+  Record<'email' | 'password' | 'displayName' | 'confirmPassword' | 'newPassword' | 'confirmNewPassword', string>
+>;
 
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -52,18 +54,24 @@ export function AuthForm({ mode }: { mode: AuthFormMode }) {
   const [loading, setLoading] = useState(false);
   const [formError, setFormError] = useState('');
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
-  const [selectedDemoRole, setSelectedDemoRole] = useState<AppRole | null>(
-    requestedDemo?.role ?? null,
+  const [remediationRequired, setRemediationRequired] = useState(false);
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmNewPassword, setConfirmNewPassword] = useState('');
+  const [selectedDemoId, setSelectedDemoId] = useState<string | null>(
+    requestedDemo?.id ?? null,
   );
 
   useEffect(() => {
     if (requestedDemo) {
-      setSelectedDemoRole(requestedDemo.role);
+      setSelectedDemoId(requestedDemo.id);
       setEmail(requestedDemo.email);
       setPassword(requestedDemo.password);
       setRemember(true);
       setFieldErrors({});
       setFormError('');
+      setRemediationRequired(false);
+      setNewPassword('');
+      setConfirmNewPassword('');
     }
   }, [requestedDemo]);
 
@@ -105,15 +113,69 @@ export function AuthForm({ mode }: { mode: AuthFormMode }) {
     return Object.keys(next).length === 0;
   };
 
-  const selectDemo = (role: AppRole) => {
-    const account = getDemoAccount(role);
+  const validateRemediation = () => {
+    const next: FieldErrors = {};
+    if (!emailPattern.test(email.trim())) {
+      next.email = '邮箱格式错误';
+    }
+    if (!password) {
+      next.password = '请先填写当前密码';
+    }
+    if (evaluatePasswordStrength(newPassword).score < 4) {
+      next.newPassword = '新密码强度不足';
+    }
+    if (newPassword !== confirmNewPassword) {
+      next.confirmNewPassword = '两次新密码不一致';
+    }
+    setFieldErrors(next);
+    return Object.keys(next).length === 0;
+  };
+
+  const completeRemediation = async () => {
+    setFormError('');
+    if (!validateRemediation()) return;
+    setLoading(true);
+    try {
+      await authApi.remediatePassword({
+        email: email.trim(),
+        current_password: password,
+        new_password: newPassword,
+        reason: '登录前完成当前密码策略整改。',
+      });
+      setPassword(newPassword);
+      setFieldErrors({});
+      setRemediationRequired(false);
+      const signedInUser = await auth.login(
+        { email: email.trim(), password: newPassword },
+        { remember },
+      );
+      toast.success('密码整改完成，已重新登录');
+      navigate(
+        resolvePostLoginPath(
+          signedInUser.role,
+          hasRequestedRedirect ? redirect : null,
+        ),
+        { replace: true },
+      );
+    } catch (error) {
+      setFormError(errorMessage(error));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const selectDemo = (id: string) => {
+    const account = getDemoAccount(id);
     if (!account) return;
-    setSelectedDemoRole(account.role);
+    setSelectedDemoId(account.id);
     setEmail(account.email);
     setPassword(account.password);
     setRemember(true);
     setFieldErrors({});
     setFormError('');
+    setRemediationRequired(false);
+    setNewPassword('');
+    setConfirmNewPassword('');
   };
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
@@ -135,6 +197,7 @@ export function AuthForm({ mode }: { mode: AuthFormMode }) {
         navigate('/workspace', { replace: true });
       } else {
         const signedInUser = await auth.login({ email: email.trim(), password }, { remember });
+        setRemediationRequired(false);
         toast.success('登录成功');
         navigate(
           resolvePostLoginPath(
@@ -145,6 +208,9 @@ export function AuthForm({ mode }: { mode: AuthFormMode }) {
         );
       }
     } catch (error) {
+      if (!isRegister && error instanceof ApiError && error.code === 'PASSWORD_REMEDIATION_REQUIRED') {
+        setRemediationRequired(true);
+      }
       setFormError(errorMessage(error));
     } finally {
       setLoading(false);
@@ -177,20 +243,36 @@ export function AuthForm({ mode }: { mode: AuthFormMode }) {
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
             {DEMO_ACCOUNTS.map((account) => {
               const Icon = account.icon;
-              const selected = account.role === selectedDemoRole;
+              const selected = account.id === selectedDemoId;
+              const remediationDemo = account.tone === 'remediation';
               return (
                 <button
-                  key={account.role}
+                  key={account.id}
                   type="button"
-                  onClick={() => selectDemo(account.role)}
+                  onClick={() => selectDemo(account.id)}
                   disabled={loading}
+                  aria-pressed={selected}
                   className={`group rounded-lg border p-3 text-left transition-all disabled:cursor-not-allowed disabled:opacity-60 ${
                     selected
-                      ? 'border-brand-blue-600 bg-white shadow-sm'
-                      : 'border-slate-200 bg-white/70 hover:-translate-y-0.5 hover:border-brand-blue-200 hover:bg-white'
-                  } ${account.role === 'hybrid' ? 'sm:col-span-2' : ''}`}
+                      ? remediationDemo
+                        ? 'border-amber-500 bg-amber-50 shadow-sm'
+                        : 'border-brand-blue-600 bg-white shadow-sm'
+                      : remediationDemo
+                        ? 'border-amber-200 bg-amber-50/70 hover:-translate-y-0.5 hover:border-amber-400 hover:bg-amber-50'
+                        : 'border-slate-200 bg-white/70 hover:-translate-y-0.5 hover:border-brand-blue-200 hover:bg-white'
+                  } ${account.fullWidth ? 'sm:col-span-2' : ''}`}
                 >
-                  <span className={`flex h-7 w-7 items-center justify-center rounded-md ${selected ? 'bg-brand-blue-600 text-white' : 'bg-slate-100 text-slate-600'} transition-colors group-hover:bg-brand-blue-600 group-hover:text-white`}>
+                  <span
+                    className={`flex h-7 w-7 items-center justify-center rounded-md transition-colors ${
+                      selected
+                        ? remediationDemo
+                          ? 'bg-amber-600 text-white'
+                          : 'bg-brand-blue-600 text-white'
+                        : remediationDemo
+                          ? 'bg-amber-100 text-amber-700 group-hover:bg-amber-600 group-hover:text-white'
+                          : 'bg-slate-100 text-slate-600 group-hover:bg-brand-blue-600 group-hover:text-white'
+                    }`}
+                  >
                     <Icon className="h-4 w-4" aria-hidden />
                   </span>
                   <span className="mt-2 block text-sm font-semibold text-slate-800">{account.label}</span>
@@ -252,6 +334,47 @@ export function AuthForm({ mode }: { mode: AuthFormMode }) {
         />
 
         {(isRegister || password) && <PasswordStrengthMeter password={password} />}
+
+        {!isRegister && remediationRequired && (
+          <section className="space-y-3 rounded-xl border border-amber-200 bg-amber-50 p-4">
+            <div>
+              <h2 className="text-sm font-semibold text-amber-950">完成密码整改</h2>
+              <p className="mt-1 text-xs leading-5 text-amber-900">
+                请使用上方当前密码验证身份，并设置符合当前策略的新密码。完成后系统才会签发登录会话。
+              </p>
+            </div>
+            <PasswordField
+              id="new-password"
+              label="新密码"
+              value={newPassword}
+              onChange={setNewPassword}
+              disabled={loading}
+              error={fieldErrors.newPassword}
+              autoComplete="new-password"
+              placeholder="至少 8 位，含大小写、数字和符号"
+            />
+            <PasswordStrengthMeter password={newPassword} />
+            <PasswordField
+              id="confirm-new-password"
+              label="确认新密码"
+              value={confirmNewPassword}
+              onChange={setConfirmNewPassword}
+              disabled={loading}
+              error={fieldErrors.confirmNewPassword}
+              autoComplete="new-password"
+              placeholder="再次输入新密码"
+            />
+            <button
+              type="button"
+              onClick={() => void completeRemediation()}
+              disabled={loading}
+              className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-lg bg-amber-700 px-4 text-sm font-semibold text-white transition-colors hover:bg-amber-800 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <LogIn className="h-4 w-4" />}
+              更新密码并重新登录
+            </button>
+          </section>
+        )}
 
         {isRegister && (
           <PasswordField

@@ -251,6 +251,10 @@ class RuntimeEngine:
                     state.pop(current.node_id, None)
                     for rework_target in successors:
                         state.pop(rework_target.node_id, None)
+                    # Persist the frozen defect and invalidation before a new
+                    # Provider attempt so crash recovery cannot lose feedback
+                    # or resurrect the rejected candidate.
+                    await self._write_checkpoint(run, definition, state)
                     if len(successors) == 1:
                         current = successors[0]
                         continue
@@ -362,6 +366,10 @@ class RuntimeEngine:
             return await self._execute_action(run, definition, node, root_input, state, attempt)
         skill = self._resolve_skill(definition, node, root_input)
         projected_state = state.project(definition.input_sources_for(node.node_id))
+        if attempt > 1:
+            rework = state.latest_defect_signature()
+            if rework is not None:
+                projected_state["__quality_rework__"] = rework
         mapped_input = node.input_mapper(root_input, projected_state) if node.input_mapper else dict(root_input)
         step = await self.run_store.create_step_attempt(
             workflow_run_id=run.id,
@@ -1121,7 +1129,13 @@ class RuntimeEngine:
             )
 
         limits = dict((run.budget or {}).get("limits") or {})
-        max_tokens = node.budget_tokens or limits.get("max_provider_tokens") or limits.get("max_tokens") or 800
+        max_tokens = (
+            node.provider_max_tokens
+            or node.budget_tokens
+            or limits.get("max_provider_tokens")
+            or limits.get("max_tokens")
+            or 800
+        )
         return ExecutionContext(
             workflow_run_id=run.id,
             step_attempt_id=step.id,
@@ -1149,7 +1163,12 @@ class RuntimeEngine:
 
     async def _reserve_node_budget(self, run: Any, node: NodeDefinition) -> None:
         limits = dict((run.budget or {}).get("limits") or {})
-        estimate = int(node.budget_tokens or limits.get("max_provider_tokens") or 1)
+        estimate = int(
+            node.provider_max_tokens
+            or node.budget_tokens
+            or limits.get("max_provider_tokens")
+            or 1
+        )
         def reserve(raw: dict[str, Any]) -> dict[str, Any]:
             BudgetController.assert_can_start_node(
                 raw,
@@ -1189,6 +1208,14 @@ class RuntimeEngine:
                 node_id=node.node_id,
                 provider=provider,
                 usage=usage,
+                # Only definitions that explicitly split Provider completion
+                # cap from cumulative node budget opt into settle-time node
+                # enforcement. Legacy nodes keep their prior semantics.
+                node_limit_tokens=(
+                    node.budget_tokens
+                    if node.provider_max_tokens is not None
+                    else None
+                ),
             )
 
         await self.run_store.mutate_budget(

@@ -303,11 +303,13 @@ def upgrade() -> None:
     op.create_index("ix_benchmark_case_results_run_id", "benchmark_case_results", ["run_id"])
     op.create_index("ix_benchmark_case_results_run_decision", "benchmark_case_results", ["run_id", "decision"])
 
-    # Explicit constant SQL keeps JSONB seed rows compilable in Alembic's
-    # PostgreSQL offline mode.  These are immutable metadata assets, not user
-    # data, and use no request-derived values.
+    # DDL keeps the colon-bearing JSONB literal out of SQLAlchemy's bind-parameter
+    # parser while remaining compilable in Alembic's PostgreSQL offline mode.
+    # These are immutable metadata assets, not user data, and use no
+    # request-derived values.
     op.execute(
-        f"""
+        sa.DDL(
+            f"""
         INSERT INTO fairness_policies
           (id, code, version_no, purpose, allowed_group_keys, minimum_sample,
            pass_score, thresholds, retention_days, status)
@@ -316,7 +318,8 @@ def upgrade() -> None:
            '经明确同意后，对已发布教育评估的非敏感 cohort 聚合公平监控；不用于个体处分。',
            '["cohort"]'::jsonb, 20, 60.0,
            '{{"max_mean_score_gap":10.0,"max_pass_rate_gap":0.2}}'::jsonb, 90, 'active')
-        """
+            """
+        )
     )
     benchmark_rows = (
         (

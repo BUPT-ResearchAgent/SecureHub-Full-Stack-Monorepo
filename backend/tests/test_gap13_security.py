@@ -16,13 +16,12 @@ from app.db.models.governance.governance import RoleDefinition, UserRoleGrant
 from app.db.models.identity.user import User
 from app.db.models.security.account_security import AccountPasswordCompliance, ApiRequestAuditEvent
 from app.repositories.identity.users import UserRepository
-from app.schemas.auth import LoginRequest, RegisterRequest
+from app.schemas.auth import LoginRequest, PasswordRemediationRequest, RegisterRequest
 from app.schemas.security import (
     ApiRiskReleaseRequest,
     ApiRiskReviewRequest,
     ApiRiskRuleActivateRequest,
     ApiRiskRuleCreateRequest,
-    PasswordChangeRequest,
     PasswordPolicyActivateRequest,
     PasswordPolicyCreateRequest,
     PasswordResetRequest,
@@ -124,9 +123,9 @@ async def test_gap13_security_password_remediation_and_api_risk_replay(sqlite_se
     assert legacy_state.required_policy_version == active.version_no
     assert legacy_state.notification_pending is True
 
-    remediated = await security.change_own_password(
-        user=legacy_user,
-        payload=PasswordChangeRequest(
+    remediated = await auth.remediate_password(
+        PasswordRemediationRequest(
+            email=legacy_user.email,
             current_password="LegacyPass1!",
             new_password="RemediatedPass1!",
             reason="完成新版密码策略整改。",
@@ -150,6 +149,17 @@ async def test_gap13_security_password_remediation_and_api_risk_replay(sqlite_se
     assert fresh_user is not None
     fresh_state = await security.get_my_compliance(user=fresh_user)
     assert fresh_state.status == "compliant"
+    with pytest.raises(HTTPException) as compliant_account_denied:
+        await auth.remediate_password(
+            PasswordRemediationRequest(
+                email=fresh_user.email,
+                current_password="FreshRegistration1!",
+                new_password="AnonymousRouteDenied1!",
+            )
+        )
+    assert compliant_account_denied.value.status_code == 409
+    assert compliant_account_denied.value.detail["code"] == "PASSWORD_REMEDIATION_NOT_REQUIRED"
+
     reset_state = await security.reset_password_as_admin(
         actor=administrator,
         target_user_id=reset_target.id,

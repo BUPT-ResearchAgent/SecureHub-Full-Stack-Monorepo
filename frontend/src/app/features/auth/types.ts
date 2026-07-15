@@ -18,6 +18,13 @@ export type LoginRequest = {
   password: string;
 };
 
+export type PasswordRemediationRequest = {
+  email: string;
+  current_password: string;
+  new_password: string;
+  reason?: string;
+};
+
 export type RegisterRequest = {
   email: string;
   password: string;

@@ -22,6 +22,15 @@ DEMO_USER_EMAIL = "demo-student@securehub.local"
 DEMO_USER_NAME = "陈同学"
 DEMO_USER_PASSWORD = "SecureHub@2026"
 
+# This account is intentionally kept outside ``DEMO_ACCOUNTS``: it is not a
+# normal role-entry shortcut, but a local-only fixture for demonstrating the
+# password-remediation flow.  Its password is deliberately below the active
+# policy and the seed records policy version 0 without inspecting its hash.
+SECURITY_REMEDIATION_DEMO_USER_ID: UUID = stable_id("user:demo-password-remediation")
+SECURITY_REMEDIATION_DEMO_USER_EMAIL = "demo-password-remediation@securehub.local"
+SECURITY_REMEDIATION_DEMO_USER_NAME = "密码整改演示账号"
+SECURITY_REMEDIATION_DEMO_USER_PASSWORD = "demo123"
+
 # Demo accounts are deliberately deterministic so presentation flows can be
 # reset without browser-local role state.  Passwords stay in the development
 # seed and are never returned by an API response.

@@ -46,25 +46,61 @@ PRODUCER_BY_RESOURCE_TYPE: dict[ResourceKind, tuple[str, str]] = {
     "readings": ("topic_explorer", "RecommendReadings"),
 }
 
-RESOURCE_GENERATE_PRODUCER_BUDGET_TOKENS = 2400
+RESOURCE_GENERATE_PRODUCER_PROVIDER_MAX_TOKENS = 2400
+RESOURCE_GENERATE_PRODUCER_BUDGET_TOKENS = 8000
+
+PPT_QUALITY_ARTIFACT_FIELDS = (
+    "deck_spec",
+    "render_mode",
+    "evidence_chunk_ids",
+)
 
 
-def producer_input(root_input: dict[str, Any], _state: dict[str, Any]) -> dict[str, Any]:
+def producer_input(root_input: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
+    query = str(root_input["query"])
+    rework = state.get("__quality_rework__")
+    defects = rework.get("defects") if isinstance(rework, dict) else None
+    if isinstance(defects, list):
+        feedback = [
+            f"{str(item.get('code') or 'quality_defect')}: {str(item.get('message') or '').strip()}"
+            for item in defects[:5]
+            if isinstance(item, dict)
+        ]
+        if feedback:
+            query = (
+                f"{query}\nQuality rework required. Correct these defects without changing the "
+                f"knowledge-point scope: {'; '.join(feedback)}"
+            )
     return {
         "user_id": root_input["user_id"],
-        "query": root_input["query"],
+        "query": query,
         "domain": root_input.get("domain", "course_websec"),
         "kp_id": root_input.get("kp_id"),
     }
 
 
+def _quality_artifact(resource_type: ResourceKind, candidate: object) -> object:
+    """Remove PPT compatibility duplicates before the guarded quality boundary."""
+    if resource_type != "ppt" or not isinstance(candidate, dict):
+        return candidate
+    return {
+        field: candidate[field]
+        for field in PPT_QUALITY_ARTIFACT_FIELDS
+        if field in candidate
+    }
+
+
 def quality_input(root_input: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
     candidate = state.get("producer", {})
+    artifact = candidate.get("output", candidate)
     return {
         "user_id": root_input["user_id"],
-        "query": f"Quality check resource type {root_input['resource_type']}",
+        "query": (
+            f"Quality check {root_input['resource_type']} for task: "
+            f"{root_input['query']}"
+        ),
         "domain": root_input.get("domain", "course_websec"),
-        "artifact": candidate.get("output", candidate),
+        "artifact": _quality_artifact(root_input["resource_type"], artifact),
     }
 
 
@@ -84,6 +120,7 @@ RESOURCE_GENERATE_V1 = WorkflowDefinition(
             retry_limit=0,
             input_sources=(),
             budget_tokens=RESOURCE_GENERATE_PRODUCER_BUDGET_TOKENS,
+            provider_max_tokens=RESOURCE_GENERATE_PRODUCER_PROVIDER_MAX_TOKENS,
         ),
         NodeDefinition(
             node_id="quality_check",
@@ -118,7 +155,11 @@ RESOURCE_GENERATE_V1 = WorkflowDefinition(
 
 __all__ = [
     "PRODUCER_BY_RESOURCE_TYPE",
+    "PPT_QUALITY_ARTIFACT_FIELDS",
+    "RESOURCE_GENERATE_PRODUCER_BUDGET_TOKENS",
+    "RESOURCE_GENERATE_PRODUCER_PROVIDER_MAX_TOKENS",
     "RESOURCE_GENERATE_V1",
     "ResourceGenerateInput",
     "ResourceGenerateOutput",
+    "quality_input",
 ]
