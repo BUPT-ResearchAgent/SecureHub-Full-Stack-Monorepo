@@ -1,4 +1,4 @@
-// Status: mock
+// Status: partial-real
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -23,6 +23,7 @@ import {
 } from '@/lib/mock/teacher.mock';
 import { courseCatalog } from '@/app/features/course/catalog/courseCatalog';
 import { StudentResourceApprovals } from '../components/StudentResourceApprovals';
+import { TeacherMaterialsReal } from './TeacherMaterialsReal';
 
 const PIPELINE_STEPS: { agent: string; skill: string; title: string }[] = [
   { agent: 'doc_archivist', skill: 'ParseDocument', title: '解析文档结构' },
@@ -41,6 +42,12 @@ type PipelineSlot = {
 type MaterialsTab = 'library' | 'student-generated';
 
 export function TeacherMaterials() {
+  return <TeacherMaterialsReal />;
+}
+
+// Kept as an explicit legacy visual-only fallback while the main route above
+// reads the durable T3 governance API. It is not a production success path.
+function LegacyMockTeacherMaterials() {
   const [role] = useActiveRole();
   const [tab, setTab] = useState<MaterialsTab>('library');
   const [keyword, setKeyword] = useState('');
