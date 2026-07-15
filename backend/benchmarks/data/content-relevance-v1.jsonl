@@ -1,0 +1,4 @@
+{"case_key":"content-001","expected_label":"relevant","predicted_label":"relevant","group_key":"source_type","group_value":"course_doc"}
+{"case_key":"content-002","expected_label":"relevant","predicted_label":"irrelevant","group_key":"source_type","group_value":"course_doc"}
+{"case_key":"content-003","expected_label":"irrelevant","predicted_label":"irrelevant","group_key":"source_type","group_value":"policy_excerpt"}
+{"case_key":"content-004","expected_label":"irrelevant","predicted_label":"relevant","group_key":"source_type","group_value":"policy_excerpt"}

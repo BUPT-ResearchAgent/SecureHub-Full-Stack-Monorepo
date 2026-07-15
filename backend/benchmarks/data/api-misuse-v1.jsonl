@@ -1,0 +1,4 @@
+{"case_key":"api-001","expected_label":"misuse","predicted_label":"misuse","group_key":"route_family","group_value":"auth"}
+{"case_key":"api-002","expected_label":"misuse","predicted_label":"normal","group_key":"route_family","group_value":"auth"}
+{"case_key":"api-003","expected_label":"normal","predicted_label":"normal","group_key":"route_family","group_value":"course"}
+{"case_key":"api-004","expected_label":"normal","predicted_label":"misuse","group_key":"route_family","group_value":"course"}

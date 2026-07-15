@@ -1,0 +1,12 @@
+{
+  "dataset_kind": "content_relevance",
+  "semantic_version": "1.0.0",
+  "label_schema_version": "content-relevance-label-v1",
+  "source_note": "冻结、脱敏的非用户评测样本；只验证标注与判定复现性，不代表真实学习效果。",
+  "data_file": "content-relevance-v1.jsonl",
+  "data_sha256": "1bc8c8b081c144ac5659a75e8522f88f3849874af5dc315608c6edb1690e4e3a",
+  "annotation_rules": "relevant 表示冻结证据与查询意图匹配；irrelevant 表示不匹配。每条仅存 case_key 与标签。",
+  "formula": "binary confusion matrix against the frozen expected_label",
+  "thresholds": {"positive_label": "relevant"},
+  "positive_label": "relevant"
+}
