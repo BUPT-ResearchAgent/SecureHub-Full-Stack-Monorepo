@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - **文档目的**：作为"安枢智梯 SecureHub / CyberLadder"项目所有后续 Claude Code / Codex / Cursor 会话的默认上下文。任何在本仓库工作的 AI 助手（或新加入的工程师）应当**首先读完本文件**，再开始触碰代码。
 - **读者**：本项目团队成员；后续接入的 AI 编码助手；A3 赛题答辩评委（架构理解参考）。
-- **最后更新时间**：2026-07-15（T2 已为唯一 `WEBSEC-101` 课程建立可重复题库质量校验、Evidence 绑定与真实教师/课程读取入口；T1 教学关系、固定 9 Agent/28 Skill、Runtime 与 SSE 契约不变）。原始版本 2026-06-05（由 Claude Opus 4.7 基于 4 份外部文档 + 仓库代码生成）。
+- **最后更新时间**：2026-07-16（PR #51 的 T0～T7 真实功能补强已合并；提交 `868b4904` 收敛资源生成预算、主题、终态与 durable cancel，PR #50 的 Swiss v1 视觉链保持不变）。原始版本 2026-06-05（由 Claude Opus 4.7 基于 4 份外部文档 + 仓库代码生成）。
 - **本文件的权威性**：在仓库层面，本文件 > `README.md` / `docs/architecture.md` / `docs/backend-overview.md`。当本文件与代码现状冲突时，**以代码为准并立即更新本文件**；当本文件与外部 4 份文档冲突时，**以本文件 §19 的"差异说明"为准**。
 
 ### 阅读约定（什么时候回读外部文档？）
@@ -70,13 +70,13 @@ Scrapling、MediaCrawler、MindSpider 都是外部工具 / 数据采集参考，
 
 不要引入：Milvus、Neo4j、MongoDB、Doris、Elasticsearch、MUI、Redux。
 
-### 0.1.3 当前阶段与统一语言规范（2026-07-14）
+### 0.1.3 当前阶段与统一语言规范（2026-07-16）
 
 > 本节用于修正 2026-07-08 前后文档中的阶段漂移。后续回答、任务提示词、PR 描述均按本节措辞执行。
 
 | 维度 | 统一口径 |
 |---|---|
-| 当前阶段 | **Runtime v1.1 Wave 0-6 已签收，A3-S5~S7 均为 `real-accepted`**；S8 保持 `planned` + `external-gate-open`，Spark primary/DeepSeek replacement/Spark cancel 规划保留但暂缓执行；当前优先赛前 PPT/试题 Skill 评估、curated fallback、资料可视化、数据/案例/测试证据与评分机制 |
+| 当前阶段 | **Runtime v1.1 Wave 0-6 已签收，A3-S5~S7 均为 `real-accepted`**；PR #51 已合并 T0～T7 真实功能补强，不再把 Prompt 13 写成当前待执行排期。提交 `868b4904` 是合并后的资源生成可靠性修复；S8 仍为 `planned` + `external-gate-open`，Spark Gate 保留且暂缓 |
 | Runtime 核心 | `RuntimeEngine`、`SecureHubStateMachine`、framework-neutral `WorkflowDefinition`、唯一 `SkillExecutor`、PostgreSQL durable store/outbox、Worker/lease/fencing/recovery 均已落地 |
 | 产品路径 | `/profile/chat`、`/courses/{id}/plan`、`/courses/{id}/resources/generate`、`/tutor/ask`、`/assessment/run` 都是 `WorkflowApplicationService` adapter，复用唯一可查询 root UUID |
 | A3-S5~S7 | S5 使用 `assessment_update_v2` atomic audit；S6 从同一 durable root 投影 Evidence/Agent/QualityCheck/Provider/Artifact/control；S7 使用独立 `fund_recommendation_v1`、固定 9 Agent/28 bindings、`domain=fund` 共享知识资产和 server-side profile snapshot |
@@ -84,6 +84,8 @@ Scrapling、MediaCrawler、MindSpider 都是外部工具 / 数据采集参考，
 | 阶段状态 | 正式生命周期为 `planned -> in_progress -> code_complete -> engineering-accepted -> real-accepted`；`external-gate-open` 仅是正交 Gate 标记，不能替代或拼接为生命周期状态 |
 | 真实联调证据 | Golden Slice 与五条产品路径均以 `real / deepseek / deepseek-v4-pro` 成功；五路径共 17 条 `agent_runs`/Provider Call。cancel root `2daf935b-e3b7-4dbe-af34-d792dffc66d3` 为 `cancelled`，21 条 live/replay SSE 一致且终态后无 token/artifact |
 | 前端与 SSE | `WorkflowRunClient` 使用 typed reducer、Last-Event-ID、durable gap replay、duplicate dedupe 与 provider stream replacement；对外事件固定七类 |
+| 资源生成可靠性 | `resource_generate_v1` 将单次 Provider completion cap 与累计节点预算分离，只允许首次生成 + 一次有界返工；QualityCheck 缺陷写入 durable checkpoint，`kp_id` 由后端校验 course/domain 后生成权威主题 query。前端真实取消调用 `WorkflowRunClient.cancel(runId)`；失败/取消保留上一版 ready artifact，只有 root succeeded 才原子切换新版本 |
+| PPT 视觉契约 | 提交 `00457ae0` 的 `securehub_swiss_v1` schema/prompt/fixture/renderer 未被 `868b4904` 改写；“项目学习资源 ppt”仍与竞赛提交 Deck 分属不同范围 |
 | 不可倒退语义 | real 失败不得进入 fixture；QualityCheck 不得内嵌/放宽；Redis 不是任务、lease、state 或 event 真相；Provider unknown 不假装 exactly-once |
 | COS Runtime Gate | 2026-07-12 以进程级 `STORAGE_PROVIDER=cos` 真实完成 upload、head、download、signed URL、delete；此前 HTTP 451 仅为历史记录。此结论不等于 GitHub 外 data 已全量同步 |
 | 当前外部 Gate | `XFYUN_API_KEY` 为空；Spark primary、首 token 后受控中断、真实 DeepSeek draft replacement 与 Spark cancel 均未执行、未伪造。该 Gate 未取消，但当前暂缓排期；赛前物料完成不能替代 Spark 验收 |
@@ -142,6 +144,13 @@ Scrapling、MediaCrawler、MindSpider 都是外部工具 / 数据采集参考，
 - `users.hashed_password` 是唯一密码 hash 位置。旧策略账号只能由 `account_password_compliance.evaluated_policy_version` 判断，绝不扫描、读取或反推 hash；注册/改密/管理员重置只在本次明文请求内校验 active 策略后写唯一 hash。策略激活自动保留最多 24 小时、可审计的 break-glass 管理员恢复边界，不能锁死全部管理员。
 - `/api/v1/*` 的 API risk middleware 只持久化路由模板、方法、结果码、可选 actor、HMAC 化 IP/设备值、尺寸/速率桶、受限 correlation id、脱敏版本和保留期；**禁止**保存 Authorization、Cookie、密码、token、原始 payload、完整 IP 或原始设备值。Provider limiter 不能替代该层。
 - active `administrator` 治理授权是安全策略、风险规则、人工解除/复核和管理员重置的唯一服务端权限。block/throttle、告警、release、误报/漏报复核及原因均可从风险事件/action 与 `governance_audit_events` 回放；公平或教学功能不得以风险事件自动处分个人。
+
+### 0.1.11 资源生成终态与 PPT 契约（2026-07-16）
+
+- `NodeDefinition.provider_max_tokens` 是可选的单次 Provider completion cap；未设置时不进入 definition serialization，旧 workflow digest 与旧节点预算语义保持不变。`resource_generate_v1.producer` 使用单次 `2400`、累计 `8000`，配合 `max_rework_attempts=1` 只允许首次 + 一次返工。
+- 返工必须消费持久化的 QualityCheck defect code/message；资源 query 必须由服务端按 `kp_id -> KnowledgeNode.name` 校验课程与 domain 后规范化。不得用通用标题或前端文本主导 RAG，也不得为消除失败而放宽显式 QualityCheck。
+- 生成 attempt 与上一版 ready artifact 分离。pending artifact 只有在 root `succeeded` 后才能替换；`failed/blocked/cancelled` 必须结束 loading 并保留上一版。取消按钮调用 durable cancel API；SSE unsubscribe 只负责视图断连。
+- `868b4904` 的定向/兼容验证为 64 passed，前端 typecheck/build 通过并经项目负责人手工核验。该结论只关闭已复现的预算、主题漂移和终态投影误失败；真实网络故障、Evidence 不足、安全拒绝仍须诚实失败，且不等于 Spark Gate 关闭。
 
 ---
 

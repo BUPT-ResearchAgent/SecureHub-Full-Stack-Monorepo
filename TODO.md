@@ -1,13 +1,14 @@
 # SecureHub Agent Runtime TODO
 
-> Version: v2.4
-> Updated: 2026-07-14
+> Version: v2.5
+> Updated: 2026-07-16
 > Authority: `Plan/2026-07-11_SecureHub_多智能体底层完整架构实施方案.md` v1.1
 > Delivery evidence: `Workout/Agent-Runtime-Wave-0-3.md` and
 > `Workout/Agent-Runtime-Wave-4-6.md`
 > Productization evidence: `../Workout/10-A3-S5-AB-1.md`,
 > `../Workout/10-A3-S6-BA-1.md`, and `../Workout/10-A3-S7-ACB-1.md`
 > Multi-course catalog evidence: `../Workout/11-A3-Multi-Course-Real-Catalog.md`
+> Resource reliability implementation: commit `868b4904`
 
 ## Current Status
 
@@ -24,6 +25,14 @@ The fixed nine business Agents remain:
 `policy_interpreter`, `hot_analyst`, `job_analyst`, `competition_advisor`,
 `career_planner`, `topic_explorer`, `doc_archivist`, `task_orchestrator`, and
 `outcome_evaluator`.
+
+### Resource Generation Reliability (2026-07-16)
+
+- [x] Split the resource producer's per-call Provider completion cap (`2400`) from its cumulative node budget (`8000`) without changing unset legacy workflow serialization; bounded QualityCheck rework remains exactly one attempt.
+- [x] Persist QualityCheck defect feedback across checkpoints and canonicalize resource queries from the server-owned knowledge point/course/domain relationship.
+- [x] Keep the last ready artifact visible during a new attempt; switch only on root success. Expose durable cancel through `WorkflowRunClient.cancel`, while unsubscribe remains view cleanup only.
+- [x] Preserve PR #50 `securehub_swiss_v1` generation and rendering. Commit `868b4904` passed 64 focused/compatibility tests plus frontend typecheck/build and project-owner manual review.
+- [ ] Do not reinterpret this fix as "generation can never fail": network/provider failure, insufficient Evidence and safety rejection remain honest terminal outcomes, and none closes the Spark Gate.
 
 ### A3 Multi-Course Catalog v1.0
 
@@ -167,10 +176,10 @@ The fixed nine business Agents remain:
 - [ ] Supply the Spark bearer key, then run the real Spark primary chain, a
   controlled Spark stream interruption with real DeepSeek replacement, and a
   real-token cancel. `--expect-fallback` alone does not manufacture a failure.
-- [ ] Re-run the Tencent COS runtime artifact smoke only after account billing
-  is restored. The last real `put_object` returned
-  `451 UnavailableForLegalReasons`; it is an external blocker, not a success,
-  and not a fixture fallback. Local Artifact Saga verification is complete.
+- [x] Tencent COS Runtime upload/head/download/signed URL/delete passed on
+  2026-07-12. The earlier `451 UnavailableForLegalReasons` is historical;
+  GitHub-external data full synchronization remains a separate incomplete
+  governance track and is not implied by this Runtime smoke.
 
 ## Required Regression Gates
 

@@ -2,7 +2,7 @@
 
 > 权威文档：`CLAUDE.md` 是项目宪法，本文件不复述细节，仅约束 Codex 子智能体的使用边界。
 > 文档冲突时以 `CLAUDE.md` 为准。
-> 最后更新：2026-07-14（v1.0 多课程真实 Catalog：Web 安全为 `ready`，密码学/网络攻防/安全开发为明确只读 `preview`；9 Agent/28 Skill/Runtime/SSE 冻结不变）。
+> 最后更新：2026-07-16（PR #51 的 T0～T7 功能补强已合并；`868b4904` 完成资源生成可靠性与真实取消收敛，9 Agent/28 Skill/Runtime/SSE/Swiss v1 契约不变）。
 
 ---
 
@@ -36,7 +36,7 @@ D:/Nnutural/Desktop/BUPT大全/BUPT竞赛/26软件杯/Plan/2026-07-10_Agent_Run_
 它替代 Agent-Run 原始 Plan / Prompt / Workout 的逐份阅读。当前 RuntimeEngine、HTTP/SSE 与五条产品路径以
 `docs/api/workflow-run-contract.md`、Wave 4-6 报告和 v1.1 架构方案为准。
 
-## 0.1 当前阶段口径（2026-07-14）
+## 0.1 当前阶段口径（2026-07-16）
 
 子智能体在审查、写码、起草报告时统一使用以下表述：
 
@@ -49,11 +49,12 @@ D:/Nnutural/Desktop/BUPT大全/BUPT竞赛/26软件杯/Plan/2026-07-10_Agent_Run_
 | COS / Storage | 2026-07-12 COS Runtime 已真实通过 upload/head/download/signed URL/delete；历史 451 仅为旧记录。GitHub 外 data 仍只确认 20 个既有同步样本，约 870 个对象未全量完成。 | "COS 仍被 451 阻塞"、"所有 data 已上传 COS"、"storage 是一个 agent" |
 | A3-S5~S7 | S5 assessment/persona/path refresh、S6 current-root Evidence/Trace/Provider replay、S7 fund loader/DeepSeek Research 链均已 `real-accepted`；S7 入口为 `POST /api/v1/research/fund-recommendations`，以 CurrentUser 绑定画像归属。 | "S5-S7 仍只有工程验收"、"浏览器可传 user_id"、"Spark Gate 阻断 S5-S7" |
 | 四课程 Catalog | `courses` 有四条稳定产品记录；只有 `WEBSEC-101` 可创建真实课程 root。三门 `preview` 仅可浏览预置内容，未知或 preview course 不回落 Web 安全。 | "四门都已真实 RAG/生成"、"preview 可借用 Web 安全 Evidence" |
-| 当前调度 | S8 保持 `planned` + `external-gate-open` 但暂缓执行；当前优先赛前 PPT/试题 Skill 评估、curated fallback、资料可视化和数据/案例/测试评分证据。 | "S8 已启动"、"S8 已取消"、"PPT 完成等于 Spark Gate 通过" |
+| GAP-13 / 当前调度 | PR #51 已合并 T0～T7 功能补强，Prompt 13 不再是待执行排期；当前只按具体回归处理合并后问题。S8 仍为 `planned` + `external-gate-open` 且暂缓。 | "T0～T7 尚未启动"、"S8 已取消"、"功能补强或 PPT 完成等于 Spark Gate 通过" |
+| 资源生成 / PPT | `868b4904` 已修复 producer 预算与唯一一次返工、服务端知识点主题、终态原子切换和 durable cancel。失败/取消保留上一版 ready artifact；`00457ae0` 的 Swiss v1 视觉链未改。 | "永远不会发生真实失败"、"unsubscribe 就是取消"、"为避免失败可绕过 QualityCheck"、"重新设计 PPT" |
 
 正式生命周期为 `planned -> in_progress -> code_complete -> engineering-accepted -> real-accepted`。`external-gate-open` 仅是正交 Gate 标记；“暂缓”只是资源调度，不新增状态。S8 的 Spark Gate 仍真实开放但当前不排期。DeepSeek/Skill 产物未达质量线时可使用显式 `pre-generated/curated` 内容，禁止冒充 live 或 fixture。COS Runtime gate 与 GitHub 外 data 全量同步仍是两个范围。
 
-当前验收快照：migration head `20260712_1040`，全量回归 `230 passed, 3 skipped`，最终证据提交 `89a6e0e1`。详细 root/SSE/Provider/COS 证据以 `Workout/Agent-Runtime-Wave-4-6.md` 为准。
+Runtime v1.1 验收快照仍为 migration head `20260712_1040`、全量回归 `230 passed, 3 skipped`、证据提交 `89a6e0e1`。资源可靠性补丁 `868b4904` 另有 64 个定向/兼容测试及前端 typecheck/build 通过；它不是新的全量回归，也不替代 Spark/COS 证据。
 
 ---
 
