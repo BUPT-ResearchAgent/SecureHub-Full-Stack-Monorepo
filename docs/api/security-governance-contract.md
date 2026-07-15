@@ -29,6 +29,7 @@
 | --- | --- | --- |
 | `POST /api/v1/auth/register` | 匿名 | 用当前 active 版本实时校验请求明文；成功后创建 `compliant` 记录。 |
 | `POST /api/v1/auth/login` | 匿名 | 仅根据已有合规记录版本判定旧策略；需要整改时持久化通知时间并返回 `PASSWORD_REMEDIATION_REQUIRED`，不签发 token。 |
+| `POST /api/v1/auth/password/remediate` | 匿名（须验证当前密码） | 仅供 `PASSWORD_REMEDIATION_REQUIRED` 账号完成受限整改；校验当前密码与新策略后写唯一 hash、记录 `remediated` 与审计，不先签发 JWT。 |
 | `POST /api/v1/auth/password/change` | 本人 | 验证当前密码、校验新策略、写唯一 hash、记录 `remediated` 与审计。 |
 | `GET /api/v1/security/password-compliance/me` | 本人 | 返回 policy version、整改/通知/豁免期限和是否允许登录；不返回规则绕过信息或任何 hash。 |
 | `POST /api/v1/security/password-policies` | 安全管理员 | 创建 draft 策略。 |
@@ -45,6 +46,7 @@
 
 - `PASSWORD_POLICY_VIOLATION`：新密码或策略规则不符合受控约束。
 - `PASSWORD_REMEDIATION_REQUIRED`：账号记录版本落后于 active 策略，通知/整改状态已持久化。
+- `PASSWORD_REMEDIATION_NOT_REQUIRED`：账号已经合规或处于有效 break-glass，不能使用匿名整改入口。
 - `PASSWORD_CHANGE_FORBIDDEN`：当前密码校验失败或目标账号不可安全重置。
 - `BREAK_GLASS_REQUIRED`：管理员解除目标不可用；策略切换保留时限恢复边界。
 - `ADMIN_ROLE_REQUIRED`：非 active 治理管理员访问安全管理动作。

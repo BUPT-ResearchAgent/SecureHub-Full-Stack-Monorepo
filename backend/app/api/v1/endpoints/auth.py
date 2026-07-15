@@ -9,7 +9,7 @@ from app.deps import (
     SessionDep,
     SettingsDep,
 )
-from app.schemas.auth import AuthUser, LoginRequest, RegisterRequest, TokenResponse
+from app.schemas.auth import AuthUser, LoginRequest, PasswordRemediationRequest, RegisterRequest, TokenResponse
 from app.schemas.security import PasswordChangeRequest, PasswordComplianceDTO
 from app.services.identity.auth_service import AuthService
 
@@ -32,6 +32,15 @@ async def login(
     settings: SettingsDep,
 ) -> TokenResponse:
     return await AuthService(session, settings).login(payload)
+
+
+@router.post("/password/remediate", response_model=PasswordComplianceDTO)
+async def remediate_password(
+    payload: PasswordRemediationRequest,
+    session: SessionDep,
+    settings: SettingsDep,
+) -> PasswordComplianceDTO:
+    return await AuthService(session, settings).remediate_password(payload)
 
 
 @router.get("/me", response_model=AuthUser)
