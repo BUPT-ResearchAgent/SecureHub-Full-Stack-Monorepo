@@ -1,8 +1,8 @@
-// Status: mock
+// Status: partial-real
 //
 // /teacher 总览：按身份切换 KPI 行 + 中央可视化 + 待办流。
 
-import { useMemo } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
   Activity,
   ArrowRight,
@@ -17,33 +17,22 @@ import {
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import {
-  Bar,
-  BarChart,
-  CartesianGrid,
   Cell,
   Legend,
   Pie,
   PieChart,
   ResponsiveContainer,
   Tooltip,
-  XAxis,
-  YAxis,
 } from 'recharts';
-import {
-  MOCK_ASSIGNMENTS,
-  MOCK_CONSULTATIONS,
-  MOCK_QUIZ_ITEMS,
-  MOCK_RESEARCH_PROJECTS,
-  MOCK_STUDENTS,
-  MOCK_TEACHERS,
-} from '@/lib/mock/teacher.mock';
+import { MOCK_CONSULTATIONS, MOCK_RESEARCH_PROJECTS, MOCK_TEACHERS } from '@/lib/mock/teacher.mock';
 import { ROLE_META, type TeacherRole } from '../roles';
 import { useActiveRole } from '../store';
 import { TeacherShell } from '../components/TeacherShell';
 import { isTeacherRole } from '../roles';
-import { ResourceSupervisionStream } from '../components/ResourceSupervisionStream';
-import { ClassHealthGauge } from '../components/ClassHealthGauge';
-import { AtRiskAlertList } from '../components/AtRiskAlertList';
+import {
+  fetchTeacherProductionDashboard,
+  type TeacherProductionDashboard,
+} from '../api/teacherProduction';
 
 type KpiCard = {
   label: string;
@@ -52,85 +41,6 @@ type KpiCard = {
   icon: typeof Users;
   tone: string;
 };
-
-function CapabilityBarChart() {
-  const data = useMemo(() => {
-    const fields: { key: keyof (typeof MOCK_STUDENTS)[number]['capability']; label: string }[] = [
-      { key: 'web_security', label: 'Web 安全' },
-      { key: 'crypto', label: '密码学' },
-      { key: 'system_security', label: '系统安全' },
-      { key: 'pentest', label: '渗透' },
-      { key: 'governance', label: '安全治理' },
-      { key: 'ai_security', label: 'AI 安全' },
-    ];
-    return fields.map((f) => {
-      const all = MOCK_STUDENTS.map((s) => s.capability[f.key]);
-      const avg = all.reduce((a, b) => a + b, 0) / all.length;
-      const min = Math.min(...all);
-      const max = Math.max(...all);
-      return {
-        name: f.label,
-        平均: Math.round(avg * 100) / 100,
-        最低: Math.round(min * 100) / 100,
-        最高: Math.round(max * 100) / 100,
-      };
-    });
-  }, []);
-
-  return (
-    <ResponsiveContainer width="100%" height={220}>
-      <BarChart data={data} margin={{ top: 12, right: 12, left: 0, bottom: 0 }}>
-        <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
-        <XAxis dataKey="name" stroke="#94a3b8" tick={{ fontSize: 12 }} />
-        <YAxis stroke="#94a3b8" tick={{ fontSize: 12 }} domain={[0, 1]} />
-        <Tooltip
-          contentStyle={{
-            borderRadius: 8,
-            border: '1px solid #e2e8f0',
-            fontSize: 12,
-          }}
-        />
-        <Legend iconType="circle" wrapperStyle={{ fontSize: 12 }} />
-        <Bar dataKey="平均" fill="#2563eb" radius={[6, 6, 0, 0]} />
-        <Bar dataKey="最高" fill="#a78bfa" radius={[6, 6, 0, 0]} />
-        <Bar dataKey="最低" fill="#fb923c" radius={[6, 6, 0, 0]} />
-      </BarChart>
-    </ResponsiveContainer>
-  );
-}
-
-function KnowledgeStruggleHeatBar() {
-  const struggles = [
-    { kp: 'SQL 注入 · 盲注', pct: 0.62 },
-    { kp: 'XSS · DOM 型', pct: 0.51 },
-    { kp: 'CSRF · 防御组合', pct: 0.44 },
-    { kp: 'AES · 模式选择', pct: 0.39 },
-    { kp: 'RSA · 数学基础', pct: 0.35 },
-    { kp: 'OAuth · 授权码模式', pct: 0.28 },
-  ];
-  return (
-    <ul className="space-y-2.5">
-      {struggles.map((s) => (
-        <li key={s.kp} className="space-y-1">
-          <div className="flex items-center justify-between text-xs text-slate-600">
-            <span>{s.kp}</span>
-            <span className="font-medium text-slate-800">{Math.round(s.pct * 100)}% 卡壳</span>
-          </div>
-          <div className="h-2 rounded-full bg-slate-100">
-            <div
-              className="h-full rounded-full"
-              style={{
-                width: `${s.pct * 100}%`,
-                background:
-                  s.pct > 0.5 ? '#dc2626' : s.pct > 0.4 ? '#ea580c' : '#f59e0b',
-              }}
-            />
-          </div>
-        </li>
-      ))}
-    </ul>
-  );
-}
 
 function KpiRow({ items }: { items: KpiCard[] }) {
   return (
@@ -206,14 +116,44 @@ function TodoStream() {
 }
 
 function CourseTeacherDashboard() {
-  const pendingQuiz = MOCK_QUIZ_ITEMS.filter((q) => q.status === 'pending').length;
-  const activeAssignments = MOCK_ASSIGNMENTS.filter((a) => a.status === 'active').length;
+  const navigate = useNavigate();
+  const [dashboard, setDashboard] = useState<TeacherProductionDashboard | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      setDashboard(await fetchTeacherProductionDashboard());
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : '教师工作台数据读取失败');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  if (loading && !dashboard) {
+    return <section className="rounded-2xl border border-slate-200 bg-white p-6 text-sm text-slate-500">正在读取持久化教学数据…</section>;
+  }
+  if (error && !dashboard) {
+    return (
+      <section className="rounded-2xl border border-rose-200 bg-rose-50 p-6 text-sm text-rose-800">
+        <p>{error}</p>
+        <button type="button" onClick={() => void refresh()} className="mt-3 rounded-lg border border-rose-200 bg-white px-3 py-1.5 text-xs font-medium">重试真实查询</button>
+      </section>
+    );
+  }
+  if (!dashboard) return null;
   const items: KpiCard[] = [
-    { label: '所教课程', value: '2 门', icon: GraduationCap, tone: 'bg-brand-blue-50 text-brand-blue-600' },
-    { label: '学生总数', value: '62', trend: '其中 6 人本周新上线', icon: Users, tone: 'bg-emerald-50 text-emerald-600' },
-    { label: '24h 智能体调用', value: '184', trend: '↑ 12% · 同比昨日', icon: Activity, tone: 'bg-violet-50 text-violet-600' },
-    { label: '待审核题目', value: `${pendingQuiz}`, icon: FileQuestion, tone: 'bg-amber-50 text-amber-600' },
-    { label: '待批改作业', value: `${activeAssignments * 7}`, trend: `${activeAssignments} 个作业进行中`, icon: ClipboardCheck, tone: 'bg-rose-50 text-rose-600' },
+    { label: '所教课程', value: `${dashboard.course_count} 门`, icon: GraduationCap, tone: 'bg-brand-blue-50 text-brand-blue-600' },
+    { label: '有效选课学生', value: `${dashboard.active_student_count}`, icon: Users, tone: 'bg-emerald-50 text-emerald-600' },
+    { label: '受治理教材资产', value: `${dashboard.governed_asset_count}`, icon: Activity, tone: 'bg-violet-50 text-violet-600' },
+    { label: '待教师审题', value: `${dashboard.pending_quiz_review_count}`, icon: FileQuestion, tone: 'bg-amber-50 text-amber-600' },
+    { label: '待最终批改', value: `${dashboard.pending_grade_count}`, trend: `${dashboard.active_assignment_count} 个活动布置`, icon: ClipboardCheck, tone: 'bg-rose-50 text-rose-600' },
   ];
 
   return (
@@ -221,40 +161,27 @@ function CourseTeacherDashboard() {
       <KpiRow items={items} />
       <div className="grid gap-4 xl:grid-cols-[1.5fr_1fr]">
         <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-          <div className="flex items-center justify-between">
-            <div>
-              <h2 className="text-sm font-semibold text-slate-800">班级能力分布</h2>
-              <p className="text-xs text-slate-400">基于 60 名学生最近一次评估</p>
-            </div>
-            <span className="rounded-full bg-brand-blue-50 px-2 py-0.5 text-[11px] text-brand-blue-700">
-              Recharts · 假数据
-            </span>
+          <div className="flex items-center justify-between gap-3">
+            <div><h2 className="text-sm font-semibold text-slate-800">真实 KPI 口径</h2><p className="text-xs text-slate-400">每个数字均由后端持久化关系实时计算。</p></div>
+            <button type="button" onClick={() => void refresh()} className="rounded-lg border border-slate-200 px-2.5 py-1 text-xs text-slate-700">刷新</button>
           </div>
-          <div className="mt-3">
-            <CapabilityBarChart />
-          </div>
+          <ul className="mt-3 space-y-2 text-xs text-slate-600">
+            {Object.entries(dashboard.definitions).map(([key, definition]) => <li key={key} className="rounded-lg bg-slate-50 px-3 py-2"><span className="font-medium text-slate-800">{key}</span>：{definition}</li>)}
+          </ul>
         </section>
         <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-          <div className="flex items-center justify-between">
-            <h2 className="text-sm font-semibold text-slate-800">知识点掌握热力</h2>
-            <span className="text-[11px] text-slate-400">越红越普遍卡壳</span>
+          <h2 className="text-sm font-semibold text-slate-800">教学闭环入口</h2>
+          <p className="mt-2 text-xs leading-5 text-slate-500">从题库审核、班级真实作答聚合，到版本化作业、人工成绩发布和 typed syllabus 审核，均以数据库状态为准。</p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <button type="button" onClick={() => navigate('/teacher/materials')} className="rounded-lg border border-slate-200 px-2.5 py-1 text-xs text-slate-700 hover:bg-slate-50">资产治理</button>
+            <button type="button" onClick={() => navigate('/teacher/teaching-insights')} className="rounded-lg border border-slate-200 px-2.5 py-1 text-xs text-slate-700 hover:bg-slate-50">薄弱点与建议</button>
+            <button type="button" onClick={() => navigate('/teacher/assignments')} className="rounded-lg border border-slate-200 px-2.5 py-1 text-xs text-slate-700 hover:bg-slate-50">真实作业</button>
+            <button type="button" onClick={() => navigate('/teacher/syllabus')} className="rounded-lg border border-slate-200 px-2.5 py-1 text-xs text-slate-700 hover:bg-slate-50">教学大纲</button>
           </div>
-          <div className="mt-3">
-            <KnowledgeStruggleHeatBar />
-          </div>
+          <p className="mt-4 text-[11px] text-slate-400">最近计算：{new Date(dashboard.calculated_at).toLocaleString()}</p>
         </section>
       </div>
-      <div className="grid gap-4 xl:grid-cols-[1fr_1.3fr]">
-        <ClassHealthGauge />
-        <AtRiskAlertList />
-      </div>
-      <ResourceSupervisionStream />
-      <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-        <h2 className="text-sm font-semibold text-slate-800">待办流</h2>
-        <div className="mt-1">
-          <TodoStream />
-        </div>
-      </section>
+      {error && <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">最近刷新失败：{error}</p>}
     </>
   );
 }
@@ -403,41 +330,7 @@ function CareerMentorDashboard() {
 }
 
 function HybridDashboard() {
-  const items: KpiCard[] = [
-    { label: '所教课程', value: '1 门', icon: GraduationCap, tone: 'bg-brand-blue-50 text-brand-blue-600' },
-    { label: '指导项目', value: '3', icon: FlaskConical, tone: 'bg-violet-50 text-violet-600' },
-    { label: '咨询学生', value: '5', icon: Briefcase, tone: 'bg-orange-50 text-orange-600' },
-    { label: '24h 智能体调用', value: '256', icon: Activity, tone: 'bg-emerald-50 text-emerald-600' },
-    { label: '总待办', value: '14', icon: ClipboardCheck, tone: 'bg-rose-50 text-rose-600' },
-    { label: '管理学生', value: '60+', icon: Users, tone: 'bg-amber-50 text-amber-600' },
-  ];
-  return (
-    <>
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
-        {items.map((kpi) => (
-          <div key={kpi.label} className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
-            <div className="flex items-center justify-between text-xs text-slate-500">
-              <span>{kpi.label}</span>
-              <span className={`flex h-6 w-6 items-center justify-center rounded-full ${kpi.tone}`}>
-                <kpi.icon className="h-3 w-3" />
-              </span>
-            </div>
-            <div className="mt-1.5 text-xl font-semibold text-slate-900">{kpi.value}</div>
-          </div>
-        ))}
-      </div>
-      <div className="grid gap-4 xl:grid-cols-[1.5fr_1fr]">
-        <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-          <h2 className="text-sm font-semibold text-slate-800">班级能力分布</h2>
-          <CapabilityBarChart />
-        </section>
-        <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-          <h2 className="text-sm font-semibold text-slate-800">综合待办</h2>
-          <TodoStream />
-        </section>
-      </div>
-    </>
-  );
+  return <CourseTeacherDashboard />;
 }
 
 export function TeacherDashboard() {
@@ -445,7 +338,7 @@ export function TeacherDashboard() {
   if (!isTeacherRole(role)) return null;
   const meta = ROLE_META[role];
 
-  const variant: Record<TeacherRole, () => JSX.Element> = {
+  const variant: Record<TeacherRole, () => JSX.Element | null> = {
     course_teacher: CourseTeacherDashboard,
     research_mentor: ResearchMentorDashboard,
     career_mentor: CareerMentorDashboard,

@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - **文档目的**：作为"安枢智梯 SecureHub / CyberLadder"项目所有后续 Claude Code / Codex / Cursor 会话的默认上下文。任何在本仓库工作的 AI 助手（或新加入的工程师）应当**首先读完本文件**，再开始触碰代码。
 - **读者**：本项目团队成员；后续接入的 AI 编码助手；A3 赛题答辩评委（架构理解参考）。
-- **最后更新时间**：2026-07-14（v1.0 多课程真实 Catalog：Web 安全 `ready`，密码学/网络攻防/安全开发为明确只读 `preview`；固定 9 Agent、28 Skill binding、Runtime 与七类 SSE 均不变）。
+- **最后更新时间**：2026-07-15（T2 已为唯一 Web 安全 `ready` 课程建立可复现题库质量、Evidence 绑定及真实教师/课程读取；T1 教学关系、固定 9 Agent、28 Skill binding、Runtime 与七类 SSE 均不变）。
 - **本文件的权威性**：在仓库层面，本文件 > `README.md` / `docs/architecture.md` / `docs/backend-overview.md`。当本文件与代码现状冲突时，**以代码为准并立即更新本文件**；当本文件与外部 4 份文档冲突时，**以本文件 §19 的"差异说明"为准**。
 
 ### 阅读约定（什么时候回读外部文档？）
@@ -172,6 +172,39 @@ quiz_attempts / learning_events
 - 演示 seed 包含学生、课程教师、科研导师、就业导师、综合教师五类账号；注册用户默认学生。
 - `/auth/login` 与 `/auth/me` 返回 `role`，`/teacher/context` 对学生必须返回 403。教师业务卡片仍可使用显式 demo 数据，但导航准入必须来自服务端角色。
 - 修改角色 schema、认证返回值或演示 seed 时，必须同步更新本文件、根 `AGENTS.md` 与 `CLAUDE.md`，并执行迁移与重新 seed。
+
+### 3.5.2 教学关系 T1（2026-07-15）
+
+- `course_teacher_assignments`、`teaching_classes`、`teaching_class_teachers`、`course_enrollments`、`student_groups`、`student_group_members` 与 `governance_audit_events` 是 FG-03 的唯一关系/审计层；它们只引用既有 `users`、`courses`，不复制课程、用户、画像或知识资产。
+- 名册和分组授权必须由服务端同时校验基础教师角色、有效课程归属与有效教学班归属；跨班、跨课、非教师不得以空列表或前端 toast 伪装成功。
+- `/api/v1/teacher/education/*` 与 `TeacherStudents.tsx` 已是 T1 的真实读路径。成员变更用请求键幂等，并写入业务审计；不要复用 Runtime 的 workflow/agent 审计表。
+
+### 3.5.3 WebSec 题库质量 T2（2026-07-15）
+
+- `quiz_items` 的 `canonical_key` 是稳定题目键；题目必须具有内容版本、解析、受限审核/来源状态，Evidence 只能经 `quiz_item_evidences -> chunks` 绑定。`quiz_quality_reports` 保存 validator version、input/item fingerprint、结果和失败码，不能写成真人审核记录。
+- 仅 `WEBSEC-101` / `course_websec` 可进入本轮题库质量服务。`seed_course_websec` 的 curated 内容覆盖冻结 17 个知识点；不可把 preview 课程、`applicable_domains` 或五课程范围接入。
+- 教师题库页只读真实 `/api/v1/teacher/quiz-bank/websec` 数据；课程与 assessment 入口只消费 `curated + passed` 数据。未发布、未校验或失败题目必须返回稳定拒绝，不允许 mock 常量、静态 KPI 或 toast 冒充成功。
+
+### 3.5.4 教师教学生产 T3（2026-07-15）
+
+- `20260715_1082` 的 `course_document_bindings` / `course_asset_governance`、审题/教学建议、assessment、typed syllabus 表是 T3 的唯一持久层；只引用既有 `users`、`courses`、T1 关系、T2 题目、统一知识资产和既有 Runtime/Evidence 记录，严禁复制用户、课程、画像或知识资产正文。
+- 所有 `/api/v1/teacher/production/*` 写读必须服务端验证有效课程教师归属。资产生命周期基于真实 `documents` / `document_assets`，并把操作者、对象、理由、结果写入 `governance_audit_events`；Dashboard KPI 必须是可查询口径而非静态值。
+- assessment 版本冻结通过 T2 质量门的题目快照；主观题 AI 结果只作建议，必须关联已接受的 `agent_runs` 与 Evidence Snapshot。教师覆盖理由、成绩发布/撤回状态均持久化，学生仅能查询已发布结果。
+- typed syllabus 只存入 `course_syllabuses` / `course_syllabus_versions`，生成只能消费 Harness 已完成且有 Evidence Snapshot 的输入；证据不足稳定拒绝。审核/发布/显式回滚不能写回或自动覆盖现有 `courses` 内容，普通文档不能冒充 syllabus。
+- 课程教师真实前端入口固定为 `/teacher/materials`、`/teacher/teaching-insights`、`/teacher/assignments`、`/teacher/syllabus`；它们只调用 `/teacher/production` 的受权读写 API，刷新时读取 assets、snapshot/recommendation、assignment/submission、typed-syllabus version 的持久化投影，不得回退到 `MOCK_*` 常量或展示伪成功。
+
+### 3.5.5 协作与运营治理 T4（2026-07-15）
+
+- `20260715_1083` 的 `external_signals` / `course_update_*`、`messages` / `message_deliveries`、`role_definitions` / `user_role_grants`、`course_resource_governance` 与 `kpi_definitions` 是 T4 唯一持久层；只引用既有用户、课程、知识节点/文档、T1/T3 和 Runtime Evidence，不复制任何权威源。
+- F3 信号只能消费冻结的 policy/hot/job Agent 的成功 SkillExecutor AgentRun 与同源 Evidence Snapshot；建议采纳/驳回是教师显式决定，禁止自动修改 `courses` 或 ready 内容。
+- `agent_messages` 是 Runtime 转录，不是师生消息表。课程/班级/个人消息必须由 `messages` / `message_deliveries` 展开投递，内容安全拒绝、已读、限时撤回和发送均写 `governance_audit_events`。
+- 管理员访问必须验证 active `user_role_grants`；所有全局 KPI 直接查询 T1/T3/T4 持久关系并返回定义版本。保护最后管理员，任何角色/资源治理动作都必须写 actor、对象、理由和结果。
+
+### 3.5.6 账号与平台安全 T5（2026-07-15）
+
+- `20260715_1084` 的 `password_policies` / `account_password_compliance` 与 `api_request_audit_events` / `api_risk_rules` / `api_risk_events` / `api_risk_actions` 是 FG-07/FG-08 的唯一持久层；只引用既有 `users` 与 T4 active 管理授权，绝不复制身份、课程、画像或知识资产。
+- 密码 hash 只允许存在于 `users.hashed_password`。旧策略整改只依据账号合规记录的 `evaluated_policy_version`，不能扫描/读取/反推 hash；注册、本人改密、管理员重置只在请求明文存活期间校验 active policy。策略激活必须留下有期限、原因和审计的 break-glass，不能锁死所有管理员。
+- `/api/v1/*` 风险中间件只写 HMAC 化 IP/设备、路由模板、方法、响应码、桶化尺寸/速率、可选 actor、受限 correlation id、脱敏版本/保留期；禁止 Authorization、Cookie、密码、token、原始 payload、完整 IP/设备值。只有 active `administrator` 可管理规则、解除/复核事件；Provider limiter 不构成全站 API 风控。
 
 ### 3.6 ❌ 不要绕开 RAG 直接调 LLM（生成必须经 Harness 完整链路）
 
@@ -2295,3 +2328,9 @@ forbidden: LLM 自由生成内容
 **文档结束。**
 
 > 本文件随项目演进持续迭代。每次涉及架构 / 数据库 / 智能体清单变更的 commit，**必须**同步更新本文件对应章节。修改 §3 铁律或 §19 差异说明前，**必须**与团队对齐——这两节是项目"宪法"。
+
+## GAP-13 T6 公平与基准事实（2026-07-15）
+
+- `20260715_1085` 的公平/基准表仅引用既有 `users`、已发布 T3 成绩和治理审计；禁止复制用户、课程、画像、知识资产或新增 Agent。
+- 默认不收集敏感属性，只允许明确同意且尚有效的非敏感 `cohort` / `teaching_class` 最小分组。无同意、缺数据、缺分组或 `INSUFFICIENT_SAMPLE` 必须拒绝或隐藏群体结论。
+- 公平告警只能进入人工 review/appeal；不得自动惩罚、降权、处分、改分或暴露敏感属性。三个 benchmark manifest 是脱敏非用户效果评测资产，哈希失配必须拒绝运行。

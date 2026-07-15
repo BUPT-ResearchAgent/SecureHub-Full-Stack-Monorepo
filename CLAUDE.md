@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - **文档目的**：作为"安枢智梯 SecureHub / CyberLadder"项目所有后续 Claude Code / Codex / Cursor 会话的默认上下文。任何在本仓库工作的 AI 助手（或新加入的工程师）应当**首先读完本文件**，再开始触碰代码。
 - **读者**：本项目团队成员；后续接入的 AI 编码助手；A3 赛题答辩评委（架构理解参考）。
-- **最后更新时间**：2026-07-14（v1.0 多课程真实 Catalog：`WEBSEC-101` 为 `ready`，`CRYPTO-101` / `NET-SEC-201` / `SDL-201` 为明确只读 `preview`；固定 9 Agent/28 Skill、Runtime 与 SSE 契约不变）。原始版本 2026-06-05（由 Claude Opus 4.7 基于 4 份外部文档 + 仓库代码生成）。
+- **最后更新时间**：2026-07-15（T2 已为唯一 `WEBSEC-101` 课程建立可重复题库质量校验、Evidence 绑定与真实教师/课程读取入口；T1 教学关系、固定 9 Agent/28 Skill、Runtime 与 SSE 契约不变）。原始版本 2026-06-05（由 Claude Opus 4.7 基于 4 份外部文档 + 仓库代码生成）。
 - **本文件的权威性**：在仓库层面，本文件 > `README.md` / `docs/architecture.md` / `docs/backend-overview.md`。当本文件与代码现状冲突时，**以代码为准并立即更新本文件**；当本文件与外部 4 份文档冲突时，**以本文件 §19 的"差异说明"为准**。
 
 ### 阅读约定（什么时候回读外部文档？）
@@ -106,7 +106,42 @@ Scrapling、MediaCrawler、MindSpider 都是外部工具 / 数据采集参考，
 - `users.role` 是演示身份的服务端权威字段，受迁移约束为 `student` / `course_teacher` / `research_mentor` / `career_mentor` / `hybrid`；新注册账号固定为 `student`。
 - 演示 seed 提供学生与四类教师的五个独立账号。迁移后执行 `uv run alembic upgrade head` 和 `uv run python -m app.db.seeds.seed_demo` 以补齐账号。
 - `/api/v1/auth/login` 与 `/api/v1/auth/me` 返回 role；`GET /api/v1/teacher/context` 只向教师身份返回可演示模块，学生账号为 403。前端不得再把教师身份写入 localStorage。
-- 教师页业务数据仍为明确标注的 demo/mock 展示数据；本次真实化的是账号身份、登录流和教师模块准入，不新增运行时 agent 或改变 RuntimeEngine 权威。
+- 除 T1 已真实化的教学班/名册/分组路径外，其余未迁移的教师页业务数据仍必须明确标为 demo/mock；不新增运行时 agent 或改变 RuntimeEngine 权威。
+
+### 0.1.6 教学关系 T1（2026-07-15）
+
+- `20260715_1080` 新增 `course_teacher_assignments`、`teaching_classes`、`teaching_class_teachers`、`course_enrollments`、`student_groups`、`student_group_members` 与追加式 `governance_audit_events`。它们只外键引用既有 `users` / `courses`，不复制用户、课程、画像或统一知识资产。
+- 课程教师的访问必须同时满足 `users.role ∈ {course_teacher, hybrid}`、有效课程教师归属和有效教学班归属；浏览器传来的 class/course ID 不构成授权。跨课程/跨班返回稳定错误码而非空成功。
+
+### 0.1.7 WebSec 题库质量 T2（2026-07-15）
+
+- `20260715_1081` 只扩展既有 `quiz_items`：稳定 `canonical_key`、内容版本、解析、审核/来源状态和约束；`quiz_item_evidences` 以 FK 绑定既有 `chunks`，`quiz_quality_reports` 以规则版本、输入指纹和失败码保存可复现结果。它们不复制 `users`、`courses`、画像或知识资产正文。
+- 唯一 ready 课程 `WEBSEC-101` 的 seed 提供 21 道 `curated` 题目，覆盖 17/17 冻结知识点；`curated` 是课程来源/可发布状态，**不等同于人工批准**，确定性规则校验不会写入人工审核人。
+- `GET /api/v1/teacher/quiz-bank/websec` 和 `POST /api/v1/teacher/quiz-bank/websec/validate` 由有效课程教师归属保护；`GET /api/v1/courses/{id}/quiz-items` 仅返回 `curated + passed` 持久题目。无 Evidence、答案/选项矛盾、重复/近重复、覆盖遗漏或题型分布异常必须拒绝，不能以前端常量伪造成功。
+- `/api/v1/teacher/education/*` 是教师名册与分组的真实 API；`TeacherStudents` 只读取它们，页面刷新重新读取已提交数据库状态，不回退 `MOCK_CLASSES` / `MOCK_STUDENTS`。
+- 成员新增、移除和幂等重试写 `governance_audit_events`，保存操作者、对象、理由、结果、请求键和 UTC 时间；该表是业务审计，不替代 Runtime `workflow_audit_logs`。
+
+### 0.1.8 教师教学生产 T3（2026-07-15）
+
+- `20260715_1082` 增加课程资产治理、审题/薄弱点/建议、测评版本/成绩决定和 typed syllabus 版本关系。所有外键只指向既有 `users`、`courses`、T1 教学关系、T2 题目、`documents`/`document_assets`、既有 Runtime `agent_runs` 和 Evidence Snapshot；不得再建用户、课程、画像或知识资产的平行来源。
+- 教师生产入口必须先验证课程教师归属。课程资产只绑定统一知识资产层，状态由真实 `documents` 处理状态协调；仪表盘数字来自持久关系查询，不得以静态 KPI 冒充真实工作台。资产更正、撤回、软删除和恢复均须保留操作者、理由和业务审计。
+- 测评版本冻结已校验题目快照；客观题评分确定，主观题 AI 只可引用已成功的 AgentRun 和 Evidence Snapshot 作为建议。教师人工覆盖必须保存理由，学生只能读取已发布成绩；撤回会立即收回该可见性。
+- `course_syllabuses` / `course_syllabus_versions` 是 typed syllabus 的唯一版本层，不是普通文档别名。生成路径只接收已完成的 Harness AgentRun + Evidence Snapshot，证据不足返回 `SYLLABUS_EVIDENCE_INSUFFICIENT`；审核、发布、导出和显式回滚不得自动覆盖 `courses` 的 ready 内容。
+- 课程教师使用 `/teacher/materials`、`/teacher/teaching-insights`、`/teacher/assignments`、`/teacher/syllabus` 完成真实资产、弱点/建议、作业/成绩和 typed syllabus 操作。前端刷新只消费受权的持久化读投影；不得以 `MOCK_*`、静态 KPI 或 toast 替代服务端结果。
+
+### 0.1.9 协作与运营治理 T4（2026-07-15）
+
+- `20260715_1083` 新增版本化角色授予、Evidence 绑定外部信号/课程更新建议、独立 `messages` / `message_deliveries`、课程资源治理覆盖层和 KPI 定义。它们只引用既有 `users`、`courses`、`documents`、`knowledge_nodes`、T1/T3 关系及既有 Runtime `agent_runs` / Evidence Snapshot，绝不复制用户、课程、画像或统一知识资产正文。
+- F3 只接受 `policy_interpreter.InterpretPolicy`、`hot_analyst.AnalyzeHotEvent`、`job_analyst.AnalyzeJobMarket` 的成功 AgentRun 与同源 Evidence Snapshot。采纳建议只改变建议状态和决策审计，**绝不自动写入已发布课程**。
+- 人际消息必须走独立 `messages` / `message_deliveries`，按课程、教学班或个人范围服务端展开收件人；`agent_messages` 仍只属于 Runtime 转录，禁止复用。投递、已读、限时撤回与内容拒绝均写业务审计。
+- 管理员权限只由 active `user_role_grants -> role_definitions` 判定；管理员 KPI 直接查询 T1/T3/T4 持久关系并返回口径版本，不能存储或展示静态 KPI。最后一位管理员受 `LAST_ADMIN_PROTECTED` 保护。
+
+### 0.1.10 账号与平台安全 T5（2026-07-15）
+
+- `20260715_1084` 的 `password_policies`、`account_password_compliance`、`api_request_audit_events`、`api_risk_rules`、`api_risk_events` 与 `api_risk_actions` 是 FG-07/FG-08 的唯一新增持久层。它们只引用既有 `users` 和 T4 管理授权；不复制用户、课程、画像或知识资产。
+- `users.hashed_password` 是唯一密码 hash 位置。旧策略账号只能由 `account_password_compliance.evaluated_policy_version` 判断，绝不扫描、读取或反推 hash；注册/改密/管理员重置只在本次明文请求内校验 active 策略后写唯一 hash。策略激活自动保留最多 24 小时、可审计的 break-glass 管理员恢复边界，不能锁死全部管理员。
+- `/api/v1/*` 的 API risk middleware 只持久化路由模板、方法、结果码、可选 actor、HMAC 化 IP/设备值、尺寸/速率桶、受限 correlation id、脱敏版本和保留期；**禁止**保存 Authorization、Cookie、密码、token、原始 payload、完整 IP 或原始设备值。Provider limiter 不能替代该层。
+- active `administrator` 治理授权是安全策略、风险规则、人工解除/复核和管理员重置的唯一服务端权限。block/throttle、告警、release、误报/漏报复核及原因均可从风险事件/action 与 `governance_audit_events` 回放；公平或教学功能不得以风险事件自动处分个人。
 
 ---
 
@@ -1694,3 +1729,10 @@ forbidden: LLM 自由生成内容
 **文档结束。**
 
 > 本文件随项目演进持续迭代。每次涉及架构 / 数据库 / 智能体清单变更的 commit，**必须**同步更新本文件对应章节。修改 §3 铁律或 §19 差异说明前，**必须**与团队对齐——这两节是项目"宪法"。
+
+## GAP-13 T6 公平与基准事实（2026-07-15）
+
+- `20260715_1085` 新增 `fairness_*` 和 `benchmark_*` 关系表，只引用既有 `users`、T3 `assessment_grade_decisions` 和共享治理审计；不复制用户、课程、画像或知识资产。
+- 默认不新增敏感属性；仅经有效同意的 RFC 非敏感 `cohort` / `teaching_class` 最小分组可参与聚合。无同意、缺分组、数据缺失和样本不足均安全拒绝，样本不足不展示结论。
+- 公平信号只产生聚合指标、告警、人工复核和申诉记录，绝不自动回写个人成绩、权限、排序或处分。
+- `backend/benchmarks/` 的 content relevance、API misuse、公平三个冻结数据集均是脱敏非用户评测资产；manifest/data hash、公式、阈值、运行配置和失败 case key 可复现，不调用 Provider。

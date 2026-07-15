@@ -1,0 +1,12 @@
+{
+  "dataset_kind": "api_misuse",
+  "semantic_version": "1.0.0",
+  "label_schema_version": "api-misuse-label-v1",
+  "source_note": "冻结、脱敏的规则评测样本；不含 Authorization、Cookie、token、IP、设备或原始请求负载，也不声明真实攻击率。",
+  "data_file": "api-misuse-v1.jsonl",
+  "data_sha256": "6f403e83c035864641021c1cdb28775ecbc4b5943129c9949ef908bee38a0e83",
+  "annotation_rules": "misuse 表示按已冻结规则应处置；normal 表示不应处置。每条仅存 case_key 与标签。",
+  "formula": "binary confusion matrix against the frozen expected_label",
+  "thresholds": {"positive_label": "misuse"},
+  "positive_label": "misuse"
+}
