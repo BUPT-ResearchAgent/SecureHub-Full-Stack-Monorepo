@@ -11,10 +11,10 @@
 不要默认全量读取 Layer B 长规划文件或 Layer C Prompt / Workout。日常判断当前阶段、三人分工、进度、瓶颈、LLM / Embedding / COS / data-layer 决策时，先读：
 
 ```text
-D:/Nnutural/Desktop/BUPT大全/BUPT竞赛/26软件杯/Plan/2026-07-10_SecureHub_权威规划凝练索引.md
-D:/Nnutural/Desktop/BUPT大全/BUPT竞赛/26软件杯/Plan/2026-07-10_SecureHub_执行轨迹凝练索引.md
-D:/Nnutural/Desktop/BUPT大全/BUPT竞赛/26软件杯/Plan/2026-07-11_SecureHub_多智能体底层完整架构实施方案.md
-D:/Nnutural/Desktop/BUPT大全/BUPT竞赛/26软件杯/Plan/2026-07-13_SecureHub_A3产品化阶段2-8实施规划.md
+Plan/2026-07-10_SecureHub_权威规划凝练索引.md
+Plan/2026-07-10_SecureHub_执行轨迹凝练索引.md
+Plan/2026-07-11_SecureHub_多智能体底层完整架构实施方案.md
+Plan/2026-07-13_SecureHub_A3产品化阶段2-8实施规划.md
 Workout/Agent-Runtime-Wave-4-6.md
 TODO.md
 ```
@@ -22,7 +22,7 @@ TODO.md
 任务涉及 PPT、课程试题、资料可视化、案例/测试证据或竞赛评分时，再读：
 
 ```text
-D:/Nnutural/Desktop/BUPT大全/BUPT竞赛/26软件杯/Plan/2026-07-14_SecureHub_赛前突击准备包规划.md
+software_cup/Plan/2026-07-14_SecureHub_赛前突击准备包规划.md
 ```
 
 只有当任务需要追证具体决策、修改契约、验收某一轮交付或生成新执行提示词时，才按索引中的 `file_path:line_number` 回读源文件。

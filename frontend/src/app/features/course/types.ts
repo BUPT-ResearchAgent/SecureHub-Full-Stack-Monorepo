@@ -3,6 +3,33 @@ import type { WorkflowRunStatus } from '@/lib/workflow-run.types';
 
 export type ResourceType = SSEResourceType;
 
+export type PptDeckLayoutId = 'cover' | 'statement' | 'timeline' | 'compare' | 'cards' | 'closing';
+
+export type PptCodeDemo = {
+  language?: string;
+  before?: string;
+  after?: string;
+  caption?: string;
+};
+
+export type PptDeckSlide = {
+  layout_id: PptDeckLayoutId;
+  title: string;
+  claim: string;
+  bullets: string[];
+  code_demo?: PptCodeDemo;
+  evidence_refs: string[];
+  speaker_note?: string;
+};
+
+export type PptDeckSpec = {
+  title: string;
+  theme: string;
+  slides: PptDeckSlide[];
+};
+
+export type PptRenderMode = 'securehub_swiss_v1';
+
 export type PersonaDimensionKey =
   | 'base_knowledge'
   | 'cognitive_style'
@@ -47,6 +74,8 @@ export type ResourceItem = {
   title: string;
   status: 'idle' | 'generating' | 'ready' | 'failed';
   content: string;
+  deckSpec?: PptDeckSpec;
+  renderMode?: PptRenderMode | string;
   evidenceRefs: EvidenceChunkDTO[];
   qualityScore?: number;
   errorCode?: string;
