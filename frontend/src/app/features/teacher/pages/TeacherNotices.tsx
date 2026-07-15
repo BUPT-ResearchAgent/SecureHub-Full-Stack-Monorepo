@@ -1,60 +1,89 @@
-// Status: mock
+// Status: real
 
-import { useState } from 'react';
-import { Bell, Megaphone, Send } from 'lucide-react';
+import { useCallback, useEffect, useState } from 'react';
+import { Bell, Loader2, Megaphone, RotateCcw, Send } from 'lucide-react';
 import { toast } from 'sonner';
 import { useActiveRole } from '../store';
 import { isTeacherRole } from '../roles';
 import { TeacherShell } from '../components/TeacherShell';
-import { MOCK_CLASSES } from '@/lib/mock/teacher.mock';
+import { fetchTeachingClasses } from '../api/education';
+import { fetchOutbox, recallMessage, sendMessage, type MessageRecord } from '@/app/features/messages/api';
 
-const SEED_NOTICES = [
-  {
-    id: 'n-001',
-    title: '本周三 19:00 · OWASP Top 10 复盘班会',
-    target: '网安 2023-1',
-    body: '请准时在腾讯会议参加；建议提前梳理 3 个最有印象的漏洞案例。',
-    publishedAt: '2026-06-12T08:00:00Z',
-  },
-  {
-    id: 'n-002',
-    title: '《SQL 注入》第 2 次作业延期至 6/22',
-    target: '网安 2023-2',
-    body: '考虑到学生反馈，延长 2 天截止时间，请把握节奏完成。',
-    publishedAt: '2026-06-10T08:00:00Z',
-  },
-];
+type TeachingClass = { id: string; course_id: string; name: string; code: string; student_count: number };
+
+function messageKey() {
+  return typeof crypto !== 'undefined' && 'randomUUID' in crypto
+    ? crypto.randomUUID()
+    : `message-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
 
 export function TeacherNotices() {
   const [role] = useActiveRole();
   const [title, setTitle] = useState('');
   const [body, setBody] = useState('');
-  const [target, setTarget] = useState<string>(MOCK_CLASSES[0].name);
-  const [notices, setNotices] = useState(SEED_NOTICES);
+  const [classes, setClasses] = useState<TeachingClass[]>([]);
+  const [classId, setClassId] = useState('');
+  const [notices, setNotices] = useState<MessageRecord[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [classResponse, outbox] = await Promise.all([fetchTeachingClasses(), fetchOutbox()]);
+      const nextClasses = classResponse.items as TeachingClass[];
+      setClasses(nextClasses);
+      setClassId((current) => current || nextClasses[0]?.id || '');
+      setNotices(outbox.filter((message) => message.safety_state === 'accepted'));
+    } catch (cause) {
+      toast.error(cause instanceof Error ? cause.message : '无法读取公告数据');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
 
   if (!isTeacherRole(role)) return null;
 
-  const publish = () => {
-    if (!title.trim() || !body.trim()) return;
-    setNotices((prev) => [
-      {
-        id: `n-${Date.now()}`,
-        title: title.trim(),
-        target,
+  const publish = async () => {
+    const target = classes.find((item) => item.id === classId);
+    if (!title.trim() || !body.trim() || !target) return;
+    try {
+      const message = await sendMessage({
+        scope_type: 'class',
+        course_id: target.course_id,
+        teaching_class_id: target.id,
+        subject: title.trim(),
         body: body.trim(),
-        publishedAt: new Date().toISOString(),
-      },
-      ...prev,
-    ]);
-    setTitle('');
-    setBody('');
-    toast.success('公告已发布');
+        idempotency_key: messageKey(),
+      });
+      setNotices((current) => [message, ...current]);
+      setTitle('');
+      setBody('');
+      toast.success('公告已投递');
+    } catch (cause) {
+      toast.error(cause instanceof Error ? cause.message : '公告投递失败');
+    }
+  };
+
+  const recall = async (message: MessageRecord) => {
+    const reason = window.prompt('请输入撤回理由');
+    if (!reason?.trim()) return;
+    try {
+      const updated = await recallMessage(message.id, reason.trim());
+      setNotices((current) => current.map((item) => (item.id === updated.id ? updated : item)));
+      toast.success('公告已撤回');
+    } catch (cause) {
+      toast.error(cause instanceof Error ? cause.message : '公告撤回失败');
+    }
   };
 
   return (
-    <TeacherShell title="通知公告" subtitle="按班级 / 项目 / 个人发布公告（mock 不发真实通知）">
+    <TeacherShell title="通知公告" subtitle="向本人教学班投递可追溯公告">
       <div className="grid gap-4 md:grid-cols-[1fr_1.2fr]">
-        <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+        <section className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
           <div className="flex items-center gap-2 text-sm">
             <Megaphone className="h-4 w-4 text-brand-blue-600" />
             <span className="font-semibold text-slate-800">新建公告</span>
@@ -72,16 +101,15 @@ export function TeacherNotices() {
             <label className="block">
               <span className="text-slate-500">受众</span>
               <select
-                value={target}
-                onChange={(e) => setTarget(e.target.value)}
+                value={classId}
+                onChange={(e) => setClassId(e.target.value)}
                 className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2"
               >
-                {MOCK_CLASSES.map((c) => (
-                  <option key={c.id} value={c.name}>
-                    {c.name}（{c.studentCount} 名学生）
+                {classes.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.name}（{item.student_count} 名学生）
                   </option>
                 ))}
-                <option value="全体学生">全体学生</option>
               </select>
             </label>
             <label className="block">
@@ -95,9 +123,9 @@ export function TeacherNotices() {
             </label>
             <button
               type="button"
-              onClick={publish}
-              disabled={!title.trim() || !body.trim()}
-              className="inline-flex items-center gap-1 rounded-full bg-brand-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-brand-blue-700 disabled:opacity-40"
+              onClick={() => void publish()}
+              disabled={!title.trim() || !body.trim() || !classId}
+              className="inline-flex items-center gap-1 rounded-lg bg-brand-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-brand-blue-700 disabled:opacity-40"
             >
               <Send className="h-3 w-3" />
               发布
@@ -105,27 +133,41 @@ export function TeacherNotices() {
           </div>
         </section>
 
-        <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-          <div className="flex items-center gap-2 text-sm">
-            <Bell className="h-4 w-4 text-amber-600" />
-            <span className="font-semibold text-slate-800">已发布公告</span>
+        <section className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="flex items-center justify-between gap-2 text-sm">
+            <div className="flex items-center gap-2">
+              <Bell className="h-4 w-4 text-amber-600" />
+              <span className="font-semibold text-slate-800">已投递公告</span>
+            </div>
+            <button type="button" onClick={() => void load()} title="刷新公告" aria-label="刷新公告">
+              <RotateCcw className="h-4 w-4 text-slate-500" />
+            </button>
           </div>
+          {loading ? (
+            <div className="flex min-h-32 items-center justify-center text-xs text-slate-500"><Loader2 className="mr-2 h-4 w-4 animate-spin" />正在读取</div>
+          ) : notices.length === 0 ? (
+            <p className="py-8 text-center text-xs text-slate-500">暂无已投递公告</p>
+          ) : (
           <ul className="mt-3 space-y-2">
             {notices.map((n) => (
-              <li key={n.id} className="rounded-xl border border-slate-100 bg-slate-50 p-3 text-xs">
+              <li key={n.id} className="rounded-lg border border-slate-100 bg-slate-50 p-3 text-xs">
                 <div className="flex items-center justify-between">
-                  <p className="font-medium text-slate-800">{n.title}</p>
-                  <span className="rounded-full bg-white px-2 py-0.5 text-[11px] text-slate-500">
-                    {n.target}
+                  <p className="font-medium text-slate-800">{n.subject}</p>
+                  <span className="rounded bg-white px-2 py-0.5 text-[11px] text-slate-500">
+                    {n.status === 'recalled' ? '已撤回' : `未读 ${n.delivery_counts.unread ?? 0}`}
                   </span>
                 </div>
-                <p className="mt-1.5 text-slate-600">{n.body}</p>
+                <p className="mt-1.5 text-slate-600">{n.status === 'recalled' ? '该公告已撤回。' : n.body}</p>
                 <p className="mt-1.5 text-[11px] text-slate-400">
-                  {new Date(n.publishedAt).toLocaleString('zh-CN')}
+                  {n.sent_at ? new Date(n.sent_at).toLocaleString('zh-CN') : '未投递'}
                 </p>
+                {n.status === 'sent' || n.status === 'partially_delivered' ? (
+                  <button type="button" onClick={() => void recall(n)} className="mt-2 text-[11px] text-rose-600 hover:text-rose-700">撤回</button>
+                ) : null}
               </li>
             ))}
           </ul>
+          )}
         </section>
       </div>
     </TeacherShell>

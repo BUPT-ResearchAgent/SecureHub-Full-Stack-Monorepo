@@ -21,6 +21,8 @@ from app.repositories.identity.capabilities import UserCapabilityRepository
 from app.repositories.identity.profiles import UserProfileRepository
 from app.repositories.identity.users import UserRepository
 from app.schemas.auth import AuthUser, LoginRequest, RegisterRequest, TokenResponse
+from app.schemas.security import PasswordChangeRequest, PasswordComplianceDTO
+from app.services.security.security_service import SecurityDomainError, SecurityGovernanceService
 
 DEFAULT_CAPABILITY_DIMENSIONS = (
     "web_security",
@@ -59,12 +61,16 @@ class AuthService:
         self.users = UserRepository(session)
         self.profiles = UserProfileRepository(session)
         self.capabilities = UserCapabilityRepository(session)
+        self.security_governance = SecurityGovernanceService(session)
 
     async def register(self, payload: RegisterRequest) -> TokenResponse:
         email = payload.email.strip().lower()
         display_name = payload.display_name.strip()
 
-        self._validate_password_strength(payload.password)
+        try:
+            policy = await self.security_governance.validate_new_password(payload.password)
+        except SecurityDomainError as err:
+            raise _auth_error(err.status_code, err.code, err.message) from err
 
         if await self.users.get_by_email(email) is not None:
             raise _auth_error(status.HTTP_409_CONFLICT, "EMAIL_EXISTS", "该邮箱已注册")
@@ -88,6 +94,7 @@ class AuthService:
                     evidence_count=0,
                     metadata={"source": "auth_register_default"},
                 )
+            await self.security_governance.register_compliant_password(user=user, policy=policy)
             await self.session.commit()
         except IntegrityError as err:
             await self.session.rollback()
@@ -106,7 +113,31 @@ class AuthService:
             )
         if not user.is_active:
             raise _auth_error(status.HTTP_403_FORBIDDEN, "USER_DISABLED", "账号已停用")
+        try:
+            compliance = await self.security_governance.evaluate_login_compliance(user=user)
+            # A remediation notice / break-glass status is a real security
+            # state transition, so it must commit before token issuance or a
+            # deterministic remediation rejection.
+            await self.session.commit()
+        except SecurityDomainError as err:
+            await self.session.rollback()
+            raise _auth_error(err.status_code, err.code, err.message) from err
+        if not compliance.login_allowed:
+            raise _auth_error(
+                status.HTTP_403_FORBIDDEN,
+                "PASSWORD_REMEDIATION_REQUIRED",
+                "当前账号需要按最新密码策略完成整改后再登录。",
+            )
         return self._token_response(user)
+
+    async def change_password(self, *, user: User, payload: PasswordChangeRequest) -> PasswordComplianceDTO:
+        try:
+            result = await self.security_governance.change_own_password(user=user, payload=payload)
+            await self.session.commit()
+            return result
+        except SecurityDomainError as err:
+            await self.session.rollback()
+            raise _auth_error(err.status_code, err.code, err.message) from err
 
     async def get_current_user(self, token: str) -> User:
         try:
@@ -128,20 +159,3 @@ class AuthService:
             expires_at=expires_at,
             user=_to_auth_user(user),
         )
-
-    @staticmethod
-    def _validate_password_strength(password: str) -> None:
-        has_upper = any(ch.isupper() for ch in password)
-        has_lower = any(ch.islower() for ch in password)
-        has_digit = any(ch.isdigit() for ch in password)
-        has_symbol = any(not ch.isalnum() for ch in password)
-        if (
-            len(password) < 8
-            or len(password.encode("utf-8")) > 72
-            or not (has_upper and has_lower and has_digit and has_symbol)
-        ):
-            raise _auth_error(
-                status.HTTP_400_BAD_REQUEST,
-                "PASSWORD_WEAK",
-                "密码强度不足",
-            )
