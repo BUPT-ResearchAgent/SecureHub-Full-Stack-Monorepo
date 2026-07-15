@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { CheckCircle2, CircleAlert, CircleCheck } from 'lucide-react';
 import { Card } from '@/app/components/PageShell';
+import { fetchCuratedCourseQuizItems, type CuratedCourseQuizItem } from '../api';
+import { useSelectedCourse } from '../catalog/useSelectedCourse';
 import type { ResourceItem } from '../types';
 
 export interface QuizResourceViewProps {
@@ -53,6 +55,22 @@ export function parseCourseQuiz(content: string): CourseQuizQuestion[] {
   }
 }
 
+function curatedQuizToQuestion(item: CuratedCourseQuizItem): CourseQuizQuestion {
+  const type: CourseQuizQuestionType = item.type === 'multi_choice'
+    ? 'multiple'
+    : item.type === 'short_answer' || item.type === 'fill' || item.type === 'code'
+      ? 'short'
+      : 'single';
+  return {
+    id: item.id,
+    type,
+    prompt: item.question,
+    options: item.options,
+    answer: type === 'multiple' ? item.answer.split(';').map((answer) => answer.trim()).filter(Boolean) : item.answer,
+    explanation: item.explanation,
+  };
+}
+
 function isCorrect(question: CourseQuizQuestion, answer: string | string[] | undefined): boolean {
   if (question.type === 'multiple') {
     const expected = Array.isArray(question.answer) ? question.answer.map(normalize).sort() : [normalize(question.answer)].sort();
@@ -68,7 +86,13 @@ function isCorrect(question: CourseQuizQuestion, answer: string | string[] | und
 }
 
 export function QuizResourceView({ resource }: QuizResourceViewProps) {
-  const questions = useMemo(() => parseCourseQuiz(resource.content), [resource.content]);
+  const { course } = useSelectedCourse();
+  const isWebsec = course?.code === 'WEBSEC-101';
+  const fallbackQuestions = useMemo(() => parseCourseQuiz(resource.content), [resource.content]);
+  const [curatedQuestions, setCuratedQuestions] = useState<CourseQuizQuestion[]>([]);
+  const [curatedError, setCuratedError] = useState('');
+  const [curatedLoading, setCuratedLoading] = useState(false);
+  const questions = isWebsec ? curatedQuestions : fallbackQuestions;
   const storageKey = `securehub-course-quiz-${resource.id}`;
   const [answers, setAnswers] = useState<Record<string, string | string[]>>({});
   const [submitted, setSubmitted] = useState(false);
@@ -89,6 +113,31 @@ export function QuizResourceView({ resource }: QuizResourceViewProps) {
     }
     setSubmitted(false);
   }, [storageKey]);
+
+  useEffect(() => {
+    if (!isWebsec || !course) {
+      setCuratedQuestions([]);
+      setCuratedError('');
+      setCuratedLoading(false);
+      return;
+    }
+    let disposed = false;
+    setCuratedLoading(true);
+    setCuratedError('');
+    void fetchCuratedCourseQuizItems(course.id)
+      .then((response) => {
+        if (!disposed) setCuratedQuestions(response.items.map(curatedQuizToQuestion));
+      })
+      .catch((cause: unknown) => {
+        if (!disposed) setCuratedError(cause instanceof Error ? cause.message : '无法读取已校验题库');
+      })
+      .finally(() => {
+        if (!disposed) setCuratedLoading(false);
+      });
+    return () => {
+      disposed = true;
+    };
+  }, [course, isWebsec]);
 
   useEffect(() => {
     window.localStorage.setItem(storageKey, JSON.stringify(answers));
@@ -116,7 +165,7 @@ export function QuizResourceView({ resource }: QuizResourceViewProps) {
     >
       {!questions.length && (
         <div className="rounded-lg border border-dashed border-slate-200 p-6 text-center text-sm text-slate-500">
-          暂无可解析题目，请重新生成练习题
+          {curatedLoading ? '正在读取已校验的 Web 安全题库…' : curatedError || '暂无可解析题目，请重新生成练习题'}
         </div>
       )}
 

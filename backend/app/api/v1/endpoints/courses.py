@@ -32,6 +32,7 @@ from app.schemas.course_product import (
     CourseProgressDTO,
     CourseProgressUpdateRequest,
 )
+from app.schemas.quiz_quality import PublishedQuizListDTO
 from app.schemas.resource import ResourceGenerateRequest
 from app.services.course_catalog_service import (
     CourseCatalogService,
@@ -40,6 +41,7 @@ from app.services.course_catalog_service import (
     CourseProgressValidationError,
 )
 from app.services.workflow_application_service import WorkflowApplicationService
+from app.services.learning.quiz_quality_service import QuizQualityError, QuizQualityService
 
 
 router = APIRouter()
@@ -181,6 +183,13 @@ def _raise_course_product_error(exc: Exception) -> None:
     raise exc
 
 
+def _raise_quiz_quality_error(exc: QuizQualityError) -> None:
+    raise HTTPException(
+        status_code=exc.status_code,
+        detail={"code": exc.code, "message": exc.message},
+    ) from exc
+
+
 @router.get("/courses", response_model=list[CourseSummary])
 async def list_courses(
     session: SessionDep,
@@ -305,6 +314,27 @@ async def get_course(
         return _summary_from_catalog(item)
     except (CourseProductNotFoundError, CourseProgressValidationError, CourseContentNotReadyError) as exc:
         _raise_course_product_error(exc)
+
+
+@router.get("/courses/{course_id}/quiz-items", response_model=PublishedQuizListDTO)
+async def list_curated_course_quiz_items(
+    course_id: str,
+    session: SessionDep,
+    current_user_id: CurrentUserDep,
+    canonical_key: str | None = Query(default=None, max_length=160),
+) -> PublishedQuizListDTO:
+    """Expose only curated, passed WEBSEC-101 items to course consumers."""
+
+    del current_user_id  # Authentication is still required; no client role is trusted.
+    canonical_course_id = _contract_course_id(course_id)
+    _ready_course_product(canonical_course_id)
+    try:
+        return await QuizQualityService(session).list_publishable_items(
+            course_id=canonical_course_id,
+            canonical_key=canonical_key,
+        )
+    except QuizQualityError as exc:
+        _raise_quiz_quality_error(exc)
 
 
 @router.post(
