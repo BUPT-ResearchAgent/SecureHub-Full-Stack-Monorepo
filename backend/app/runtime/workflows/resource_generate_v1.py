@@ -46,6 +46,8 @@ PRODUCER_BY_RESOURCE_TYPE: dict[ResourceKind, tuple[str, str]] = {
     "readings": ("topic_explorer", "RecommendReadings"),
 }
 
+RESOURCE_GENERATE_PRODUCER_BUDGET_TOKENS = 2400
+
 
 def producer_input(root_input: dict[str, Any], _state: dict[str, Any]) -> dict[str, Any]:
     return {
@@ -81,6 +83,7 @@ RESOURCE_GENERATE_V1 = WorkflowDefinition(
             quality_policy="workflow_node",
             retry_limit=0,
             input_sources=(),
+            budget_tokens=RESOURCE_GENERATE_PRODUCER_BUDGET_TOKENS,
         ),
         NodeDefinition(
             node_id="quality_check",

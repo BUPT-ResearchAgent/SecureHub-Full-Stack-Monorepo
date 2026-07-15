@@ -196,12 +196,84 @@ _DEFAULT_LLM_OUTPUTS: dict[str, dict[str, Any]] = {
     "GenerateCoursePPT": {
         "content": "Reveal.js style slide outline drafted.",
         "slides": [
-            {"title": "SQL 注入：原理与危害", "bullets": ["定义", "影响范围", "OWASP Top 10 排名"]},
-            {"title": "经典攻击向量", "bullets": ["布尔盲注", "时间盲注", "联合查询"]},
-            {"title": "防御三板斧", "bullets": ["参数化查询", "白名单校验", "最小权限"]},
-            {"title": "动手实验", "bullets": ["DVWA SQLi Low", "DVWA SQLi Medium", "sqlmap 自动化"]},
-            {"title": "知识检查", "bullets": ["3 道选择题", "1 道代码题"]},
+            {"title": "SQL 注入：原理与危害", "bullets": ["定义", "影响范围", "数据与语法边界"]},
+            {"title": "边界失守", "bullets": ["输入进入查询文本", "数据库误解执行意图", "风险扩大到越权读取"]},
+            {"title": "拼接对参数", "bullets": ["脆弱拼接", "参数化查询", "白名单映射"]},
+            {"title": "防御体系", "bullets": ["参数化查询", "输入约束", "最小权限"]},
+            {"title": "三个记忆点", "bullets": ["先看边界", "默认参数化", "把修复纳入回归"]},
         ],
+        "reveal_markdown": (
+            "# SQL 注入：原理与危害\n\n"
+            "- 定义\n- 影响范围\n- 数据与语法边界\n"
+            "---\n"
+            "# 边界失守\n\n"
+            "- 输入进入查询文本\n- 数据库误解执行意图\n- 风险扩大到越权读取\n"
+            "---\n"
+            "# 拼接对参数\n\n"
+            "- 脆弱拼接\n- 参数化查询\n- 白名单映射\n"
+            "---\n"
+            "# 防御体系\n\n"
+            "- 参数化查询\n- 输入约束\n- 最小权限\n"
+            "---\n"
+            "# 三个记忆点\n\n"
+            "- 先看边界\n- 默认参数化\n- 把修复纳入回归\n"
+        ),
+        "deck_spec": {
+            "title": "SQL 注入：当数据越过语法边界",
+            "theme": "securehub_swiss_orange",
+            "slides": [
+                {
+                    "layout_id": "cover",
+                    "title": "SQL 注入",
+                    "claim": "把数据和 SQL 语法边界讲清楚，是理解注入风险的第一步。",
+                    "bullets": ["5 分钟课程演示", "原理、防御与工程判断", "不展示可复用攻击载荷"],
+                    "evidence_refs": ["fixture-chunk-sqli-1", "fixture-chunk-sqli-2"],
+                    "speaker_note": "强调这是课程资源生成的结构化 PPT，不是任意 HTML。",
+                },
+                {
+                    "layout_id": "statement",
+                    "title": "边界失守",
+                    "claim": "SQL 注入不是某个字符危险，而是不可信输入被解释成查询语法。",
+                    "bullets": ["输入进入查询文本", "查询意图被改变", "数据和指令不再隔离"],
+                    "evidence_refs": ["fixture-chunk-sqli-1", "fixture-chunk-sqli-3"],
+                },
+                {
+                    "layout_id": "timeline",
+                    "title": "风险链路",
+                    "claim": "从用户输入到数据风险，中间通常经历四个可观察环节。",
+                    "bullets": ["用户输入", "字符串拼接", "语义改变", "越权读取或破坏"],
+                    "evidence_refs": ["fixture-chunk-sqli-1", "fixture-chunk-sqli-3"],
+                },
+                {
+                    "layout_id": "compare",
+                    "title": "拼接对参数",
+                    "claim": "参数化查询把 SQL 结构固定下来，把输入作为值绑定。",
+                    "bullets": ["左侧是脆弱形态", "右侧是安全形态", "动态标识符使用白名单"],
+                    "code_demo": {
+                        "language": "sql",
+                        "before": "SELECT title FROM lessons WHERE title = '\" + term + \"'",
+                        "after": "SELECT title FROM lessons WHERE title = ?",
+                        "caption": "教学伪代码，只比较结构形态。",
+                    },
+                    "evidence_refs": ["fixture-chunk-sqli-2", "fixture-chunk-sqli-4"],
+                },
+                {
+                    "layout_id": "cards",
+                    "title": "防御体系",
+                    "claim": "可靠防御来自参数化、白名单、最小权限和回归测试的组合。",
+                    "bullets": ["参数化查询", "输入约束", "最小权限", "错误处理", "日志与回归"],
+                    "evidence_refs": ["fixture-chunk-sqli-2", "fixture-chunk-sqli-4"],
+                },
+                {
+                    "layout_id": "closing",
+                    "title": "三个记忆点",
+                    "claim": "先识别边界，再选择参数化和白名单，最后把修复固化为工程习惯。",
+                    "bullets": ["数据不能越过语法边界", "默认使用参数化查询", "修复后保留审计和测试证据"],
+                    "evidence_refs": ["fixture-chunk-sqli-1", "fixture-chunk-sqli-2", "fixture-chunk-sqli-4"],
+                },
+            ],
+        },
+        "render_mode": "securehub_swiss_v1",
         "quality_score": 0.87,
     },
     "GenerateMindmap": {

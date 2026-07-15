@@ -1321,3 +1321,305 @@ Result:
 ```
 
 warning 仍是 passlib / Python `crypt` deprecation，不是本次清洗逻辑错误。
+
+## 12. 2026-06-17 教材图片本地化与 MinerU 资产入库补充
+
+本节记录一次针对真实教材资料的后续补充：用户提供的 MinerU Markdown 中，教材图片原本是远程 CDN 链接。为避免演示时依赖外部网页图片，已完成图片批量本地化，并把图片作为 `document_assets / storage_objects` 资产登记入库。
+
+### 12.1 输入资料
+
+当前教材资料路径：
+
+```text
+data/raw/pdf/Web安全基础教程.pdf
+data/processed/mineru/MinerU_markdown_Web安全基础教程.md
+```
+
+教材标题：
+
+```text
+Web 安全基础教材
+```
+
+合规说明：
+
+```text
+公开样本，仅用于比赛演示、摘要、RAG evidence，不做完整转载。
+```
+
+### 12.2 远程图片问题
+
+检查 MinerU Markdown 后发现，其中图片不是本地文件，而是远程地址：
+
+```text
+https://cdn-mineru.openxlab.org.cn/result/.../*.jpg
+```
+
+统计结果：
+
+```text
+远程 Markdown 图片链接：212 个
+```
+
+这会带来两个问题：
+
+```text
+1. 演示环境断网或 CDN 链接过期时，教材图片无法显示。
+2. 图片没有进入 SecureHub 的统一资产链路，不符合“大文件通过 storage_objects/object_key 管理”的要求。
+```
+
+### 12.3 新增批量本地化脚本
+
+新增脚本：
+
+```text
+scripts/localize_markdown_images.py
+```
+
+用途：
+
+```text
+扫描 Markdown 中的远程图片链接
+批量下载图片到本地 assets 目录
+生成本地图片版 Markdown
+写入 manifest.json
+```
+
+本次执行命令：
+
+```powershell
+python scripts\localize_markdown_images.py data\processed\mineru\MinerU_markdown_Web安全基础教程.md --timeout 30 --sleep 0.02 --overwrite --downloader curl
+```
+
+输出文件：
+
+```text
+data/processed/mineru/MinerU_markdown_Web安全基础教程.local.md
+data/processed/mineru/MinerU_markdown_Web安全基础教程_assets/
+data/processed/mineru/MinerU_markdown_Web安全基础教程_assets/manifest.json
+```
+
+执行结果：
+
+```text
+remote_images=212
+downloaded=212
+failed=0
+```
+
+补充说明：
+
+```text
+普通 Python urllib 下载这批 MinerU CDN 图片时遇到 TLS/网络问题。
+脚本已支持 --downloader curl，优先走 curl.exe，更适合 Windows 演示环境批量下载。
+```
+
+### 12.4 MinerU 入库逻辑补充
+
+修改文件：
+
+```text
+backend/app/knowledge/loaders/course_loader.py
+```
+
+新增能力：
+
+```text
+pdf_mineru_import 现在会扫描 MinerU Markdown 中的本地图片引用。
+如果图片引用是相对路径并且文件存在，则会把图片写入 StorageService。
+每张图片会作为 page_image 资产挂到同一个教材 document 下。
+```
+
+新增资产类型：
+
+```text
+page_image
+```
+
+入库后的统一链路：
+
+```text
+PDF
+  -> storage_objects
+  -> document_assets.asset_type = original_pdf
+
+MinerU Markdown
+  -> storage_objects
+  -> document_assets.asset_type = markdown_full
+
+Markdown 引用的本地图片
+  -> storage_objects
+  -> document_assets.asset_type = page_image
+```
+
+没有新增平台专用表，也没有新增 crawler agent。
+
+### 12.5 新增测试
+
+修改文件：
+
+```text
+backend/tests/knowledge/test_course_loaders.py
+```
+
+新增测试：
+
+```text
+test_pdf_mineru_import_registers_local_markdown_images
+```
+
+测试覆盖：
+
+```text
+1. MinerU Markdown 引用本地图片。
+2. pdf_mineru_import 能识别该图片。
+3. 图片写入 storage_objects。
+4. 图片登记为 document_assets.asset_type = page_image。
+5. 同一教材 document 同时拥有 original_pdf / markdown_full / page_image。
+```
+
+Docker backend 中验证命令：
+
+```bash
+docker compose exec -T backend sh -lc "cd /app/backend && uv run pytest tests/knowledge/test_course_loaders.py"
+```
+
+验证结果：
+
+```text
+3 passed, 1 warning
+```
+
+warning 仍为 passlib / Python `crypt` deprecation，不是本次改动错误。
+
+### 12.6 真实教材重新入库结果
+
+由于当前 `docker-compose.yml` 的 backend 服务只挂载了 `backend/`，没有挂载仓库根目录 `data/` 和 `scripts/`，本次先把教材资料复制到 backend 容器：
+
+```powershell
+docker compose exec -T backend sh -lc "mkdir -p /app/data/raw/pdf /app/data/processed/mineru /app/scripts"
+
+docker compose cp data/raw/pdf/Web安全基础教程.pdf backend:/app/data/raw/pdf/Web安全基础教程.pdf
+docker compose cp data/processed/mineru/MinerU_markdown_Web安全基础教程.local.md backend:/app/data/processed/mineru/MinerU_markdown_Web安全基础教程.local.md
+docker compose cp data/processed/mineru/MinerU_markdown_Web安全基础教程_assets backend:/app/data/processed/mineru/MinerU_markdown_Web安全基础教程_assets
+docker compose cp scripts/ingest_pdf_mineru.py backend:/app/scripts/ingest_pdf_mineru.py
+```
+
+随后执行入库：
+
+```bash
+docker compose exec -T backend sh -lc "cd /app/backend && uv run python /app/scripts/ingest_pdf_mineru.py /app/data/raw/pdf/Web安全基础教程.pdf --mineru-output /app/data/processed/mineru/MinerU_markdown_Web安全基础教程.local.md --title 'Web 安全基础教材'"
+```
+
+执行结果：
+
+```text
+[ingest_pdf_mineru] documents=1 chunks=360 assets=214 domain=course_websec
+```
+
+资产构成：
+
+```text
+original_pdf   1
+markdown_full  1
+page_image     212
+```
+
+容器 storage 文件确认：
+
+```text
+/app/data/storage/course_websec/mineru/Web安全基础教程/assets/*.jpg
+数量：212
+```
+
+宿主机也已同步一份 storage 文件：
+
+```text
+data/storage/course_websec/mineru/Web安全基础教程/
+  Web安全基础教程.pdf
+  full.md
+  assets/*.jpg
+```
+
+宿主机文件统计：
+
+```text
+.pdf  1
+.md   1
+.jpg  212
+```
+
+### 12.7 当前数据库与本地文件位置
+
+当前运行时数据库是 Docker PostgreSQL：
+
+```text
+service: postgres
+database: securehub
+user: securehub
+host port: 15432
+docker volume: securehub-full-stack-monorepo_pgdata
+container data dir: /var/lib/postgresql/data
+volume mountpoint: /var/lib/docker/volumes/securehub-full-stack-monorepo_pgdata/_data
+```
+
+数据库中保存的是：
+
+```text
+documents
+chunks
+document_assets
+storage_objects
+```
+
+文件本体保存位置：
+
+```text
+容器运行时：/app/data/storage/
+宿主机副本：data/storage/
+```
+
+协作交付时不建议直接拷贝 Docker volume。建议交付：
+
+```text
+1. Git 提交代码和脚本。
+2. 通过压缩包/网盘/release 附件提供 data/raw 与 data/processed。
+3. 队友本地运行入库脚本，在自己的 PostgreSQL 中重建 documents/chunks/assets。
+```
+
+### 12.8 同名旧教材 document 注意事项
+
+当前数据库中曾出现过两个同名教材 document：
+
+```text
+旧 document:
+id  = cd086b95-eb2b-5e15-99ba-e2eb312ad8ec
+url = local://data/raw/pdf/Web安全基础教程.pdf
+资产：original_pdf + markdown_full
+
+新 document:
+id  = b9663e5b-ebff-5929-8546-995839a59b60
+url = local://Web安全基础教程.pdf
+资产：original_pdf + markdown_full + 212 个 page_image
+```
+
+旧 document 是早期导入留下的路径版本。为了避免误删历史数据，本次没有主动删除。
+
+如需删除旧 document，可执行：
+
+```powershell
+docker compose exec -T postgres psql -U securehub -d securehub -v ON_ERROR_STOP=1 -c "begin; delete from documents where id = 'cd086b95-eb2b-5e15-99ba-e2eb312ad8ec' and title = 'Web 安全基础教材' and url = 'local://data/raw/pdf/Web安全基础教程.pdf' returning id, title, url; commit;"
+```
+
+删除后验证：
+
+```powershell
+docker compose exec -T postgres psql -U securehub -d securehub -c "select id, url, title from documents where title = 'Web 安全基础教材' order by url;"
+```
+
+注意：
+
+```text
+不要手动删除 storage_objects 中的同名 object_key。
+新教材 document 仍使用 course_websec/mineru/Web安全基础教程/... 这批 storage object。
+```
