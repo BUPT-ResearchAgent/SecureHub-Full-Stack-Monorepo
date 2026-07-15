@@ -56,9 +56,13 @@ Thumbs.db
 frontend/.pnpm-store/
 
 # Others
+experiments/
 Plan/
 SecureHub-Full-Stack-Monorepo/data
 Workout/member_c_p0_handoff.md
+/data/raw/
+/data/processed/
+/data.zip
 
 # ==== 教材版权保护（6-C-2 新增；6-C-2-cleanup 扩展；6-C-3-followup 放宽 full.md）====
 # --- 工程副本目录（monorepo 内部工作目录） ---
