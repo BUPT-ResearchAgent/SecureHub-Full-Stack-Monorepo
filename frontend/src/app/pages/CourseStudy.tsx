@@ -1,4 +1,4 @@
-import { useEffect, useState, type KeyboardEvent } from 'react';
+import { lazy, Suspense, useEffect, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
@@ -28,10 +28,12 @@ import { useSelectedCourse } from '@/app/features/course/catalog/useSelectedCour
 import { AssessmentPanel } from '@/app/features/course/components/AssessmentPanel';
 import { CourseEntryCard } from '@/app/features/course/components/CourseEntryCard';
 import { CourseDialogueMode } from '@/app/features/course/components/CourseDialogueMode';
+import {
+  WEB_SECURITY_COURSE_CODE,
+  WEB_SECURITY_COURSE_ID,
+} from '@/app/features/course/websec/webSecurityCourseConfig';
 import { CourseWorkflowRecovery } from '@/app/features/course/workflow/CourseWorkflowRecovery';
-import { LearningPathDAG } from '@/app/features/course/components/LearningPathDAG';
 import { PersonaBuilder } from '@/app/features/course/components/PersonaBuilder';
-import { ResourceTabs } from '@/app/features/course/components/ResourceTabs';
 import { TutorDialog } from '@/app/features/course/components/TutorDialog';
 import {
   CourseProvider,
@@ -40,6 +42,22 @@ import {
   useCourseState,
 } from '@/app/features/course/store';
 import { setMockMode } from '@/lib/mock';
+
+// Course entry stays independent from optional WebSec workspaces. A failure in
+// a question bank, route map, or catalog must not reject the whole `/course`
+// route before the entry tab can render.
+const LazyLearningPathWorkspace = lazy(() => (
+  import('@/app/features/course/components/LearningPathWorkspace')
+    .then((module) => ({ default: module.LearningPathWorkspace }))
+));
+const LazyCourseResourceWorkspace = lazy(() => (
+  import('@/app/features/course/components/CourseResourceWorkspace')
+    .then((module) => ({ default: module.CourseResourceWorkspace }))
+));
+const LazyWebSecurityExam = lazy(() => (
+  import('@/app/features/course/websec/WebSecurityExam')
+    .then((module) => ({ default: module.WebSecurityExam }))
+));
 
 function EntryTab() {
   const { course } = useSelectedCourse();
@@ -61,47 +79,135 @@ function EntryTab() {
   );
 }
 
-const tabs: TabDef[] = [
-  {
-    key: 'entry',
-    label: '课程入口',
-    description: '通过对话构建学习画像，启动 A3 个性化学习工作流',
-    render: () => <EntryTab />,
-  },
-  {
-    key: 'path',
-    label: '学习路径',
-    description: '基于知识图谱推荐的个性化学习顺序与里程碑',
-    render: () => <LearningPathDAG />,
-  },
-  {
-    key: 'workbench',
-    label: '资源工作台',
-    description: '由 9 个智能体协作生成的 7 类学习资源',
-    render: () => <ResourceTabs />,
-  },
-  {
-    key: 'tutor',
-    label: '辅导对话',
-    description: '多智能体路由的智能答疑（接入 Chat 课程上下文）',
-    render: () => <TutorDialog />,
-  },
-  {
-    key: 'assess',
-    label: '效果评估',
-    description: '答题反馈、能力雷达更新、画像回流',
-    render: () => <AssessmentPanel />,
-  },
-];
+function WebSecurityExamTab() {
+  const navigate = useNavigate();
+  const [params] = useSearchParams();
+  const requestedPaperId = params.get('paperId') ?? undefined;
 
+  return (
+    <CourseOptionalTab resetKey="websec-exam-module" label="题库与试卷">
+      <LazyWebSecurityExam
+        initialPaperId={requestedPaperId}
+        onPaperChange={(paperId) => navigate(buildWebSecurityCourseTabUrl('exam', { paperId }))}
+        onOpenResource={(resourceId) => navigate(buildWebSecurityCourseTabUrl('workbench', { resourceId }))}
+      />
+    </CourseOptionalTab>
+  );
+}
+
+const entryTab: TabDef = {
+  key: 'entry',
+  label: '课程入口',
+  description: '通过对话构建学习画像，启动个性化学习工作流',
+  render: () => <EntryTab />,
+};
+
+const pathTab: TabDef = {
+  key: 'path',
+  label: '学习路径',
+  description: '查看真实个性化路径，或切换至课程整理的 Web 安全路线图',
+  render: () => (
+    <CourseOptionalTab resetKey="websec-path-module" label="学习路径">
+      <LazyLearningPathWorkspace />
+    </CourseOptionalTab>
+  ),
+};
+
+const workbenchTab: TabDef = {
+  key: 'workbench',
+  label: '资源工作台',
+  description: '查看已生成资源，或浏览 Web 安全课程资料与公开视频目录',
+  render: () => (
+    <CourseOptionalTab resetKey="websec-resource-module" label="资源工作台">
+      <LazyCourseResourceWorkspace />
+    </CourseOptionalTab>
+  ),
+};
+
+const tutorTab: TabDef = {
+  key: 'tutor',
+  label: '辅导对话',
+  description: '多智能体路由的智能答疑（接入 Chat 课程上下文）',
+  render: () => <TutorDialog />,
+};
+
+const assessTab: TabDef = {
+  key: 'assess',
+  label: '效果评估',
+  description: '答题反馈、能力雷达更新、画像回流',
+  render: () => <AssessmentPanel />,
+};
+
+const tabs: TabDef[] = [entryTab, pathTab, workbenchTab, tutorTab, assessTab];
 const tabOrder = ['entry', 'path', 'workbench', 'tutor', 'assess'] as const;
-type CourseTabKey = typeof tabOrder[number];
+const websecTabs: TabDef[] = [
+  entryTab,
+  pathTab,
+  workbenchTab,
+  {
+    key: 'exam',
+    label: '题库与试卷',
+    description: '课程整理的 Web 安全题库、试卷蓝图与浏览器本地复盘',
+    render: () => <WebSecurityExamTab />,
+  },
+  tutorTab,
+  assessTab,
+];
+const websecTabOrder = ['entry', 'path', 'workbench', 'exam', 'tutor', 'assess'] as const;
+type CourseTabKey = typeof websecTabOrder[number];
 type CourseView = 'chat' | 'structured';
 type LegacyCourseView = CourseView | 'resources';
 const courseViewStorageKey = 'securehub-course-view';
 
-function isCourseTab(value: string | null): value is CourseTabKey {
-  return tabOrder.includes(value as CourseTabKey);
+type WebSecurityCourseTabParams = {
+  paperId?: string;
+  resourceId?: string;
+};
+
+/**
+ * Entry-level navigation only uses stable identifiers. Detailed validation
+ * remains inside the optional WebSec modules so their data cannot block entry.
+ */
+function buildWebSecurityCourseTabUrl(tab: CourseTabKey, options: WebSecurityCourseTabParams = {}): string {
+  const next = new URLSearchParams({
+    courseId: WEB_SECURITY_COURSE_ID,
+    view: 'structured',
+    tab,
+  });
+  if (tab === 'exam' && options.paperId) next.set('paperId', options.paperId);
+  if (tab === 'workbench' && options.resourceId) {
+    next.set('catalog', 'course');
+    next.set('resourceId', options.resourceId);
+  }
+  return `/course?${next.toString()}`;
+}
+
+function CourseOptionalTab({
+  children,
+  label,
+  resetKey,
+}: {
+  children: ReactNode;
+  label: string;
+  resetKey: string;
+}) {
+  return (
+    <ErrorBoundary resetKey={resetKey}>
+      <Suspense
+        fallback={(
+          <div className="flex min-h-52 items-center justify-center rounded-lg border border-slate-200 bg-white px-5 text-sm text-slate-500" role="status">
+            正在加载{label}…
+          </div>
+        )}
+      >
+        {children}
+      </Suspense>
+    </ErrorBoundary>
+  );
+}
+
+function isCourseTab(value: string | null, availableTabs: readonly CourseTabKey[]): value is CourseTabKey {
+  return availableTabs.includes(value as CourseTabKey);
 }
 
 function isCourseView(value: string | null): value is LegacyCourseView {
@@ -114,8 +220,21 @@ function normalizeCourseView(value: LegacyCourseView): CourseView {
 
 function readStoredCourseView(): CourseView {
   if (typeof window === 'undefined') return 'chat';
-  const stored = window.localStorage.getItem(courseViewStorageKey);
-  return isCourseView(stored) ? normalizeCourseView(stored) : 'chat';
+  try {
+    const stored = window.localStorage.getItem(courseViewStorageKey);
+    return isCourseView(stored) ? normalizeCourseView(stored) : 'chat';
+  } catch {
+    return 'chat';
+  }
+}
+
+function persistCourseView(view: CourseView): void {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(courseViewStorageKey, view);
+  } catch {
+    // URL state remains authoritative when browser storage is unavailable.
+  }
 }
 
 function CourseViewSwitch({
@@ -219,7 +338,11 @@ function CourseStudyInner() {
   const presenterMode = import.meta.env.DEV && params.get('presenter') === '1';
   const activeView: CourseView = isCourseView(rawView) ? normalizeCourseView(rawView) : initialView;
   const rawTab = params.get('tab');
-  const activeTab: CourseTabKey = isCourseTab(rawTab) ? rawTab : 'entry';
+  // Exact stable-code scope: course material must not appear for a similarly named course.
+  const isWebSecurityFoundation = course?.code === WEB_SECURITY_COURSE_CODE;
+  const availableTabs: TabDef[] = isWebSecurityFoundation ? websecTabs : tabs;
+  const availableTabOrder: readonly CourseTabKey[] = isWebSecurityFoundation ? websecTabOrder : tabOrder;
+  const activeTab: CourseTabKey = isCourseTab(rawTab, availableTabOrder) ? rawTab : 'entry';
 
   useEffect(() => {
     // Fixture roots are opt-in and confined to the explicit local PresenterMode
@@ -244,11 +367,11 @@ function CourseStudyInner() {
   }, [course, courseState.currentKpId, courseState.path, dispatch]);
 
   useEffect(() => {
-    window.localStorage.setItem(courseViewStorageKey, activeView);
+    persistCourseView(activeView);
     if (rawView === 'resources') {
       const next = new URLSearchParams(params);
       next.set('view', 'structured');
-      if (!isCourseTab(next.get('tab'))) next.set('tab', 'workbench');
+      if (!isCourseTab(next.get('tab'), availableTabOrder)) next.set('tab', 'workbench');
       setParams(next, { replace: true });
       return;
     }
@@ -256,16 +379,20 @@ function CourseStudyInner() {
     const next = new URLSearchParams(params);
     next.set('view', activeView);
     setParams(next, { replace: true });
-  }, [activeView, params, rawView, setParams]);
+  }, [activeView, availableTabOrder, params, rawView, setParams]);
 
   const setCourseView = (view: CourseView, replace = false) => {
-    window.localStorage.setItem(courseViewStorageKey, view);
+    persistCourseView(view);
     const next = new URLSearchParams(params);
     next.set('view', view);
     setParams(next, { replace });
   };
 
   const setActiveTab = (tab: CourseTabKey, replace = false) => {
+    if (isWebSecurityFoundation) {
+      navigate(buildWebSecurityCourseTabUrl(tab), { replace });
+      return;
+    }
     const next = new URLSearchParams(params);
     next.set('tab', tab);
     setParams(next, { replace });
@@ -292,11 +419,11 @@ function CourseStudyInner() {
     const target = event.target;
     if (target instanceof HTMLElement && ['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON'].includes(target.tagName)) return;
     event.preventDefault();
-    const currentIndex = tabOrder.indexOf(activeTab);
+    const currentIndex = availableTabOrder.indexOf(activeTab);
     const nextIndex = event.key === 'ArrowRight'
-      ? (currentIndex + 1) % tabOrder.length
-      : (currentIndex - 1 + tabOrder.length) % tabOrder.length;
-    setActiveTab(tabOrder[nextIndex]);
+      ? (currentIndex + 1) % availableTabOrder.length
+      : (currentIndex - 1 + availableTabOrder.length) % availableTabOrder.length;
+    setActiveTab(availableTabOrder[nextIndex]);
   };
 
   return (
@@ -426,8 +553,8 @@ function CourseStudyInner() {
             transition={{ duration: 0.3, ease: 'easeOut' }}
           >
             <div role="tablist" aria-label="课程学习标签" className="mb-4 flex flex-wrap gap-2">
-              {tabOrder.map((key) => {
-                const tab = tabs.find((item) => item.key === key);
+              {availableTabOrder.map((key) => {
+                const tab = availableTabs.find((item) => item.key === key);
                 if (!tab) return null;
                 const selected = activeTab === key;
                 return (
@@ -451,8 +578,8 @@ function CourseStudyInner() {
             </div>
             <PageShell
               title="课程学习"
-              subtitle="A3 多智能体个性化学习工作台"
-              tabs={tabs}
+              subtitle="多智能体个性化学习工作台"
+              tabs={availableTabs}
               defaultTab="entry"
             />
           </motion.div>
