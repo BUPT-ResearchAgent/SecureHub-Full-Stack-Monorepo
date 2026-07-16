@@ -27,11 +27,12 @@ class ProviderCredentialResolver:
         provider: str,
         user_id: UUID | str | None,
         credential_id: UUID | str | None,
+        model: str | None = None,
     ) -> BaseLLMProvider:
         # No user credential was selected at root creation: retain the server
         # environment-variable fallback exactly as before.
         if credential_id is None:
-            return get_llm_provider(provider)
+            return get_llm_provider(provider, model=model)
         if user_id is None:
             raise ProviderCredentialError("CREDENTIAL_NOT_FOUND", "provider credential not found", status_code=503)
         try:
@@ -46,4 +47,4 @@ class ProviderCredentialResolver:
                 # server/global key if the frozen credential was deleted.
                 raise ProviderCredentialError("CREDENTIAL_NOT_FOUND", "provider credential is unavailable", status_code=503)
             secret = credential_cipher(get_settings()).decrypt(row.encrypted_key)
-        return get_llm_provider(provider, api_key=secret)
+        return get_llm_provider(provider, api_key=secret, model=model)

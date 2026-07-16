@@ -13,10 +13,13 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from app.core.config import Settings, get_settings
 from app.db.base import Base
+from app.db.models.education.education_domain import GovernanceAuditEvent
 from app.db.models.identity.provider_credential import ProviderCredential
+from app.db.models.identity.provider_model_selection import ProviderModelSelection
 from app.db.models.identity.user import User
 from app.db.models.identity.user_capability import UserCapability
 from app.db.models.identity.user_profile import UserProfile
+from app.db.models.security.account_security import AccountPasswordCompliance, PasswordPolicy
 from app.db.session import get_session
 from app.main import app
 
@@ -25,13 +28,25 @@ from app.main import app
 def credential_client(tmp_path: Path) -> Iterator[TestClient]:
     engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'credentials.sqlite'}")
     sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
-    settings = Settings(PROVIDER_CREDENTIAL_MASTER_KEY=base64.urlsafe_b64encode(b"q" * 32).decode("ascii"))
+    settings = Settings(
+        PROVIDER_CREDENTIAL_MASTER_KEY=base64.urlsafe_b64encode(b"q" * 32).decode("ascii"),
+        XFYUN_MODEL="spark-x",
+    )
 
     async def prepare() -> None:
         async with engine.begin() as connection:
             await connection.run_sync(
                 Base.metadata.create_all,
-                tables=[User.__table__, UserProfile.__table__, UserCapability.__table__, ProviderCredential.__table__],
+                tables=[
+                    User.__table__,
+                    UserProfile.__table__,
+                    UserCapability.__table__,
+                    ProviderCredential.__table__,
+                    ProviderModelSelection.__table__,
+                    PasswordPolicy.__table__,
+                    AccountPasswordCompliance.__table__,
+                    GovernanceAuditEvent.__table__,
+                ],
             )
 
     async def override_get_session() -> AsyncIterator[AsyncSession]:
@@ -104,4 +119,63 @@ def test_provider_credential_api_masks_key_and_isolates_users(credential_client:
         headers={"Authorization": f"Bearer {second_token}"},
     )
     assert other_list.status_code == 200
-    assert other_list.json() == {"items": []}
+    other_payload = other_list.json()
+    assert other_payload["items"] == []
+    assert {source["provider"] for source in other_payload["sources"]} == {"deepseek", "xfyun"}
+    assert other_payload["selection"] is not None
+
+
+def test_provider_model_selection_is_server_owned_and_source_verification_is_safe(
+    credential_client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    token = _token(credential_client, "credential-source@example.test")
+    headers = {"Authorization": f"Bearer {token}"}
+
+    selected = credential_client.post(
+        "/api/v1/provider-credentials/selection",
+        headers=headers,
+        json={"provider": "xfyun", "model": "spark-x"},
+    )
+    assert selected.status_code == 200, selected.text
+    assert selected.json()["provider"] == "xfyun"
+    assert selected.json()["model"] == "spark-x"
+    assert selected.json()["model_label"] == "Spark X2 Flash"
+
+    unsupported = credential_client.post(
+        "/api/v1/provider-credentials/selection",
+        headers=headers,
+        json={"provider": "xfyun", "model": "browser-supplied-model"},
+    )
+    assert unsupported.status_code == 422
+    assert unsupported.json()["detail"]["code"] == "MODEL_SOURCE_UNSUPPORTED"
+
+    class _AvailableProvider:
+        async def health_check(self):
+            from app.llm.provider import HealthStatus
+
+            return HealthStatus(
+                provider="xfyun",
+                model="spark-x",
+                mode="real",
+                live_enabled=True,
+                status="available",
+            )
+
+    monkeypatch.setattr(
+        "app.services.provider_credentials.get_llm_provider",
+        lambda _provider, **_kwargs: _AvailableProvider(),
+    )
+    verified = credential_client.post(
+        "/api/v1/provider-credentials/source-verification",
+        headers=headers,
+        json={"provider": "xfyun", "model": "spark-x"},
+    )
+    assert verified.status_code == 200, verified.text
+    assert verified.json() == {
+        "provider": "xfyun",
+        "model": "spark-x",
+        "label": "讯飞星火",
+        "model_label": "Spark X2 Flash",
+        "status": "available",
+    }

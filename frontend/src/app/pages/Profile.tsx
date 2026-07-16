@@ -146,7 +146,7 @@ export function Profile() {
           {
             key: 'models',
             label: '模型与密钥',
-            description: 'DeepSeek 与讯飞星火的用户级密钥池',
+            description: '选择 DeepSeek 或讯飞星火作为新任务的模型源，并管理用户级密钥',
             render: () => <ProviderCredentialsPanel />,
           },
           {

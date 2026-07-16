@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.core.config import get_settings
 from app.db.models.knowledge.knowledge_node import KnowledgeNode
 from app.db.seeds._constants import resolve_course_product
+from app.llm.model_catalog import ModelSourceError, resolve_model_source
 from app.db.models.workflow_runtime import WorkflowApproval, WorkflowProviderCall, WorkflowRun, WorkflowStepAttempt
 from app.repositories.identity.provider_credentials import ProviderCredentialRepository
 from app.runtime.contracts import EventEnvelope, ExecutionMode, RunStatus, RuntimeSemanticVersion
@@ -150,7 +151,7 @@ class WorkflowApplicationService:
                 workflow_name=definition.name,
                 validated_input=validated_input,
             )
-            provider, model = self._provider_selection(request)
+            provider, model = await self._provider_selection(session, request)
             credential_id = None
             if request.mode == ExecutionMode.REAL and provider in {"deepseek", "xfyun"}:
                 # Resolve the active key once while the root is created. The
@@ -874,7 +875,10 @@ class WorkflowApplicationService:
         }
 
     @staticmethod
-    def _provider_selection(request: WorkflowRunStartRequest) -> tuple[str | None, str | None]:
+    async def _provider_selection(
+        session: AsyncSession,
+        request: WorkflowRunStartRequest,
+    ) -> tuple[str | None, str | None]:
         if request.mode == ExecutionMode.FIXTURE:
             return "fixture", request.model or "fixture-v1"
         settings = get_settings()
@@ -884,13 +888,27 @@ class WorkflowApplicationService:
                 "real workflow execution is disabled by server policy",
                 status_code=503,
             )
-        provider = request.provider or settings.LLM_PROVIDER
-        if provider == "fixture":
+        if request.provider == "fixture":
             raise WorkflowApplicationError("INVALID_PROVIDER", "real mode cannot select fixture", status_code=422)
+        provider = request.provider
         model = request.model
-        if model is None:
-            model = settings.DEEPSEEK_MODEL if provider == "deepseek" else settings.XFYUN_MODEL if provider == "xfyun" else None
-        return provider, model
+        if provider is None and model is None:
+            try:
+                selection = await ProviderCredentialRepository(session).get_model_selection(UUID(str(request.user_id)))
+            except ValueError as exc:
+                raise WorkflowApplicationError("INVALID_INPUT", "workflow user identifier is invalid", status_code=422) from exc
+            if selection is not None:
+                provider = selection.provider
+                model = selection.model
+        try:
+            source = resolve_model_source(settings, provider=provider, model=model)
+        except ModelSourceError as exc:
+            raise WorkflowApplicationError(
+                "MODEL_SOURCE_UNSUPPORTED",
+                "requested provider or model is not enabled by server policy",
+                status_code=422,
+            ) from exc
+        return source.provider, source.model
 
     @staticmethod
     async def _existing_idempotency(

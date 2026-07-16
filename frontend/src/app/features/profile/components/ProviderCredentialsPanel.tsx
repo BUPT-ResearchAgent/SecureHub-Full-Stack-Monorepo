@@ -20,15 +20,18 @@ import {
   createProviderCredential,
   deactivateProviderCredential,
   deleteProviderCredential,
-  listProviderCredentials,
+  getProviderCredentialsOverview,
   type ProviderCredential,
+  type ProviderModelSource,
   type ProviderName,
+  selectProviderModelSource,
   verifyProviderCredential,
+  verifyProviderModelSource,
 } from '../providerCredentials';
 
-const PROVIDERS: Array<{ id: ProviderName; label: string; model: string }> = [
-  { id: 'deepseek', label: 'DeepSeek', model: 'DeepSeek Chat' },
-  { id: 'xfyun', label: '讯飞星火', model: 'Spark v4' },
+const PROVIDERS: Array<{ id: ProviderName; label: string }> = [
+  { id: 'deepseek', label: 'DeepSeek' },
+  { id: 'xfyun', label: '讯飞星火' },
 ];
 
 const statusStyles = {
@@ -45,6 +48,18 @@ const statusLabels = {
   error: '暂不可用',
 } as const;
 
+const sourceStatusStyles = {
+  available: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+  degraded: 'border-amber-200 bg-amber-50 text-amber-700',
+  error: 'border-rose-200 bg-rose-50 text-rose-700',
+} as const;
+
+const sourceStatusLabels = {
+  available: '连通',
+  degraded: '受限',
+  error: '不可用',
+} as const;
+
 function formatDate(value: string | null): string {
   if (!value) return '尚未验证';
   const date = new Date(value);
@@ -59,9 +74,12 @@ function errorMessage(error: unknown): string {
 
 export function ProviderCredentialsPanel() {
   const [credentials, setCredentials] = useState<ProviderCredential[]>([]);
+  const [sources, setSources] = useState<ProviderModelSource[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [busySourceId, setBusySourceId] = useState<string | null>(null);
+  const [sourceHealth, setSourceHealth] = useState<Record<string, 'available' | 'degraded' | 'error'>>({});
   const [formOpen, setFormOpen] = useState(false);
   const [provider, setProvider] = useState<ProviderName>('deepseek');
   const [name, setName] = useState('');
@@ -74,11 +92,18 @@ export function ProviderCredentialsPanel() {
     [credentials],
   );
 
+  const sourceByProvider = useMemo(
+    () => new Map(sources.map((source) => [source.provider, source])),
+    [sources],
+  );
+
   const refresh = async () => {
     setLoading(true);
     setError('');
     try {
-      setCredentials(await listProviderCredentials());
+      const overview = await getProviderCredentialsOverview();
+      setCredentials(overview.credentials);
+      setSources(overview.sources);
     } catch (requestError) {
       setError(errorMessage(requestError));
     } finally {
@@ -100,6 +125,42 @@ export function ProviderCredentialsPanel() {
       toast.error(errorMessage(requestError));
     } finally {
       setBusyId(null);
+    }
+  };
+
+  const selectSource = async (source: ProviderModelSource) => {
+    const sourceId = `${source.provider}:${source.model}`;
+    if (source.is_selected || busySourceId) return;
+    setBusySourceId(sourceId);
+    try {
+      await selectProviderModelSource({ provider: source.provider, model: source.model });
+      await refresh();
+      toast.success(`已切换至 ${source.model_label}`);
+    } catch (requestError) {
+      toast.error(errorMessage(requestError));
+    } finally {
+      setBusySourceId(null);
+    }
+  };
+
+  const verifySource = async (source: ProviderModelSource) => {
+    const sourceId = `${source.provider}:${source.model}`;
+    if (busySourceId) return;
+    setBusySourceId(sourceId);
+    try {
+      const result = await verifyProviderModelSource({ provider: source.provider, model: source.model });
+      setSourceHealth((current) => ({ ...current, [sourceId]: result.status }));
+      if (result.status === 'available') {
+        toast.success(`${result.model_label} 连通`);
+      } else if (result.status === 'degraded') {
+        toast.warning(`${result.model_label} 当前受限`);
+      } else {
+        toast.error(`${result.model_label} 当前不可用`);
+      }
+    } catch (requestError) {
+      toast.error(errorMessage(requestError));
+    } finally {
+      setBusySourceId(null);
     }
   };
 
@@ -137,7 +198,7 @@ export function ProviderCredentialsPanel() {
           </span>
           <div>
             <h2 className="text-sm font-semibold text-slate-900">模型与密钥</h2>
-            <p className="mt-0.5 text-xs text-slate-500">DeepSeek · 讯飞星火</p>
+            <p className="mt-0.5 text-xs text-slate-500">选择新任务的模型源，并管理各来源密钥</p>
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -175,14 +236,86 @@ export function ProviderCredentialsPanel() {
         </div>
       ) : (
         <div className="divide-y divide-slate-200">
+          <div className="bg-slate-50/70 px-5 py-5">
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <div>
+                <div className="text-sm font-semibold text-slate-900">当前模型源</div>
+                <div className="mt-0.5 text-xs text-slate-500">新发起的工作流按此选择冻结</div>
+              </div>
+              <span className="text-xs text-slate-500">{sources.length} 个可选来源</span>
+            </div>
+            <div className="grid gap-2 md:grid-cols-2" role="radiogroup" aria-label="工作流模型源">
+              {sources.map((source) => {
+                const sourceId = `${source.provider}:${source.model}`;
+                const busy = busySourceId === sourceId;
+                const health = sourceHealth[sourceId];
+                return (
+                  <div
+                    key={sourceId}
+                    role="radio"
+                    aria-checked={source.is_selected}
+                    className={`border transition-colors ${source.is_selected
+                      ? 'border-brand-blue-600 bg-white shadow-[inset_3px_0_0_0_#003399]'
+                      : 'border-slate-200 bg-white hover:border-slate-300'}`}
+                  >
+                    <div className="flex min-h-20 items-stretch">
+                      <button
+                        type="button"
+                        onClick={() => void selectSource(source)}
+                        disabled={busy || source.is_selected}
+                        className="flex min-w-0 flex-1 items-center gap-3 px-4 py-3 text-left disabled:cursor-default"
+                      >
+                        <span className={`grid h-8 w-8 shrink-0 place-items-center border ${source.provider === 'xfyun'
+                          ? 'border-orange-200 bg-orange-50 text-orange-700'
+                          : 'border-cyan-200 bg-cyan-50 text-cyan-700'}`}
+                        >
+                          <KeyRound className="h-3.5 w-3.5" />
+                        </span>
+                        <span className="min-w-0">
+                          <span className="block truncate text-sm font-semibold text-slate-900">{source.label}</span>
+                          <span className="mt-0.5 block truncate font-mono text-xs text-slate-500">{source.model_label}</span>
+                        </span>
+                        <span className="ml-auto shrink-0">
+                          {busy ? (
+                            <LoaderCircle className="h-4 w-4 animate-spin text-brand-blue-600" />
+                          ) : source.is_selected ? (
+                            <CheckCircle2 className="h-4 w-4 text-brand-blue-600" />
+                          ) : null}
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void verifySource(source)}
+                        disabled={Boolean(busySourceId)}
+                        className="m-2 inline-flex h-8 w-8 shrink-0 items-center justify-center self-center border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+                        title={`测试 ${source.model_label}`}
+                        aria-label={`测试 ${source.model_label}`}
+                      >
+                        <ShieldCheck className="h-4 w-4" />
+                      </button>
+                    </div>
+                    <div className="flex min-h-8 items-center gap-2 border-t border-slate-100 px-4 py-1.5 text-xs text-slate-500">
+                      <span>{source.has_active_credential ? '个人密钥已启用' : '使用服务端配置'}</span>
+                      {health ? (
+                        <span className={`inline-flex border px-1.5 py-0.5 ${sourceStatusStyles[health]}`}>
+                          {sourceStatusLabels[health]}
+                        </span>
+                      ) : null}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
           {PROVIDERS.map((providerInfo) => {
             const items = grouped.get(providerInfo.id) ?? [];
+            const configuredSource = sourceByProvider.get(providerInfo.id);
             return (
               <div key={providerInfo.id} className="px-5 py-5">
                 <div className="mb-3 flex items-center justify-between gap-4">
                   <div>
                     <div className="text-sm font-semibold text-slate-900">{providerInfo.label}</div>
-                    <div className="mt-0.5 text-xs text-slate-500">{providerInfo.model}</div>
+                    <div className="mt-0.5 text-xs text-slate-500">{configuredSource?.model_label ?? '服务器默认模型'}</div>
                   </div>
                   <span className="text-xs text-slate-500">{items.length} 个密钥</span>
                 </div>

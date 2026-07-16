@@ -77,6 +77,8 @@ class BaseLLMProvider(abc.ABC):
         *,
         temperature: float = 0.2,
         max_tokens: int | None = None,
+        response_format: dict[str, str] | None = None,
+        response_schema: dict[str, Any] | None = None,
     ) -> LLMResponse:
         """同步生成，返回完整响应。"""
 
@@ -87,6 +89,8 @@ class BaseLLMProvider(abc.ABC):
         *,
         temperature: float = 0.2,
         max_tokens: int | None = None,
+        response_format: dict[str, str] | None = None,
+        response_schema: dict[str, Any] | None = None,
     ) -> AsyncIterator[LLMChunk]:
         """流式生成，每次 yield 一个 LLMChunk。"""
 
@@ -126,6 +130,8 @@ class FixtureProvider(BaseLLMProvider):
         *,
         temperature: float = 0.2,
         max_tokens: int | None = None,
+        response_format: dict[str, str] | None = None,
+        response_schema: dict[str, Any] | None = None,
     ) -> LLMResponse:
         prompt = messages[-1].content if messages else ""
         content = self._fixture_content(prompt)
@@ -143,8 +149,16 @@ class FixtureProvider(BaseLLMProvider):
         *,
         temperature: float = 0.2,
         max_tokens: int | None = None,
+        response_format: dict[str, str] | None = None,
+        response_schema: dict[str, Any] | None = None,
     ) -> AsyncIterator[LLMChunk]:
-        response = await self.generate(messages, temperature=temperature)
+        response = await self.generate(
+            messages,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            response_format=response_format,
+            response_schema=response_schema,
+        )
         words = response.content.split()
         for i, word in enumerate(words):
             yield LLMChunk(content=word + (" " if i < len(words) - 1 else ""), index=i)
@@ -178,7 +192,12 @@ class FixtureProvider(BaseLLMProvider):
 # ── Factory ──────────────────────────────────────────────────────────────────
 
 
-def get_llm_provider(provider: str | None = None, *, api_key: str | None = None) -> BaseLLMProvider:
+def get_llm_provider(
+    provider: str | None = None,
+    *,
+    api_key: str | None = None,
+    model: str | None = None,
+) -> BaseLLMProvider:
     """根据 LLM_PROVIDER 环境变量（或参数）返回对应 Provider。
 
     - fixture  → FixtureProvider（无需 Key，CI 默认）
@@ -199,14 +218,14 @@ def get_llm_provider(provider: str | None = None, *, api_key: str | None = None)
         effective_key = settings.DEEPSEEK_API_KEY if api_key is None else api_key
         if not effective_key:
             return _key_missing_fallback("deepseek", "DEEPSEEK_API_KEY", settings)
-        return DeepSeekProvider(settings=settings, api_key=effective_key)
+        return DeepSeekProvider(settings=settings, api_key=effective_key, model=model)
 
     if selected == "xfyun":
         from app.llm.xfyun_provider import XunfeiSparkProvider
         effective_key = settings.XFYUN_API_KEY if api_key is None else api_key
         if not effective_key:
             return _key_missing_fallback("xfyun", "XFYUN_API_KEY", settings)
-        return XunfeiSparkProvider(settings=settings, api_key=effective_key)
+        return XunfeiSparkProvider(settings=settings, api_key=effective_key, model=model)
 
     raise ValueError(f"Unknown LLM_PROVIDER: {selected!r}. Valid: fixture, deepseek, xfyun")
 

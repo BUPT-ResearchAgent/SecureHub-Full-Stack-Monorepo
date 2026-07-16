@@ -13,6 +13,10 @@ from app.schemas.provider_credentials import (
     ProviderCredentialCreateRequest,
     ProviderCredentialListResponse,
     ProviderCredentialResponse,
+    ProviderModelSelectionRequest,
+    ProviderModelSelectionResponse,
+    ProviderModelSourceResponse,
+    ProviderModelSourceVerifyResponse,
 )
 from app.services.provider_credentials import ProviderCredentialError, ProviderCredentialService
 
@@ -37,8 +41,76 @@ async def list_provider_credentials(
     settings: SettingsDep,
     user: RequiredCurrentUserDep,
 ) -> ProviderCredentialListResponse:
-    rows = await _service(session, settings).list(user.id)
-    return ProviderCredentialListResponse(items=[ProviderCredentialResponse.model_validate(row) for row in rows])
+    service = _service(session, settings)
+    rows = await service.list(user.id)
+    sources, selected = await service.list_model_sources(user.id)
+    return ProviderCredentialListResponse(
+        items=[ProviderCredentialResponse.model_validate(row) for row in rows],
+        sources=[
+            ProviderModelSourceResponse(
+                provider=source.provider,
+                model=source.model,
+                label=source.label,
+                model_label=source.model_label,
+                is_selected=is_selected,
+                has_active_credential=has_active_credential,
+            )
+            for source, is_selected, has_active_credential in sources
+        ],
+        selection=ProviderModelSelectionResponse(
+            provider=selected.provider,
+            model=selected.model,
+            label=selected.label,
+            model_label=selected.model_label,
+        ),
+    )
+
+
+@router.post("/selection", response_model=ProviderModelSelectionResponse)
+async def select_provider_model_source(
+    payload: ProviderModelSelectionRequest,
+    session: SessionDep,
+    settings: SettingsDep,
+    user: RequiredCurrentUserDep,
+) -> ProviderModelSelectionResponse:
+    try:
+        selected = await _service(session, settings).select_model_source(
+            user_id=user.id,
+            provider=payload.provider,
+            model=payload.model,
+        )
+    except ProviderCredentialError as exc:
+        _raise(exc)
+    return ProviderModelSelectionResponse(
+        provider=selected.provider,
+        model=selected.model,
+        label=selected.label,
+        model_label=selected.model_label,
+    )
+
+
+@router.post("/source-verification", response_model=ProviderModelSourceVerifyResponse)
+async def verify_provider_model_source(
+    payload: ProviderModelSelectionRequest,
+    session: SessionDep,
+    settings: SettingsDep,
+    user: RequiredCurrentUserDep,
+) -> ProviderModelSourceVerifyResponse:
+    try:
+        source, health_status = await _service(session, settings).verify_model_source(
+            user_id=user.id,
+            provider=payload.provider,
+            model=payload.model,
+        )
+    except ProviderCredentialError as exc:
+        _raise(exc)
+    return ProviderModelSourceVerifyResponse(
+        provider=source.provider,
+        model=source.model,
+        label=source.label,
+        model_label=source.model_label,
+        status=health_status,
+    )
 
 
 @router.post("", response_model=ProviderCredentialResponse, status_code=status.HTTP_201_CREATED)

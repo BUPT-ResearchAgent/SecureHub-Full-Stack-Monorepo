@@ -8,7 +8,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=(".env", ".env.local"),
+        env_file=(".env", ".env.local", ".env.override.local"),
         env_file_encoding="utf-8",
         case_sensitive=True,
         extra="ignore",
@@ -52,7 +52,9 @@ class Settings(BaseSettings):
     XFYUN_APP_ID: str = ""
     XFYUN_API_KEY: str = ""
     XFYUN_API_SECRET: str = ""
+    XFYUN_BASE_URL: str = "https://spark-api-open.xf-yun.com/v1"
     XFYUN_MODEL: str = "spark-v4"
+    XFYUN_THINKING_MODE: str = ""
     DEEPSEEK_API_KEY: str = ""
     DEEPSEEK_MODEL: str = "deepseek-chat"
     # Deliberately omitted from .env.example. This is a 32-byte urlsafe-base64
@@ -120,6 +122,14 @@ class Settings(BaseSettings):
             if normalized in {"debug", "development", "dev", "true", "1", "yes"}:
                 return True
         return value
+
+    @field_validator("XFYUN_THINKING_MODE")
+    @classmethod
+    def validate_xfyun_thinking_mode(cls, value: object) -> str:
+        normalized = str(value or "").strip().lower()
+        if normalized not in {"", "enabled", "disabled", "auto"}:
+            raise ValueError("XFYUN_THINKING_MODE must be enabled, disabled, auto, or empty")
+        return normalized
 
     @model_validator(mode="after")
     def validate_storage_config(self) -> "Settings":

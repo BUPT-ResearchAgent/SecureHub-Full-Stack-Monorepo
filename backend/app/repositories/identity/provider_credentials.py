@@ -11,6 +11,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models.identity.provider_credential import ProviderCredential
+from app.db.models.identity.provider_model_selection import ProviderModelSelection
 from app.repositories.base import BaseRepository
 
 
@@ -42,6 +43,34 @@ class ProviderCredentialRepository(BaseRepository):
                 ProviderCredential.is_active.is_(True),
             )
         )
+
+    async def get_model_selection(
+        self,
+        user_id: UUID,
+        *,
+        lock: bool = False,
+    ) -> ProviderModelSelection | None:
+        statement = select(ProviderModelSelection).where(ProviderModelSelection.user_id == user_id)
+        if lock:
+            statement = statement.with_for_update()
+        return await self.session.scalar(statement)
+
+    async def set_model_selection(
+        self,
+        *,
+        user_id: UUID,
+        provider: str,
+        model: str,
+    ) -> ProviderModelSelection:
+        selection = await self.get_model_selection(user_id, lock=True)
+        if selection is None:
+            selection = ProviderModelSelection(user_id=user_id, provider=provider, model=model)
+            self.session.add(selection)
+        else:
+            selection.provider = provider
+            selection.model = model
+        await self.session.flush()
+        return selection
 
     async def create(
         self,

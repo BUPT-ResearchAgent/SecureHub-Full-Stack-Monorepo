@@ -225,3 +225,19 @@ def test_strict_parse_diagnostic_is_field_only_and_does_not_retain_input() -> No
 
     assert summary == [{"location": "answer", "type": "string_type"}]
     assert "7" not in str(summary)
+
+
+def test_strict_parse_normalises_only_a_complete_json_code_fence() -> None:
+    value, normalization = SkillExecutor._normalise_json_candidate('```json\n{"answer":"ok"}\n```')
+
+    assert value == '{"answer":"ok"}'
+    assert normalization == "full_json_code_fence"
+
+
+def test_strict_parse_does_not_extract_json_from_surrounding_prose() -> None:
+    source = 'Here is the answer:\n```json\n{"answer":"ok"}\n```'
+
+    value, normalization = SkillExecutor._normalise_json_candidate(source)
+
+    assert value == source
+    assert normalization is None

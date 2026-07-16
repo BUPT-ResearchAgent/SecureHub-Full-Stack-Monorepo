@@ -352,6 +352,17 @@ class _PrimaryInterruptedProvider:
         raise RuntimeError("simulated primary socket interruption")
 
 
+class _PrimarySchemaInvalidProvider:
+    provider_name = "xfyun"
+    model_name = "spark-test"
+
+    def estimate_tokens(self, text: str) -> int:
+        return max(1, len(text) // 4)
+
+    async def stream_generate(self, *_args: Any, **_kwargs: Any) -> AsyncIterator[LLMChunk]:
+        yield LLMChunk(content='{"answer":7}', index=0, finish_reason="stop")
+
+
 class _FallbackProvider:
     provider_name = "deepseek"
     model_name = "deepseek-test"
@@ -422,6 +433,44 @@ async def test_real_primary_failure_uses_new_fallback_attempt_and_replaces_draft
     replacement_tokens = [payload for event_type, payload in emitted if event_type == "token"]
     assert replacement_tokens[-1]["replace_draft"] is True
     assert "partial" not in candidate.output.answer
+
+
+@pytest.mark.anyio
+async def test_strict_parse_failure_uses_declared_real_fallback_without_accepting_invalid_output() -> None:
+    emitted: list[tuple[str, dict[str, Any]]] = []
+
+    async def emit(event_type: str, payload: dict[str, Any]) -> None:
+        emitted.append((event_type, payload))
+
+    journal = _Journal()
+    executor = SkillExecutor(
+        retriever=_Retriever(),
+        provider_resolver=lambda _context: _PrimarySchemaInvalidProvider(),
+        fallback_provider_resolver=lambda _name, _context: _FallbackProvider(),
+        evidence_snapshot_store=_SnapshotStore(),
+        provider_call_store=journal,
+    )
+    context = ExecutionContext(
+        workflow_run_id=uuid4(),
+        step_attempt_id=uuid4(),
+        agent_run_id=uuid4(),
+        user_id=uuid4(),
+        mode=ExecutionMode.REAL,
+        provider_selection=ProviderSelection(requested_provider="xfyun", requested_model="spark-test"),
+        lease_epoch=1,
+        emit=emit,
+    )
+
+    candidate = await executor.execute(_fallback_definition(), {"query": "Explain SQL injection."}, context)
+
+    assert candidate.output.answer == "replacement"
+    assert candidate.actual_provider == "deepseek"
+    assert [row["provider"] for row in journal.started] == ["xfyun", "deepseek"]
+    assert [row["outcome"] for row in journal.completed] == ["known_error", "success"]
+    switches = [payload for event_type, payload in emitted if event_type == "trace"]
+    assert switches and switches[-1]["provider_switch"]["reason"] == ErrorCode.STRICT_PARSE_FAILED.value
+    replacement_tokens = [payload for event_type, payload in emitted if event_type == "token"]
+    assert replacement_tokens[-1]["replace_draft"] is True
 
 
 @pytest.mark.anyio

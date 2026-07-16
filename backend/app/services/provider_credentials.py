@@ -18,6 +18,13 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
+from app.llm.model_catalog import (
+    ModelSourceError,
+    ProviderModelSource,
+    default_model_source,
+    model_sources as catalog_model_sources,
+    resolve_model_source,
+)
 from app.llm.provider import get_llm_provider
 from app.repositories.identity.provider_credentials import ProviderCredentialRepository
 
@@ -96,6 +103,80 @@ class ProviderCredentialService:
     async def list(self, user_id: UUID):
         return await self.repository.list_for_user(user_id)
 
+    async def list_model_sources(
+        self,
+        user_id: UUID,
+    ) -> tuple[list[tuple[ProviderModelSource, bool, bool]], ProviderModelSource]:
+        """Return server-owned sources plus selection/key state safe for the UI."""
+        selected = await self.current_model_selection(user_id)
+        credentials = await self.repository.list_for_user(user_id)
+        active_providers = {row.provider for row in credentials if row.is_active}
+        sources = [
+            (
+                source,
+                source.provider == selected.provider and source.model == selected.model,
+                source.provider in active_providers,
+            )
+            for source in catalog_model_sources(self.settings)
+        ]
+        return sources, selected
+
+    async def current_model_selection(self, user_id: UUID) -> ProviderModelSource:
+        selection = await self.repository.get_model_selection(user_id)
+        if selection is None:
+            return default_model_source(self.settings)
+        try:
+            return resolve_model_source(
+                self.settings,
+                provider=selection.provider,
+                model=selection.model,
+            )
+        except ModelSourceError as exc:
+            raise ProviderCredentialError(
+                "MODEL_SOURCE_UNAVAILABLE",
+                "selected model source is no longer available",
+                status_code=409,
+            ) from exc
+
+    async def select_model_source(
+        self,
+        *,
+        user_id: UUID,
+        provider: str,
+        model: str,
+    ) -> ProviderModelSource:
+        source = self._model_source(provider=provider, model=model)
+        await self.repository.set_model_selection(
+            user_id=user_id,
+            provider=source.provider,
+            model=source.model,
+        )
+        await self.session.commit()
+        return source
+
+    async def verify_model_source(
+        self,
+        *,
+        user_id: UUID,
+        provider: str,
+        model: str,
+    ) -> tuple[ProviderModelSource, str]:
+        """Probe the effective user-or-server credential without exposing it."""
+        source = self._model_source(provider=provider, model=model)
+        credential = await self.repository.get_active(user_id, source.provider)
+        api_key = None
+        if credential is not None:
+            api_key = credential_cipher(self.settings).decrypt(credential.encrypted_key)
+        try:
+            health = await get_llm_provider(
+                source.provider,
+                api_key=api_key,
+                model=source.model,
+            ).health_check()
+        except Exception:
+            return source, "error"
+        return source, health.status
+
     async def create(
         self,
         *,
@@ -158,7 +239,12 @@ class ProviderCredentialService:
         status = "error"
         verified_at = None
         try:
-            health = await get_llm_provider(row.provider, api_key=secret).health_check()
+            source = self._model_source(provider=row.provider, model=None)
+            health = await get_llm_provider(
+                row.provider,
+                api_key=secret,
+                model=source.model,
+            ).health_check()
             if health.status == "available":
                 status = "verified"
                 verified_at = datetime.now(timezone.utc)
@@ -185,3 +271,13 @@ class ProviderCredentialService:
         if provider not in _SUPPORTED_PROVIDERS:
             raise ProviderCredentialError("PROVIDER_UNSUPPORTED", "unsupported provider", status_code=422)
         return provider  # type: ignore[return-value]
+
+    def _model_source(self, *, provider: str, model: str | None) -> ProviderModelSource:
+        try:
+            return resolve_model_source(self.settings, provider=provider, model=model)
+        except ModelSourceError as exc:
+            raise ProviderCredentialError(
+                "MODEL_SOURCE_UNSUPPORTED",
+                "unsupported provider or model",
+                status_code=422,
+            ) from exc

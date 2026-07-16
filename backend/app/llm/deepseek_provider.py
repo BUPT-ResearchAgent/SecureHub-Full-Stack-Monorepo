@@ -35,7 +35,13 @@ class DeepSeekProvider(BaseLLMProvider):
 
     provider_name = "deepseek"
 
-    def __init__(self, settings: Any | None = None, *, api_key: str | None = None) -> None:
+    def __init__(
+        self,
+        settings: Any | None = None,
+        *,
+        api_key: str | None = None,
+        model: str | None = None,
+    ) -> None:
         from app.core.config import get_settings
 
         cfg = settings or get_settings()
@@ -43,7 +49,7 @@ class DeepSeekProvider(BaseLLMProvider):
         # never changes process-wide Settings or another user's provider.
         self.api_key: str = cfg.DEEPSEEK_API_KEY if api_key is None else api_key
         self.base_url: str = getattr(cfg, "DEEPSEEK_BASE_URL", _DEFAULT_BASE_URL).rstrip("/")
-        self.model_name = getattr(cfg, "DEEPSEEK_MODEL", _DEFAULT_MODEL)
+        self.model_name = model or getattr(cfg, "DEEPSEEK_MODEL", _DEFAULT_MODEL)
         self.timeout = httpx.Timeout(60.0, read=120.0)
         self.retry = 1
 
@@ -115,6 +121,7 @@ class DeepSeekProvider(BaseLLMProvider):
         temperature: float = 0.2,
         max_tokens: int | None = None,
         response_format: dict[str, str] | None = None,
+        response_schema: dict[str, Any] | None = None,
     ) -> LLMResponse:
         payload = self._build_payload(
             messages,
@@ -162,6 +169,7 @@ class DeepSeekProvider(BaseLLMProvider):
         temperature: float = 0.2,
         max_tokens: int | None = None,
         response_format: dict[str, str] | None = None,
+        response_schema: dict[str, Any] | None = None,
     ) -> AsyncIterator[LLMChunk]:
         payload = self._build_payload(
             messages,

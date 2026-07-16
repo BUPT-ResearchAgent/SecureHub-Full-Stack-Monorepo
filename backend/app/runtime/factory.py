@@ -27,6 +27,7 @@ def _runtime_provider_resolver(context):
         provider=provider,
         user_id=context.user_id,
         credential_id=context.provider_credential_id,
+        model=context.provider_selection.requested_model,
     )
 
 
