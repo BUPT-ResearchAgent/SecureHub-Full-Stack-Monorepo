@@ -14,6 +14,7 @@ from app.db.seeds import seed_agents as seed_agents_mod
 from app.db.seeds import seed_course_catalog as seed_course_catalog_mod
 from app.db.seeds import seed_course_websec as seed_course_websec_mod
 from app.db.seeds import seed_demo_user as seed_demo_user_mod
+from app.db.seeds import seed_education_domain as seed_education_domain_mod
 from app.db.session import get_sessionmaker
 
 
@@ -22,12 +23,14 @@ async def _run(session: AsyncSession) -> dict[str, object]:
     agent_count = await seed_agents_mod(session=session)
     skill_count = await seed_agent_skills_mod(session=session)
     capability_count = await seed_demo_user_mod(session=session)
+    education_stats = await seed_education_domain_mod.run(session=session)
     catalog_stats = await seed_course_catalog_mod.run(session=session)
     course_stats = await seed_course_websec_mod(session=session)
     return {
         "agents": agent_count,
         "skills": skill_count,
         "user_capabilities": capability_count,
+        "education": education_stats,
         "course_products": catalog_stats,
         **course_stats,
     }
