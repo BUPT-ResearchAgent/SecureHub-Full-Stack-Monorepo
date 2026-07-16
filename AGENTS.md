@@ -2,7 +2,7 @@
 
 > 权威文档：`CLAUDE.md` 是项目宪法，本文件不复述细节，仅约束 Codex 子智能体的使用边界。
 > 文档冲突时以 `CLAUDE.md` 为准。
-> 最后更新：2026-07-16（PR #51 的 T0～T7 功能补强已合并；`868b4904` 完成资源生成可靠性与真实取消收敛，9 Agent/28 Skill/Runtime/SSE/Swiss v1 契约不变）。
+> 最后更新：2026-07-16（PR #51 的 T0～T7 功能补强已合并；`868b4904` 完成资源生成可靠性与真实取消收敛；WEBSEC-101 新增受控的前端 `curated-demo` 课程体验，9 Agent/28 Skill/Runtime/SSE/Swiss v1 契约不变）。
 
 ---
 
@@ -49,6 +49,7 @@ D:/Nnutural/Desktop/BUPT大全/BUPT竞赛/26软件杯/Plan/2026-07-10_Agent_Run_
 | COS / Storage | 2026-07-12 COS Runtime 已真实通过 upload/head/download/signed URL/delete；历史 451 仅为旧记录。GitHub 外 data 仍只确认 20 个既有同步样本，约 870 个对象未全量完成。 | "COS 仍被 451 阻塞"、"所有 data 已上传 COS"、"storage 是一个 agent" |
 | A3-S5~S7 | S5 assessment/persona/path refresh、S6 current-root Evidence/Trace/Provider replay、S7 fund loader/DeepSeek Research 链均已 `real-accepted`；S7 入口为 `POST /api/v1/research/fund-recommendations`，以 CurrentUser 绑定画像归属。 | "S5-S7 仍只有工程验收"、"浏览器可传 user_id"、"Spark Gate 阻断 S5-S7" |
 | 四课程 Catalog | `courses` 有四条稳定产品记录；只有 `WEBSEC-101` 可创建真实课程 root。三门 `preview` 仅可浏览预置内容，未知或 preview course 不回落 Web 安全。 | "四门都已真实 RAG/生成"、"preview 可借用 Web 安全 Evidence" |
+| WEBSEC-101 课程演示扩展 | 题库/试卷、课程路线图、课程资料与视频目录是仅限 WebSec 的 `curated-demo` / `external-preview` 前端内容；真实生成资源仍在原工作台视图。 | "这些内容来自新 Runtime/endpoint/迁移"、"三门 preview 课程可复用 WebSec 数据" |
 | GAP-13 / 当前调度 | PR #51 已合并 T0～T7 功能补强，Prompt 13 不再是待执行排期；当前只按具体回归处理合并后问题。S8 仍为 `planned` + `external-gate-open` 且暂缓。 | "T0～T7 尚未启动"、"S8 已取消"、"功能补强或 PPT 完成等于 Spark Gate 通过" |
 | 资源生成 / PPT | `868b4904` 已修复 producer 预算与唯一一次返工、服务端知识点主题、终态原子切换和 durable cancel。失败/取消保留上一版 ready artifact；`00457ae0` 的 Swiss v1 视觉链未改。 | "永远不会发生真实失败"、"unsubscribe 就是取消"、"为避免失败可绕过 QualityCheck"、"重新设计 PPT" |
 
@@ -124,6 +125,13 @@ validate → guardrail → real RAG → evidence floor/snapshot → ContextBuild
 每个被接受的 Skill 调用必须经 AgentRunRecorder 持久化 `agent_runs`。证据不足时返回 `InsufficientEvidence`，real 不允许降级到 fixture。
 
 所有外部来源必须保留：`platform / source_url / author / published_at / fetched_at / license / rights_note`。
+
+### WEBSEC-101 课程整理与公开视频封面（2026-07-16）
+
+- `frontend/src/app/features/course/websec/` 是答辩用的受控前端数据包，不建立后端 API、迁移、Agent 或 Skill。任何用户可见状态必须标识为 `real`、`curated-demo`、`fixture` 或 `external-preview`，不得把本地题目、路线或资源说成实时生成/已发布持久数据。
+- 只有 `WEBSEC-101` 可进入课程整理视图；题库与试卷与课程入口同级，路线图并入既有学习路径，资料和视频并入既有资源工作台。其他课程必须继续走其原有 Catalog 语义。
+- 可选 WebSec 模块必须按需加载并由局部 ErrorBoundary 隔离；`CourseStudy` 入口只读取稳定课程标识。`localStorage`/`sessionStorage` 读写必须 `try/catch`，存储失败时 URL 参数优先，禁止整页白屏。
+- Bilibili 只展示白名单 BVID 的本地静态封面、真实公开页标题和原平台外链。刷新脚本只可在项目负责人明确授权后运行，必须无 Cookie、无登录、无视频/音频/弹幕下载；运行时禁止 iframe/播放器和跨域元数据请求。
 
 ### 演示身份 / 教师端（2026-07-14）
 
@@ -207,3 +215,4 @@ docker compose up   # 启动 PostgreSQL / Redis / 其他依赖
 - 维护者：`securehub_docs_delivery` 或项目负责人
 - 与 `CLAUDE.md` 冲突时以 `CLAUDE.md` 为准
 - 新增 Codex 子智能体时同步更新本文件 §2 表格
+- 对外说明具体 Markdown 产出时，链接仅作定位；先用几句凝练文字写清该文件的目的、关键结论和已验证/待验证边界，再附路径。
