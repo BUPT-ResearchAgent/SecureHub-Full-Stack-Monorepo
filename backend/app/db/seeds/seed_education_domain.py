@@ -25,13 +25,20 @@ from app.db.seeds._constants import COURSE_WEBSEC_ID, DEMO_USER_ID, stable_id
 from app.db.session import get_sessionmaker
 
 DEMO_COURSE_TEACHER_ID = stable_id("user:demo-course-teacher")
+DEMO_HYBRID_TEACHER_ID = stable_id("user:demo-hybrid-teacher")
 DEMO_TEACHING_CLASS_ID = stable_id("education:teaching-class:websec:2026-a")
 DEMO_STUDENT_GROUP_ID = stable_id("education:student-group:websec:2026-a:lab-a")
 DEMO_COURSE_TEACHER_ASSIGNMENT_ID = stable_id(
     "education:course-teacher-assignment:websec:demo-course-teacher"
 )
+DEMO_HYBRID_TEACHER_ASSIGNMENT_ID = stable_id(
+    "education:course-teacher-assignment:websec:demo-hybrid-teacher"
+)
 DEMO_CLASS_TEACHER_ASSIGNMENT_ID = stable_id(
     "education:teaching-class-teacher:websec:2026-a:demo-course-teacher"
+)
+DEMO_CLASS_HYBRID_TEACHER_ID = stable_id(
+    "education:teaching-class-teacher:websec:2026-a:demo-hybrid-teacher"
 )
 DEMO_ENROLLMENT_ID = stable_id("education:course-enrollment:websec:demo-student")
 DEMO_GROUP_MEMBER_ID = stable_id("education:student-group-member:websec:lab-a:demo-student")
@@ -73,6 +80,17 @@ async def _seed(session: AsyncSession) -> dict[str, int]:
     counts["course_teacher_assignments"] += int(created)
     _, created = await _ensure(
         session,
+        CourseTeacherAssignment,
+        DEMO_HYBRID_TEACHER_ASSIGNMENT_ID,
+        course_id=COURSE_WEBSEC_ID,
+        teacher_id=DEMO_HYBRID_TEACHER_ID,
+        assignment_role="owner",
+        status="active",
+        assigned_by=DEMO_HYBRID_TEACHER_ID,
+    )
+    counts["course_teacher_assignments"] += int(created)
+    _, created = await _ensure(
+        session,
         TeachingClass,
         DEMO_TEACHING_CLASS_ID,
         course_id=COURSE_WEBSEC_ID,
@@ -91,6 +109,17 @@ async def _seed(session: AsyncSession) -> dict[str, int]:
         role="owner",
         status="active",
         assigned_by=DEMO_COURSE_TEACHER_ID,
+    )
+    counts["teaching_class_teachers"] += int(created)
+    _, created = await _ensure(
+        session,
+        TeachingClassTeacher,
+        DEMO_CLASS_HYBRID_TEACHER_ID,
+        teaching_class_id=DEMO_TEACHING_CLASS_ID,
+        teacher_id=DEMO_HYBRID_TEACHER_ID,
+        role="owner",
+        status="active",
+        assigned_by=DEMO_HYBRID_TEACHER_ID,
     )
     counts["teaching_class_teachers"] += int(created)
     _, created = await _ensure(
@@ -133,6 +162,12 @@ async def _seed(session: AsyncSession) -> dict[str, int]:
             "course_teacher_assignment.seed",
             "course_teacher_assignment",
             DEMO_COURSE_TEACHER_ASSIGNMENT_ID,
+        ),
+        (
+            "education:audit:course-teacher-assignment:websec-hybrid",
+            "course_teacher_assignment.seed",
+            "course_teacher_assignment",
+            DEMO_HYBRID_TEACHER_ASSIGNMENT_ID,
         ),
         (
             "education:audit:course-enrollment:websec-demo-student",
