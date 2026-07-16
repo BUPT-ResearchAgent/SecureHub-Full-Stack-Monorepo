@@ -145,29 +145,52 @@ class SkillExecutor:
         except ProviderPolicyError as exc:
             raise SkillExecutionError(ErrorCode.PROVIDER_UNAVAILABLE, "provider policy rejected this real call") from exc
 
-        try:
-            payload = json.loads(raw_text)
-            if not isinstance(payload, dict):
-                raise TypeError("provider returned non-object JSON")
-            # The model cannot choose or fabricate evidence linkage.
-            if "evidence_chunk_ids" in definition.output_model.model_fields:
-                payload["evidence_chunk_ids"] = [str(item.chunk_id) for item in evidence_refs]
-            output = definition.output_model.model_validate(payload)
-        except (TypeError, ValueError, ValidationError, json.JSONDecodeError) as exc:
-            category = self._strict_parse_category(exc)
-            await self._complete_provider_call(
-                provider_call_id,
-                outcome="known_error",
-                usage=usage,
-                lease_epoch=context.lease_epoch,
-                response_ref={
+        while True:
+            parse_text, output_normalization = self._normalise_json_candidate(raw_text)
+            try:
+                payload = json.loads(parse_text)
+                if not isinstance(payload, dict):
+                    raise TypeError("provider returned non-object JSON")
+                # The model cannot choose or fabricate evidence linkage.
+                if "evidence_chunk_ids" in definition.output_model.model_fields:
+                    payload["evidence_chunk_ids"] = [str(item.chunk_id) for item in evidence_refs]
+                output = definition.output_model.model_validate(payload)
+            except (TypeError, ValueError, ValidationError, json.JSONDecodeError) as exc:
+                category = self._strict_parse_category(exc)
+                response_ref = {
                     "parse_category": category,
                     "validation_errors": self._validation_error_summary(exc),
                     "content_length": len(raw_text),
                     "response_digest": hashlib.sha256(raw_text.encode("utf-8")).hexdigest(),
-                },
-            )
-            raise SkillExecutionError(ErrorCode.STRICT_PARSE_FAILED, "provider output failed strict schema parsing") from exc
+                }
+                if output_normalization is not None:
+                    response_ref["output_normalization"] = output_normalization
+                await self._complete_provider_call(
+                    provider_call_id,
+                    outcome="known_error",
+                    usage=usage,
+                    lease_epoch=context.lease_epoch,
+                    response_ref=response_ref,
+                )
+                self._provider_policy.record_failure(str(getattr(actual_provider, "provider_name", "unknown")))
+                fallback_result = await self._fallback_after_strict_parse(
+                    definition=definition,
+                    context=context,
+                    prompt=prompt,
+                    request_digest=request_digest,
+                    failed_provider=actual_provider,
+                    failed_call_id=provider_call_id,
+                    failed_stream_attempt=stream_attempt,
+                    failed_raw=raw_text,
+                )
+                if fallback_result is None:
+                    raise SkillExecutionError(
+                        ErrorCode.STRICT_PARSE_FAILED,
+                        "provider output failed strict schema parsing",
+                    ) from exc
+                raw_text, usage, provider_call_id, actual_provider, stream_attempt = fallback_result
+                continue
+            break
 
         if "output" in definition.guardrails:
             try:
@@ -191,18 +214,21 @@ class SkillExecutor:
         # reasoning. Persisting it with the completed journal entry lets a
         # recovery worker finish the durable step without issuing a duplicate
         # external request after a local crash.
+        success_response_ref = {
+            "candidate_output": output_payload,
+            "candidate_output_digest": hashlib.sha256(
+                json.dumps(output_payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
+            ).hexdigest(),
+            "evidence_snapshot_ids": [str(item.evidence_snapshot_id) for item in evidence_refs],
+        }
+        if output_normalization is not None:
+            success_response_ref["output_normalization"] = output_normalization
         await self._complete_provider_call(
             provider_call_id,
             outcome="success",
             usage=usage,
             lease_epoch=context.lease_epoch,
-            response_ref={
-                "candidate_output": output_payload,
-                "candidate_output_digest": hashlib.sha256(
-                    json.dumps(output_payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
-                ).hexdigest(),
-                "evidence_snapshot_ids": [str(item.evidence_snapshot_id) for item in evidence_refs],
-            },
+            response_ref=success_response_ref,
         )
         await self._emit(context, "progress", {"node_status": "candidate_ready", "percentage": 75})
         return CandidateOutput(
@@ -269,17 +295,13 @@ class SkillExecutor:
                 response_ref={"failure_code": str(exc.code)},
             )
             self._provider_policy.record_failure(provider_name)
-            if context.mode != ExecutionMode.REAL or definition.fallback_policy != "explicit-real-provider-only":
-                raise
-            # A3 S2-S4 intentionally run direct DeepSeek. Spark is an S8
-            # external gate and must not be attempted as an implicit fallback
-            # merely because a DeepSeek call is temporarily unavailable.
-            fallback_name = (
-                None
-                if context.provider_selection.policy_version == "deepseek-direct-v1"
-                else route.fallback
+            fallback_name = self._fallback_name_for(
+                definition=definition,
+                context=context,
+                route=route,
+                provider_name=provider_name,
             )
-            if not fallback_name or fallback_name == provider_name:
+            if fallback_name is None:
                 raise
             try:
                 fallback = await self._resolve_fallback_provider(fallback_name, context)
@@ -314,7 +336,7 @@ class SkillExecutor:
                         "replace_draft": True,
                     },
                 )
-            stream_attempt = 2
+            stream_attempt += 1
             fallback_call_id = await self._start_provider_call(
                 definition=definition,
                 context=context,
@@ -331,7 +353,7 @@ class SkillExecutor:
                     fallback_call_id,
                     stream_attempt=stream_attempt,
                     replace_draft=replacement,
-                    replaces_stream_attempt=1 if replacement else None,
+                    replaces_stream_attempt=stream_attempt - 1 if replacement else None,
                 )
                 self._provider_policy.record_success(actual_fallback)
                 return raw, usage, fallback_call_id, fallback, stream_attempt
@@ -377,6 +399,157 @@ class SkillExecutor:
             raise SkillExecutionError(
                 ErrorCode.PROVIDER_UNKNOWN_OUTCOME,
                 "provider outcome is unknown; explicit retry or approval is required",
+                recoverable=True,
+            ) from exc
+
+    @staticmethod
+    def _fallback_name_for(
+        *,
+        definition: SkillDefinition,
+        context: ExecutionContext,
+        route: Any,
+        provider_name: str,
+    ) -> str | None:
+        """Return the single declared real fallback, without a DeepSeek→Spark surprise."""
+        if context.mode != ExecutionMode.REAL or definition.fallback_policy != "explicit-real-provider-only":
+            return None
+        # v2 course roots intentionally remain DeepSeek-direct when DeepSeek
+        # was selected.  An explicit Spark selection may still degrade to
+        # DeepSeek, which is the declared safe fallback for that source.
+        if context.provider_selection.policy_version == "deepseek-direct-v1" and provider_name == "deepseek":
+            return None
+        fallback_name = route.fallback
+        if not fallback_name or fallback_name == provider_name:
+            return None
+        return str(fallback_name)
+
+    async def _fallback_after_strict_parse(
+        self,
+        *,
+        definition: SkillDefinition,
+        context: ExecutionContext,
+        prompt: str,
+        request_digest: str,
+        failed_provider: BaseLLMProvider,
+        failed_call_id: str,
+        failed_stream_attempt: int,
+        failed_raw: str,
+    ) -> tuple[str, dict[str, int], str, BaseLLMProvider, int] | None:
+        """Retry one declared real fallback after a strict contract rejection.
+
+        A schema-invalid response is never accepted or coerced.  Instead, the
+        rejected provider call remains a durable ``known_error`` and a fresh
+        call is made to the explicit fallback.  This is especially important
+        for OpenAI-compatible providers whose function-calling dialects have
+        occasional type drift.
+        """
+        provider_name = str(getattr(failed_provider, "provider_name", "unknown"))
+        route = self._provider_policy.route_for(
+            mode=context.mode,
+            requested_provider=context.provider_selection.requested_provider,
+        )
+        fallback_name = self._fallback_name_for(
+            definition=definition,
+            context=context,
+            route=route,
+            provider_name=provider_name,
+        )
+        if fallback_name is None:
+            return None
+        try:
+            fallback = await self._resolve_fallback_provider(fallback_name, context)
+        except Exception as exc:
+            raise SkillExecutionError(
+                ErrorCode.PROVIDER_UNAVAILABLE,
+                "declared real fallback provider is unavailable",
+                recoverable=True,
+            ) from exc
+        actual_fallback = str(getattr(fallback, "provider_name", "unknown"))
+        if actual_fallback in {"fixture", "unknown", provider_name}:
+            raise SkillExecutionError(
+                ErrorCode.PROVIDER_UNAVAILABLE,
+                "fallback provider is not a distinct declared real provider",
+                recoverable=True,
+            )
+        try:
+            self._assert_provider_available(actual_fallback)
+        except ProviderStreamUnavailable as exc:
+            raise SkillExecutionError(
+                ErrorCode.PROVIDER_UNAVAILABLE,
+                "declared real fallback provider is unavailable",
+                recoverable=True,
+            ) from exc
+
+        replacement = context.stream and bool(failed_raw)
+        if replacement:
+            await self._emit(
+                context,
+                "trace",
+                {
+                    "provider_call_id": failed_call_id,
+                    "stream_attempt": failed_stream_attempt,
+                    "actual_provider": provider_name,
+                    "actual_model": getattr(failed_provider, "model_name", None),
+                    "provider_switch": {
+                        "from_provider": provider_name,
+                        "from_model": getattr(failed_provider, "model_name", None),
+                        "to_provider": actual_fallback,
+                        "to_model": getattr(fallback, "model_name", None),
+                        "reason": ErrorCode.STRICT_PARSE_FAILED.value,
+                        "replace_draft": True,
+                    },
+                    "replace_draft": True,
+                },
+            )
+
+        stream_attempt = failed_stream_attempt + 1
+        fallback_call_id = await self._start_provider_call(
+            definition=definition,
+            context=context,
+            provider=fallback,
+            request_digest=request_digest,
+            stream_attempt=stream_attempt,
+        )
+        try:
+            raw, usage = await self._call_provider(
+                fallback,
+                prompt,
+                definition,
+                context,
+                fallback_call_id,
+                stream_attempt=stream_attempt,
+                replace_draft=replacement,
+                replaces_stream_attempt=failed_stream_attempt if replacement else None,
+            )
+            self._provider_policy.record_success(actual_fallback)
+            return raw, usage, fallback_call_id, fallback, stream_attempt
+        except ExecutionCancelled:
+            await self._complete_provider_call(
+                fallback_call_id,
+                outcome="cancelled",
+                usage={},
+                lease_epoch=context.lease_epoch,
+            )
+            raise
+        except ProviderStreamUnavailable as exc:
+            await self._complete_provider_call(
+                fallback_call_id,
+                outcome="unavailable",
+                usage={},
+                lease_epoch=context.lease_epoch,
+                response_ref={"failure_code": str(exc.code)},
+            )
+            self._provider_policy.record_failure(actual_fallback)
+            raise
+        except Exception as exc:  # an opaque fallback boundary remains unknown
+            await self._unknown_provider_call(
+                fallback_call_id,
+                message=str(exc),
+                lease_epoch=context.lease_epoch,
+            )
+            raise SkillExecutionError(
+                ErrorCode.PROVIDER_UNKNOWN_OUTCOME,
+                "fallback provider outcome is unknown; explicit retry or approval is required",
                 recoverable=True,
             ) from exc
 
@@ -465,6 +638,25 @@ class SkillExecutor:
         if isinstance(exc, TypeError):
             return "non_object_json"
         return "invalid_payload"
+
+    @staticmethod
+    def _normalise_json_candidate(raw_text: str) -> tuple[str, str | None]:
+        """Remove only one complete JSON Markdown fence before strict parsing.
+
+        Some OpenAI-compatible providers emit `````json`` wrappers despite an
+        explicit JSON-only instruction. This is intentionally not a best-effort
+        extractor: prose before or after the fenced object remains invalid and
+        must fail the normal ``json.loads`` plus Pydantic contract.
+        """
+        lines = raw_text.strip().splitlines()
+        if len(lines) < 3:
+            return raw_text, None
+        if lines[0].strip().lower() != "```json" or lines[-1].strip() != "```":
+            return raw_text, None
+        candidate = "\n".join(lines[1:-1]).strip()
+        if not candidate:
+            return raw_text, None
+        return candidate, "full_json_code_fence"
 
     @staticmethod
     def _validation_error_summary(exc: BaseException) -> list[dict[str, str]]:
@@ -692,6 +884,7 @@ class SkillExecutor:
                 provider,
                 messages,
                 max_tokens=int(context.extras.get("max_tokens", 800)),
+                response_schema=definition.output_model.model_json_schema(),
             )
             try:
                 async for chunk in stream:
@@ -742,6 +935,7 @@ class SkillExecutor:
                 provider,
                 messages,
                 max_tokens=int(context.extras.get("max_tokens", 800)),
+                response_schema=definition.output_model.model_json_schema(),
             )
         except ExecutionCancelled:
             raise
@@ -776,17 +970,15 @@ class SkillExecutor:
         messages: list[LLMMessage],
         *,
         max_tokens: int,
+        response_schema: dict[str, Any],
     ) -> Any:
-        """Prefer JSON mode when a provider supports it without adding a second API."""
-        try:
-            return provider.stream_generate(
-                messages,
-                temperature=0.2,
-                max_tokens=max_tokens,
-                response_format={"type": "json_object"},
-            )
-        except TypeError:
-            return provider.stream_generate(messages, temperature=0.2, max_tokens=max_tokens)
+        """Pass structured-output hints only to Providers that declare them."""
+        kwargs = SkillExecutor._provider_call_kwargs(
+            provider.stream_generate,
+            max_tokens=max_tokens,
+            response_schema=response_schema,
+        )
+        return provider.stream_generate(messages, **kwargs)
 
     @staticmethod
     async def _provider_generate(
@@ -794,16 +986,34 @@ class SkillExecutor:
         messages: list[LLMMessage],
         *,
         max_tokens: int,
+        response_schema: dict[str, Any],
     ) -> Any:
-        try:
-            return await provider.generate(
-                messages,
-                temperature=0.2,
-                max_tokens=max_tokens,
-                response_format={"type": "json_object"},
-            )
-        except TypeError:
-            return await provider.generate(messages, temperature=0.2, max_tokens=max_tokens)
+        kwargs = SkillExecutor._provider_call_kwargs(
+            provider.generate,
+            max_tokens=max_tokens,
+            response_schema=response_schema,
+        )
+        return await provider.generate(messages, **kwargs)
+
+    @staticmethod
+    def _provider_call_kwargs(
+        method: Any,
+        *,
+        max_tokens: int,
+        response_schema: dict[str, Any],
+    ) -> dict[str, Any]:
+        parameters = inspect.signature(method).parameters
+        accepts_var_kwargs = any(parameter.kind == parameter.VAR_KEYWORD for parameter in parameters.values())
+
+        def accepts(name: str) -> bool:
+            return accepts_var_kwargs or name in parameters
+
+        kwargs: dict[str, Any] = {"temperature": 0.2, "max_tokens": max_tokens}
+        if accepts("response_format"):
+            kwargs["response_format"] = {"type": "json_object"}
+        if accepts("response_schema"):
+            kwargs["response_schema"] = response_schema
+        return kwargs
 
     async def _emit(self, context: ExecutionContext, event_type: str, payload: dict[str, Any]) -> None:
         await context.emit(

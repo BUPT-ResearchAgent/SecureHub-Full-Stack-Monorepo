@@ -103,6 +103,13 @@ return withMockFallback(
 
 新组件优先用 `src/app/components/ui/` 下的 shadcn 原子。若原子缺失，在 Radix 基础上自建，不要从零造轮子或换 UI 库。
 
+### 3.7 WEBSEC-101 课程整理内容（强制）
+
+- `features/course/websec/` 是只面向 `WEBSEC-101` 的 `curated-demo` 数据与界面；题库、课程路线和课程资料不得被 preview 课程复用，也不得冒充后端实时生成或已发布持久数据。
+- `/course` 的入口不能静态依赖路线图、资源目录或题库等可选模块。新模块必须 `React.lazy` + 局部 ErrorBoundary；`localStorage` / `sessionStorage` 访问必须容错，URL 是存储不可用时的权威状态。
+- 公共视频在运行时只显示 `public/assets/websec/bilibili/` 下已提交的封面、真实标题、BVID 和原平台外链；禁止 iframe、播放器和浏览器端 Bilibili API 请求。
+- `scripts/fetch-websec-bilibili-covers.py` 是**人工触发的采集工具**，不是前端 API 调用的例外：仅在明确授权下访问白名单公开视频页，不携带 Cookie、不下载视频/音频/弹幕；不得在 React 组件中直接复用其 HTTP 逻辑。
+
 ---
 
 ## 4. 推荐验证命令
@@ -143,3 +150,4 @@ pnpm lint   # 可选
 - 教师契约：`docs/api/teacher-contract.md`
 - B 角色后续收尾：`Plan/B角色后续收尾计划.md`
 - 当前提示词：`Prompt/5-B-1.md`
+- WebSec 演示数据边界：仓库根 `AGENTS.md` 的“WEBSEC-101 课程整理与公开视频封面”

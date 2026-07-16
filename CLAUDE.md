@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - **文档目的**：作为"安枢智梯 SecureHub / CyberLadder"项目所有后续 Claude Code / Codex / Cursor 会话的默认上下文。任何在本仓库工作的 AI 助手（或新加入的工程师）应当**首先读完本文件**，再开始触碰代码。
 - **读者**：本项目团队成员；后续接入的 AI 编码助手；A3 赛题答辩评委（架构理解参考）。
-- **最后更新时间**：2026-07-16（PR #51 的 T0～T7 真实功能补强已合并；提交 `868b4904` 收敛资源生成预算、主题、终态与 durable cancel，PR #50 的 Swiss v1 视觉链保持不变）。原始版本 2026-06-05（由 Claude Opus 4.7 基于 4 份外部文档 + 仓库代码生成）。
+- **最后更新时间**：2026-07-16（PR #51 的 T0～T7 真实功能补强已合并；提交 `868b4904` 收敛资源生成预算、主题、终态与 durable cancel；新增 WEBSEC-101 前端 `curated-demo` 课程体验，未改变 Runtime、9 Agent 或 Swiss v1 视觉契约）。原始版本 2026-06-05（由 Claude Opus 4.7 基于 4 份外部文档 + 仓库代码生成）。
 - **本文件的权威性**：在仓库层面，本文件 > `README.md` / `docs/architecture.md` / `docs/backend-overview.md`。当本文件与代码现状冲突时，**以代码为准并立即更新本文件**；当本文件与外部 4 份文档冲突时，**以本文件 §19 的"差异说明"为准**。
 
 ### 阅读约定（什么时候回读外部文档？）
@@ -151,6 +151,13 @@ Scrapling、MediaCrawler、MindSpider 都是外部工具 / 数据采集参考，
 - 返工必须消费持久化的 QualityCheck defect code/message；资源 query 必须由服务端按 `kp_id -> KnowledgeNode.name` 校验课程与 domain 后规范化。不得用通用标题或前端文本主导 RAG，也不得为消除失败而放宽显式 QualityCheck。
 - 生成 attempt 与上一版 ready artifact 分离。pending artifact 只有在 root `succeeded` 后才能替换；`failed/blocked/cancelled` 必须结束 loading 并保留上一版。取消按钮调用 durable cancel API；SSE unsubscribe 只负责视图断连。
 - `868b4904` 的定向/兼容验证为 64 passed，前端 typecheck/build 通过并经项目负责人手工核验。该结论只关闭已复现的预算、主题漂移和终态投影误失败；真实网络故障、Evidence 不足、安全拒绝仍须诚实失败，且不等于 Spark Gate 关闭。
+
+### 0.1.12 WEBSEC-101 课程整理演示（2026-07-16）
+
+- 仅 `WEBSEC-101` 在 `/course` 的结构化视图中扩展为六个同级 tab：课程入口、学习路径、资源工作台、题库与试卷、辅导对话、效果评估。`CRYPTO-101`、`NET-SEC-201`、`SDL-201` 仍是受治理的 `preview` 课程，绝不复用 WebSec 的路线、题目、资源或 URL 参数。
+- 题库、三套试卷、三条课程路线和七类课程资料属于**显式 `curated-demo` / `external-preview` 内容**：用于答辩演示、浏览器本地复盘与课程导航，不得表述为后端实时生成、持久题库发布结果或新的 Runtime 验收。真实生成资源继续使用既有“已生成资源”视图。
+- 六条 Bilibili 视频只保留原平台外链；其公开页面声明的标题与封面在明确授权后通过 `frontend/scripts/fetch-websec-bilibili-covers.py` 一次性写入 `frontend/public/assets/websec/bilibili/`。脚本不携带 Cookie、不下载视频/音频/弹幕，前端不得嵌入 iframe、播放/转码视频或在运行时请求 Bilibili 元数据。
+- `CourseStudy` 必须把题库、路线图和课程目录视为可选模块：按需 `lazy` 加载并用局部 ErrorBoundary 显示可见降级，入口只依赖稳定的 `WEB_SECURITY_COURSE_CODE` / `WEB_SECURITY_COURSE_ID`。任何 `localStorage` 读写均须容错，存储失败时 URL 参数仍是视图权威，不能白屏。
 
 ---
 
@@ -515,8 +522,9 @@ features/<feature>/
 | 子 tab | render 内容 | 复用现有组件 |
 | --- | --- | --- |
 | `entry` 课程入口 | 课程卡 + 画像入口 + 进度概览 | `PageShell` + `CapabilityRadarCard` |
-| `path` 学习路径 | 按知识点的 DAG 视图 + 推荐顺序 | `features/tasks/components/BoardView` / `TimelineView` |
-| `workbench` 资源工作台 | 左侧路径节点选中，右侧 6 类资源 tab（doc / ppt / mindmap / quiz / lab / video） | 新增 `features/course/components/ResourceTabs.tsx` |
+| `path` 学习路径 | 真实个性化路径；`WEBSEC-101` 可切换至课程整理的路线图 | `LearningPathDAG` + `LearningPathWorkspace` |
+| `workbench` 资源工作台 | 已生成资源；`WEBSEC-101` 可切换课程资料与本地封面公开视频目录 | `ResourceTabs` + `CourseResourceWorkspace` |
+| `exam` 题库与试卷 | `WEBSEC-101` 的课程整理题库、试卷蓝图、客观题自动计分和主观题自检 | `features/course/websec/WebSecurityExam.tsx` |
 | `tutor` 辅导对话 | 嵌入 Chat，带学习上下文 | `features/chat/*` 全部 |
 | `assess` 效果评估 | 测试题作答 + 评分回流 | `features/profile/components/CapabilityRadarCard` |
 
@@ -1725,6 +1733,8 @@ forbidden: LLM 自由生成内容
 6. **若需新状态**：扩展 `features/<feature>/store.ts` 的 reducer + action 类型（**不要**引入 Redux/Zustand，铁律 §5.5）
 7. **若需流式输出**：用 `WorkflowRunClient` 监听 SSE，按 §11.1 七类事件、Last-Event-ID、gap replay 和 stream replacement 处理
 8. **更新本文档 §4 目录树（如果加了新文件）+ §5.2 路由表（如果加了路由）**
+9. **若向 `/course` 接入可选演示模块**：稳定入口不得静态依赖它；使用 `React.lazy` + 局部 ErrorBoundary，URL 参数必须可在浏览器存储失效时独立恢复视图。
+10. **若展示外部公开视频封面**：运行时只读取已提交的本地静态资源并保留外链；公开页面采集只能放在显式脚本中、白名单化、无 Cookie、无视频下载，不能以浏览器 `fetch` 代替后端或绕过跨域限制。
 
 ### 20.5 在任何修改之前都必须先做的事
 

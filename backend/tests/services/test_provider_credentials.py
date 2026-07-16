@@ -101,9 +101,10 @@ async def test_resolver_uses_only_the_root_frozen_owned_credential(sqlite_sessio
 
     captured: dict[str, str] = {}
 
-    def fake_provider(provider: str, *, api_key: str | None = None):
+    def fake_provider(provider: str, *, api_key: str | None = None, model: str | None = None):
         captured["provider"] = provider
         captured["api_key"] = api_key or ""
+        captured["model"] = model or ""
         return object()
 
     monkeypatch.setattr("app.services.provider_credential_resolver.get_llm_provider", fake_provider)
@@ -115,15 +116,17 @@ async def test_resolver_uses_only_the_root_frozen_owned_credential(sqlite_sessio
         provider="deepseek",
         user_id=user.id,
         credential_id=credential.id,
+        model="deepseek-chat",
     )
     assert result is not None
-    assert captured == {"provider": "deepseek", "api_key": key}
+    assert captured == {"provider": "deepseek", "api_key": key, "model": "deepseek-chat"}
 
     with pytest.raises(ProviderCredentialError):
         await resolver.resolve(
             provider="deepseek",
             user_id=other.id,
             credential_id=credential.id,
+            model="deepseek-chat",
         )
 
 
@@ -199,3 +202,63 @@ async def test_real_root_persists_the_active_credential_id(sqlite_session, monke
     await sqlite_session.refresh(run)
     # Deletion must not change the root into an environment-key fallback.
     assert run.credential_id == credential.id
+
+
+@pytest.mark.anyio
+async def test_user_selected_source_controls_new_root_provider_model_and_credential(sqlite_session, monkeypatch) -> None:
+    user = await _user(sqlite_session, "selected-source")
+    settings = _settings().model_copy(
+        update={
+            "AGENT_RUN_REAL_ENABLED": True,
+            "LLM_PROVIDER": "deepseek",
+            "XFYUN_MODEL": "spark-x",
+        }
+    )
+    credential_service = ProviderCredentialService(sqlite_session, settings)
+    credential = await credential_service.create(
+        user_id=user.id,
+        provider="xfyun",
+        name="spark-primary",
+        api_key=uuid4().hex,
+        activate=True,
+    )
+    selected = await credential_service.select_model_source(
+        user_id=user.id,
+        provider="xfyun",
+        model="spark-x",
+    )
+    assert (selected.provider, selected.model) == ("xfyun", "spark-x")
+
+    definition = WorkflowDefinition(
+        name="selected_source_root_test_v1",
+        version=1,
+        input_model=_RootInput,
+        output_model=_RootOutput,
+        nodes=(NodeDefinition(node_id="noop", kind="action", action_name="Noop"),),
+    )
+    registry = WorkflowRegistry()
+    registry.register(definition)
+    monkeypatch.setattr("app.services.workflow_application_service.get_settings", lambda: settings)
+    service = WorkflowApplicationService(
+        lambda: _SessionContext(sqlite_session),
+        workflow_registry=registry,
+    )
+
+    started = await service.start(
+        WorkflowRunStartRequest(
+            workflow=definition.name,
+            user_id=str(user.id),
+            input={"value": "use selected model source"},
+            mode="real",
+        ),
+        idempotency_key="selected-source-root",
+        actor_user_id=user.id,
+    )
+
+    run = await RunStore(sqlite_session).get_run(started.run_id)
+    assert run is not None
+    assert (run.requested_provider, run.requested_model, run.credential_id) == (
+        "xfyun",
+        "spark-x",
+        credential.id,
+    )

@@ -1,3 +1,5 @@
+import { buildWebSecurityCourseUrl } from '@/app/features/course/websec/webSecurityCourseUrl';
+
 export type SearchItem = {
   id: string;
   title: string;
@@ -34,11 +36,12 @@ export const navItems: SearchItem[] = [
   { id: 'nav-practice-cases', title: '实战案例', summary: '真实攻防案例', url: '/practice?tab=cases', category: 'nav', parent: '实战进阶' },
   { id: 'nav-practice-ddl', title: '竞赛DDL', summary: '竞赛截止日期', url: '/practice?tab=ddl', category: 'nav', parent: '实战进阶' },
 
-  { id: 'nav-course-entry', title: '课程入口', summary: '选择课程并构建学习画像', url: '/course?courseId=web-security-foundation&view=structured&tab=entry', category: 'nav', parent: '课程学习' },
-  { id: 'nav-course-path', title: '学习路径', summary: '查看 SQL 注入个性化学习路径', url: '/course?courseId=web-security-foundation&view=structured&tab=path', category: 'nav', parent: '课程学习' },
-  { id: 'nav-course-workbench', title: '资源工作台', summary: '切换文档、PPT、思维导图、题目、实验、阅读与视频脚本', url: '/course?courseId=web-security-foundation&view=structured&tab=workbench', category: 'nav', parent: '课程学习' },
-  { id: 'nav-course-tutor', title: '辅导对话', summary: '进入课程上下文的智能辅导', url: '/course?courseId=web-security-foundation&view=structured&tab=tutor', category: 'nav', parent: '课程学习' },
-  { id: 'nav-course-assess', title: '效果评估', summary: '完成答题反馈和能力画像回流', url: '/course?courseId=web-security-foundation&view=structured&tab=assess', category: 'nav', parent: '课程学习' },
+  { id: 'nav-course-entry', title: '课程入口', summary: '选择 Web 安全基础并构建学习画像', url: buildWebSecurityCourseUrl({ tab: 'entry' }), category: 'nav', parent: '课程学习' },
+  { id: 'nav-course-path', title: '学习路径', summary: '查看 Web 安全基础的个性化学习路径', url: buildWebSecurityCourseUrl({ tab: 'path' }), category: 'nav', parent: '课程学习' },
+  { id: 'nav-course-workbench', title: '资源工作台', summary: '切换文档、PPT、思维导图、题目、实验、阅读与视频脚本', url: buildWebSecurityCourseUrl({ tab: 'workbench' }), category: 'nav', parent: '课程学习' },
+  { id: 'nav-course-exam', title: '题库与试卷', summary: '进入 Web 安全基础的课程题库、试卷蓝图与本地复盘', url: buildWebSecurityCourseUrl({ tab: 'exam' }), category: 'nav', parent: '课程学习' },
+  { id: 'nav-course-tutor', title: '辅导对话', summary: '进入课程上下文的智能辅导', url: buildWebSecurityCourseUrl({ tab: 'tutor' }), category: 'nav', parent: '课程学习' },
+  { id: 'nav-course-assess', title: '效果评估', summary: '完成答题反馈和能力画像回流', url: buildWebSecurityCourseUrl({ tab: 'assess' }), category: 'nav', parent: '课程学习' },
 
   { id: 'nav-research-fund', title: '基金项目', summary: '科研基金项目', url: '/research?tab=fund', category: 'nav', parent: '科研创新' },
   { id: 'nav-research-news', title: '科研动态', summary: '最新科研动态', url: '/research?tab=news', category: 'nav', parent: '科研创新' },
@@ -104,7 +107,7 @@ export const navItems: SearchItem[] = [
 export const pageItems: SearchItem[] = [
   { id: 'page-workspace', title: '工作台', summary: '今日要务、截止提醒、推荐行动、最近生成物', url: '/workspace', category: 'page' },
   { id: 'page-practice', title: '实战进阶', summary: '教程中心、工具库、竞赛专区', url: '/practice', category: 'page' },
-  { id: 'page-course', title: '课程学习', summary: '画像、路径、资源工作台、辅导对话、效果评估', url: '/course', category: 'page' },
+  { id: 'page-course', title: '课程学习', summary: '画像、路径、资源工作台、题库与试卷、辅导对话、效果评估', url: '/course', category: 'page' },
   { id: 'page-research', title: '科研创新', summary: '基金项目、科研动态、学术创新、热点文章', url: '/research', category: 'page' },
   { id: 'page-writing', title: '选题写作', summary: '选题推演、写作模块、文档编辑、PPT大纲', url: '/writing', category: 'page' },
   { id: 'page-chat', title: '智能问答', summary: '选题指导、科研咨询、竞赛咨询', url: '/chat', category: 'page' },

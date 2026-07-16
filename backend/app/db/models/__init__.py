@@ -29,7 +29,7 @@ from app.db.models.fairness import (
     FairnessPolicy,
     FairnessReview,
 )
-from app.db.models.identity import ProviderCredential, User, UserCapability, UserProfile
+from app.db.models.identity import ProviderCredential, ProviderModelSelection, User, UserCapability, UserProfile
 from app.db.models.governance import (
     CourseResourceGovernance,
     KpiDefinition,
@@ -167,6 +167,7 @@ __all__ = [
     "TeachingRecommendation",
     "TeachingRecommendationDecision",
     "ProviderCredential",
+    "ProviderModelSelection",
     "PasswordPolicy",
     "User",
     "UserRoleGrant",

@@ -34,6 +34,7 @@ import {
   DropdownMenuTrigger,
 } from '@/app/components/ui/dropdown-menu';
 import { useAuth } from '@/app/features/auth/store';
+import { buildWebSecurityCourseUrl } from '@/app/features/course/websec/webSecurityCourseUrl';
 import { RoleSwitcher } from '@/app/features/teacher/RoleSwitcher';
 
 export type NavChild = { key: string; label: string; to?: string; group?: string };
@@ -94,11 +95,12 @@ export const navItems: NavItem[] = [
     icon: GraduationCap,
     label: '课程学习',
     children: [
-      { key: 'entry', label: '课程入口' },
-      { key: 'path', label: '学习路径' },
-      { key: 'workbench', label: '资源工作台' },
-      { key: 'tutor', label: '辅导对话' },
-      { key: 'assess', label: '效果评估' },
+      { key: 'entry', label: '课程入口', to: buildWebSecurityCourseUrl({ tab: 'entry' }) },
+      { key: 'path', label: '学习路径', to: buildWebSecurityCourseUrl({ tab: 'path' }) },
+      { key: 'workbench', label: '资源工作台', to: buildWebSecurityCourseUrl({ tab: 'workbench' }) },
+      { key: 'exam', label: '题库与试卷', to: buildWebSecurityCourseUrl({ tab: 'exam' }) },
+      { key: 'tutor', label: '辅导对话', to: buildWebSecurityCourseUrl({ tab: 'tutor' }) },
+      { key: 'assess', label: '效果评估', to: buildWebSecurityCourseUrl({ tab: 'assess' }) },
     ],
   },
   {

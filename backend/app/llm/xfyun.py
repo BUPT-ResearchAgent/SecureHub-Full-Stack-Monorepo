@@ -24,7 +24,7 @@ from app.llm.base import BaseLLMClient, ChatMessage, EmbeddingResult, TokenChunk
 
 logger = logging.getLogger(__name__)
 
-XFYUN_CHAT_URL = "https://spark-api-open.xf-yun.com/v1/chat/completions"
+_DEFAULT_XFYUN_BASE_URL = "https://spark-api-open.xf-yun.com/v1"
 
 
 class XFYunClient(BaseLLMClient):
@@ -34,7 +34,13 @@ class XFYunClient(BaseLLMClient):
         self.settings = settings or get_settings()
         self.model = self.settings.XFYUN_MODEL or "general"
         self.api_key = self.settings.XFYUN_API_KEY
+        self.base_url = getattr(self.settings, "XFYUN_BASE_URL", _DEFAULT_XFYUN_BASE_URL).rstrip("/")
+        self.thinking_mode = str(getattr(self.settings, "XFYUN_THINKING_MODE", "") or "").strip().lower()
         self._timeout = httpx.Timeout(60.0, read=120.0)
+
+    @property
+    def chat_url(self) -> str:
+        return f"{self.base_url}/chat/completions"
 
     @property
     def is_configured(self) -> bool:
@@ -56,6 +62,8 @@ class XFYunClient(BaseLLMClient):
             "stream": stream,
             "temperature": temperature,
         }
+        if self.thinking_mode:
+            payload["thinking"] = {"type": self.thinking_mode}
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
@@ -65,7 +73,7 @@ class XFYunClient(BaseLLMClient):
             return self._stream(headers, payload)
 
         async with httpx.AsyncClient(timeout=self._timeout) as client:
-            response = await client.post(XFYUN_CHAT_URL, headers=headers, json=payload)
+            response = await client.post(self.chat_url, headers=headers, json=payload)
             response.raise_for_status()
             body = response.json()
             choice = (body.get("choices") or [{}])[0]
@@ -73,7 +81,7 @@ class XFYunClient(BaseLLMClient):
 
     async def _stream(self, headers: dict[str, str], payload: dict[str, Any]) -> AsyncIterator[TokenChunk]:
         async with httpx.AsyncClient(timeout=self._timeout) as client:
-            async with client.stream("POST", XFYUN_CHAT_URL, headers=headers, json=payload) as response:
+            async with client.stream("POST", self.chat_url, headers=headers, json=payload) as response:
                 response.raise_for_status()
                 index = 0
                 async for line in response.aiter_lines():
