@@ -19,6 +19,7 @@ from app.schemas.teacher_production import (
     AssessmentVersionCreateRequest,
     AssessmentVersionItemRequest,
     CreateTeachingRecommendationRequest,
+    QuizCandidateFilterRequest,
 )
 from app.services.teaching.teacher_production_service import (
     TeacherProductionError,
@@ -127,3 +128,34 @@ async def test_teacher_form_context_is_scoped_editable_and_audited(sqlite_sessio
             ),
         )
     assert rejected_evidence.value.code == "INSUFFICIENT_EVIDENCE"
+
+
+@pytest.mark.anyio
+async def test_quiz_generation_formassist_prefill_uses_a_real_satisfiable_scope(sqlite_session) -> None:
+    await seed_showcase_course(sqlite_session)
+    teacher = await sqlite_session.get(User, DEMO_COURSE_TEACHER_ID)
+    assert teacher is not None
+
+    service = TeacherProductionService(sqlite_session)
+    context = await service.get_form_context(
+        actor=teacher,
+        course_id=COURSE_WEBSEC_ID,
+        purpose="quiz_generation",
+    )
+
+    assert context.draft["knowledge_node_id"] is None
+    assert context.draft["question_type"] is None
+    assert context.draft["quantity"] == 8
+    assert context.draft["difficulty"] == 3
+    availability = await service.preflight_quiz_candidates(
+        actor=teacher,
+        course_id=COURSE_WEBSEC_ID,
+        payload=QuizCandidateFilterRequest(
+            knowledge_node_ids=[],
+            question_types=[],
+            quantity=context.draft["quantity"],
+            target_difficulty=context.draft["difficulty"],
+        ),
+    )
+    assert availability.available_count >= 8
+    assert availability.can_fulfill_requested_quantity is True

@@ -195,6 +195,35 @@ export type TeacherQuizCandidatePreview = {
   prepared_at: string;
 };
 
+export type TeacherQuizCandidateFilters = {
+  knowledge_node_ids: string[];
+  question_types: Array<'single_choice' | 'multi_choice' | 'fill' | 'short_answer' | 'code'>;
+  quantity: number;
+  target_difficulty: number | null;
+};
+
+export type TeacherQuizCandidateAvailability = {
+  course_id: string;
+  source: 'persisted_quality_passed_bank';
+  requested_quantity: number;
+  knowledge_node_ids: string[];
+  question_types: TeacherQuizCandidateFilters['question_types'];
+  target_difficulty: number | null;
+  available_count: number;
+  can_fulfill_requested_quantity: boolean;
+  message: string;
+  alternatives: Array<{
+    label: string;
+    reason: string;
+    knowledge_node_ids: string[];
+    question_types: TeacherQuizCandidateFilters['question_types'];
+    target_difficulty: number | null;
+    available_count: number;
+    can_fulfill_requested_quantity: boolean;
+  }>;
+  calculated_at: string;
+};
+
 export type TeacherWeaknessSnapshot = {
   id: string;
   course_id: string;
@@ -494,15 +523,19 @@ export function reviewTeacherQuizItem(
   );
 }
 
+export function preflightTeacherQuizCandidates(
+  courseId: string,
+  payload: TeacherQuizCandidateFilters,
+): Promise<TeacherQuizCandidateAvailability> {
+  return apiPost<TeacherQuizCandidateAvailability>(
+    `${productionPath}/courses/${encodeURIComponent(courseId)}/quiz-candidates/preflight`,
+    payload,
+  );
+}
+
 export function prepareTeacherQuizCandidates(
   courseId: string,
-  payload: {
-    knowledge_node_ids: string[];
-    question_types: Array<'single_choice' | 'multi_choice' | 'fill' | 'short_answer' | 'code'>;
-    quantity: number;
-    target_difficulty: number;
-    teaching_intent: string;
-  },
+  payload: TeacherQuizCandidateFilters & { teaching_intent: string },
 ): Promise<TeacherQuizCandidatePreview> {
   return apiPost<TeacherQuizCandidatePreview>(
     `${productionPath}/courses/${encodeURIComponent(courseId)}/quiz-candidates/prepare`,

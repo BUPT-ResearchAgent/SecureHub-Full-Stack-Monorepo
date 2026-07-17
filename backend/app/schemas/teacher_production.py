@@ -258,15 +258,22 @@ class QuizReviewDecisionDTO(BaseModel):
     created_at: datetime
 
 
-class QuizCandidatePrepareRequest(BaseModel):
-    """Teacher intent used to select an auditable, existing quiz candidate set."""
+class QuizCandidateFilterRequest(BaseModel):
+    """Exact, teacher-selected filters for durable quiz-candidate availability."""
 
     knowledge_node_ids: list[UUID] = Field(default_factory=list, max_length=6)
     question_types: list[
         Literal["single_choice", "multi_choice", "fill", "short_answer", "code"]
     ] = Field(default_factory=list, max_length=5)
     quantity: int = Field(default=8, ge=1, le=36)
-    target_difficulty: int = Field(default=3, ge=1, le=5)
+    # ``None`` is deliberate: it means the teacher explicitly selected
+    # "all difficulties".  Do not silently convert it to difficulty 3.
+    target_difficulty: int | None = Field(default=None, ge=1, le=5)
+
+
+class QuizCandidatePrepareRequest(QuizCandidateFilterRequest):
+    """Teacher intent used to select an auditable, existing quiz candidate set."""
+
     teaching_intent: str = Field(min_length=12, max_length=600)
 
 
@@ -291,6 +298,42 @@ class QuizCandidatePreviewDTO(BaseModel):
     items: list[QuizCandidateItemDTO] = Field(default_factory=list)
     next_step: str
     prepared_at: datetime
+
+
+class QuizCandidateAlternativeDTO(BaseModel):
+    """A server-derived, explicitly applicable alternative filter set.
+
+    These are not generated questions and do not change a teacher's choice by
+    themselves.  The UI must require an explicit click before applying one.
+    """
+
+    label: str
+    reason: str
+    knowledge_node_ids: list[UUID] = Field(default_factory=list)
+    question_types: list[
+        Literal["single_choice", "multi_choice", "fill", "short_answer", "code"]
+    ] = Field(default_factory=list)
+    target_difficulty: int | None = Field(default=None, ge=1, le=5)
+    available_count: int = Field(ge=0)
+    can_fulfill_requested_quantity: bool
+
+
+class QuizCandidateAvailabilityDTO(BaseModel):
+    """Read-only preflight over the teacher-authorized, quality-passed bank."""
+
+    course_id: UUID
+    source: Literal["persisted_quality_passed_bank"]
+    requested_quantity: int = Field(ge=1)
+    knowledge_node_ids: list[UUID] = Field(default_factory=list)
+    question_types: list[
+        Literal["single_choice", "multi_choice", "fill", "short_answer", "code"]
+    ] = Field(default_factory=list)
+    target_difficulty: int | None = Field(default=None, ge=1, le=5)
+    available_count: int = Field(ge=0)
+    can_fulfill_requested_quantity: bool
+    message: str
+    alternatives: list[QuizCandidateAlternativeDTO] = Field(default_factory=list)
+    calculated_at: datetime
 
 
 class WeaknessSnapshotRequest(BaseModel):
