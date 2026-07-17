@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy import select
@@ -16,6 +16,7 @@ from app.db.models.knowledge.knowledge_node import KnowledgeNode
 from app.db.models.learning.learning_path import LearningPath
 from app.db.models.learning.learning_task import LearningTask
 from app.runtime.actions import WorkflowActionService
+from app.services.learning.student_learning_loop_service import StudentLearningLoopService
 
 
 async def _seed_existing_path(sqlite_session) -> tuple[User, Course, KnowledgeNode, LearningPath]:
@@ -144,3 +145,51 @@ async def test_persist_learning_path_rejects_empty_task_projection_without_retir
     )
     assert [path.id for path in active_paths] == [prior_path.id]
     assert (await sqlite_session.get(LearningPath, prior_path.id)).status == "active"
+
+
+@pytest.mark.anyio
+async def test_three_generated_tasks_receive_only_one_replan_supplement(sqlite_session) -> None:
+    """Keep course planning and learner replan cardinalities separately owned."""
+    user, course, node, _prior_path = await _seed_existing_path(sqlite_session)
+
+    result = await WorkflowActionService(sqlite_session, storage_service=SimpleNamespace()).persist_learning_path(
+        {"user_id": str(user.id), "course_id": str(course.id), "query": "SQL injection learning plan"},
+        {
+            "generate_path": {
+                "output": {
+                    "title": "Three-step secure-coding path",
+                    "nodes": [
+                        {"kp_id": str(node.id), "title": "Study parameterized queries"},
+                        {"id": "fixture-sqli-payloads", "title": "Review SQLi payload patterns"},
+                        {"id": "fixture-sqli-defense", "title": "Validate query defenses"},
+                    ],
+                }
+            }
+        },
+        SimpleNamespace(),
+    )
+    await sqlite_session.commit()
+
+    generated_path = await sqlite_session.get(LearningPath, UUID(result["learning_path_id"]))
+    assert generated_path is not None
+    generated_tasks = list(
+        (
+            await sqlite_session.execute(
+                select(LearningTask)
+                .where(LearningTask.path_id == generated_path.id)
+                .order_by(LearningTask.order_index)
+            )
+        ).scalars()
+    )
+    assert result["task_count"] == len(generated_tasks) == 3
+
+    proposal = StudentLearningLoopService(sqlite_session)._proposed_tasks(
+        [(task, node if task.kp_id == node.id else None) for task in generated_tasks],
+        node,
+        "SQL injection defense review",
+        20,
+    )
+
+    assert len(proposal) == 4
+    assert sum(item["action"] == "added" for item in proposal) == 1
+    assert [item["order_index"] for item in proposal] == [1, 2, 3, 4]

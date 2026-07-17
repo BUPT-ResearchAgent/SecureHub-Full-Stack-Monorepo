@@ -57,6 +57,7 @@ def test_course_plan_fixture_uses_related_server_profile_dimensions_and_ignores_
     }
     baseline = CoursePlanProfileSnapshot.from_dimensions(baseline_dimensions)
     baseline_plan = _fixture_plan(baseline).model_dump(mode="json")
+    assert len(baseline_plan["nodes"]) == 3
 
     related_treatments = (
         {**baseline_dimensions, "base_knowledge": "synthetic-advanced"},
@@ -65,7 +66,27 @@ def test_course_plan_fixture_uses_related_server_profile_dimensions_and_ignores_
         {**baseline_dimensions, "weak_points": ["synthetic-assessment-weak-kp"]},
     )
     for treatment in related_treatments:
-        assert _fixture_plan(CoursePlanProfileSnapshot.from_dimensions(treatment)).model_dump(mode="json") != baseline_plan
+        treatment_plan = _fixture_plan(CoursePlanProfileSnapshot.from_dimensions(treatment)).model_dump(mode="json")
+        assert len(treatment_plan["nodes"]) == 3
+        assert treatment_plan != baseline_plan
+
+    weak_point_plan = _fixture_plan(
+        CoursePlanProfileSnapshot.from_dimensions(
+            {**baseline_dimensions, "weak_points": ["synthetic-sql-injection-gap"]}
+        )
+    ).model_dump(mode="json")
+    assert len(weak_point_plan["nodes"]) == 3
+    assert weak_point_plan["nodes"][0]["metadata"]["fixture_weak_point_focus"] == "sql_injection"
+    assert "parameterized-query boundary checks" in weak_point_plan["nodes"][0]["description"]
+    assert "known_weak_point_reinforcement" in weak_point_plan["personalization_rationale"]
+    assert all(
+        node.get("id") not in {
+            "fixture-assessment-gap-review",
+            "fixture-known-gap-review",
+            "fixture-general-gap-review",
+        }
+        for node in weak_point_plan["nodes"]
+    )
 
     unrelated = CoursePlanProfileSnapshot.from_dimensions(
         {**baseline_dimensions, "unrelated_layout_preference": "synthetic-compact"}
@@ -73,6 +94,15 @@ def test_course_plan_fixture_uses_related_server_profile_dimensions_and_ignores_
     assert unrelated == baseline
     assert _fixture_plan(unrelated).model_dump(mode="json") == baseline_plan
     assert "untrusted_note" not in baseline.compact_payload()
+
+
+def test_course_plan_snapshot_normalises_fixture_persona_target_direction() -> None:
+    snapshot = CoursePlanProfileSnapshot.from_dimensions(
+        {"target_direction": "web_security_engineer"}
+    )
+
+    assert snapshot.target_direction == "web_defense"
+    assert snapshot.rationale_codes() == ("web_defense_goal",)
 
 
 @pytest.mark.anyio

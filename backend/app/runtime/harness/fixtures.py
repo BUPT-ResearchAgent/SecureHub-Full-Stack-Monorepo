@@ -521,6 +521,20 @@ _DEFAULT_LLM_OUTPUTS: dict[str, dict[str, Any]] = {
 }
 
 
+# These descriptions are deliberately keyed by the bounded profile enum, not
+# by any learner-supplied profile text.  They let fixture planning expose a
+# reproducible weak-point adaptation without changing the default path shape.
+_FIXTURE_WEAK_POINT_DESCRIPTIONS: dict[str, str] = {
+    "general_gap": "Revisit a general secure-development gap while following the existing SQLi sequence.",
+    "assessment_gap": "Use the existing SQLi sequence to review the latest assessment feedback.",
+    "sql_injection": "Use the existing SQLi sequence to reinforce parameterized-query boundary checks.",
+    "ssrf": "Use the existing SQLi sequence to compare input-boundary controls with SSRF defenses.",
+    "deserialization": "Use the existing SQLi sequence to reinforce trusted-data boundary checks.",
+    "xss": "Use the existing SQLi sequence to compare query boundaries with output-encoding controls.",
+    "authentication": "Use the existing SQLi sequence to reinforce identity and session-boundary checks.",
+}
+
+
 def default_llm_output(skill_name: str) -> dict[str, Any]:
     """Return a deep-ish copy of the canned LLM output for a skill, or a generic stub."""
     template = _DEFAULT_LLM_OUTPUTS.get(skill_name)
@@ -542,8 +556,6 @@ def fixture_llm_output(skill_name: str, *, prompt: str = "") -> dict[str, Any]:
     output = default_llm_output(skill_name)
     if skill_name != "GenerateLearningPath":
         return output
-
-    from app.schemas.course_plan_profile import CoursePlanProfileSnapshot
 
     snapshot = _course_plan_snapshot_from_prompt(prompt)
     codes = snapshot.rationale_codes()
@@ -567,7 +579,9 @@ def fixture_llm_output(skill_name: str, *, prompt: str = "") -> dict[str, Any]:
         path_nodes[0]["title"] = "Accelerated SQLi threat-model review"
         path_nodes[0]["est_minutes"] = 20
 
-    if "application_security_goal" in codes:
+    if "web_defense_goal" in codes:
+        path_nodes[2]["title"] = "Validate defensive web-security controls"
+    elif "application_security_goal" in codes:
         path_nodes[2]["title"] = "Apply parameterized queries in application review"
     elif "secure_backend_goal" in codes:
         path_nodes[2]["title"] = "Harden backend query boundaries"
@@ -589,33 +603,17 @@ def fixture_llm_output(skill_name: str, *, prompt: str = "") -> dict[str, Any]:
     elif "document_preference" in codes:
         path_nodes[1]["title"] = "Read a structured SQLi defense guide"
 
-    if "assessment_gap_reinforcement" in codes:
-        path_nodes.append(
-            {
-                "id": "fixture-assessment-gap-review",
-                "title": "Complete a targeted assessment-gap reinforcement",
-                "task_type": "practice",
-                "est_minutes": 25,
-            }
-        )
-    elif "known_weak_point_reinforcement" in codes:
-        path_nodes.append(
-            {
-                "id": "fixture-known-gap-review",
-                "title": "Complete a known weak-point reinforcement",
-                "task_type": "practice",
-                "est_minutes": 25,
-            }
-        )
-    elif "general_gap_reinforcement" in codes:
-        path_nodes.append(
-            {
-                "id": "fixture-general-gap-review",
-                "title": "Complete a general gap reinforcement",
-                "task_type": "practice",
-                "est_minutes": 25,
-            }
-        )
+    # Weak-point adaptation belongs to an existing default node.  Adding a
+    # fourth node here changed the durable cardinality of the course-plan
+    # output, and the learning-loop replan then added a fifth task.  Keep the
+    # course-plan contract at three nodes; the replan service owns its one
+    # supplemental review task.
+    if snapshot.weak_point_focus is not None:
+        focus = snapshot.weak_point_focus
+        metadata = dict(path_nodes[0].get("metadata") or {})
+        metadata["fixture_weak_point_focus"] = focus
+        path_nodes[0]["metadata"] = metadata
+        path_nodes[0]["description"] = _FIXTURE_WEAK_POINT_DESCRIPTIONS[focus]
 
     output["nodes"] = path_nodes
     output["personalization_rationale"] = list(codes)

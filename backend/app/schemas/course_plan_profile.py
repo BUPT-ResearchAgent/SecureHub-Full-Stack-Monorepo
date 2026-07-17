@@ -177,11 +177,12 @@ def _target_direction(value: Any) -> CoursePlanTargetDirection | None:
     text = _normalised_text(value)
     if not text:
         return None
-    if "application-security" in text or "application security" in text or "appsec" in text:
+    comparable = text.replace("_", " ").replace("-", " ")
+    if "application security" in comparable or "appsec" in comparable:
         return "application_security"
-    if "backend" in text or "server" in text:
+    if "backend" in comparable or "server" in comparable:
         return "secure_backend"
-    if "web-defense" in text or "web defense" in text or "web-security" in text or "web security" in text:
+    if "web defense" in comparable or "web security" in comparable:
         return "web_defense"
     return "general_security"
 
