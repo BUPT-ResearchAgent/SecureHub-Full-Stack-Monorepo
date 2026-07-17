@@ -55,6 +55,18 @@ export type StudentCourseExperienceTutorExchange = {
   source_boundary: string;
   evidence: StudentCourseExperienceEvidence[];
   recorded_at: string;
+  /** True only for a persisted, current-student controlled demo record. */
+  quick_reply_available: boolean;
+};
+
+export type StudentCourseDemoAssessmentDraft = {
+  assignment_id: string;
+  assignment_title: string;
+  /** Opaque current-student quiz artifact ID for the real assessment workflow. */
+  quiz_resource_id: string;
+  answers: Record<string, string | string[]>;
+  source_kind: 'curated-demo';
+  source_boundary: string;
 };
 
 export type StudentCourseExperience = {
@@ -88,6 +100,7 @@ export type StudentCourseExperience = {
     read: boolean;
   }>;
   tutor_exchanges: StudentCourseExperienceTutorExchange[];
+  assessment_demo_draft?: StudentCourseDemoAssessmentDraft | null;
   assessment: {
     baseline_average?: number | null;
     recent_average?: number | null;

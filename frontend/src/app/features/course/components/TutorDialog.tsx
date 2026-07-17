@@ -9,6 +9,7 @@ import { resumeCourseTask, startCourseTask, tutorAnswerFromWorkflowStatus } from
 import { useCourseDispatch, useCourseState } from '../store';
 import { createCourseTaskLifecycle } from '../workflow/courseTaskLifecycle';
 import { useSelectedCourse } from '../catalog/useSelectedCourse';
+import type { StudentCourseExperienceTutorExchange } from '../studentExperience';
 import { useStudentCourseExperience } from '../studentExperienceContext';
 
 const tutorAgent: ChatAgent = {
@@ -60,6 +61,41 @@ function tutorFailureMessage(code?: string, fallback?: string): string {
   return getLLMErrorCopy(code, fallback).message;
 }
 
+function quickReplyFor(
+  exchanges: StudentCourseExperienceTutorExchange[] | undefined,
+  question: string,
+): StudentCourseExperienceTutorExchange | null {
+  const normalized = question.trim();
+  if (!normalized) return null;
+  return exchanges?.find((exchange) => (
+    exchange.quick_reply_available
+    && exchange.source_kind === 'curated-demo'
+    && exchange.question.trim() === normalized
+  )) ?? null;
+}
+
+function curatedReplyContent(exchange: StudentCourseExperienceTutorExchange): string {
+  const evidence = exchange.evidence_status === 'insufficient'
+    ? '当前记录证据不足，因此不扩展为确定性结论或操作细节。'
+    : exchange.evidence.length
+      ? exchange.evidence.map((item) => `- ${item.label}：${item.excerpt}`).join('\n')
+      : '该记录未返回可展示的 Evidence 摘要；不会将其补写为实时检索结果。';
+  return [
+    '**受控预置课程辅导记录（非本次实时模型回答）**',
+    '',
+    exchange.concept,
+    '',
+    `**防御性示例**：${exchange.defensive_example}`,
+    '',
+    '**Evidence / 来源**',
+    evidence,
+    '',
+    `**下一步**：${exchange.next_step}`,
+    '',
+    `> ${exchange.source_boundary}`,
+  ].join('\n');
+}
+
 export function TutorDialog() {
   const { taskContext, tutorSessions } = useCourseState();
   const { course } = useSelectedCourse();
@@ -81,11 +117,18 @@ export function TutorDialog() {
     ?? experience?.tasks.find((task) => task.status === 'todo')?.knowledge_point
     ?? course?.currentKnowledgePoint
     ?? '当前课程知识点';
+  const quickReplies = useMemo(
+    () => experience?.tutor_exchanges.filter((exchange) => (
+      exchange.quick_reply_available && exchange.source_kind === 'curated-demo'
+    )) ?? [],
+    [experience?.tutor_exchanges],
+  );
   const scopedTutorAgent = useMemo<ChatAgent>(() => ({
     ...tutorAgent,
-    starterQuestions: experience?.tutor_exchanges.slice(0, 3).map((exchange) => exchange.question)
-      ?? tutorAgent.starterQuestions,
-  }), [experience?.tutor_exchanges]);
+    starterQuestions: quickReplies.length
+      ? quickReplies.slice(0, 3).map((exchange) => exchange.question)
+      : tutorAgent.starterQuestions,
+  }), [quickReplies]);
 
   useEffect(() => {
     if (sessionState.courseId === taskContext.courseId) return;
@@ -179,6 +222,23 @@ export function TutorDialog() {
       updateSession((current) => ({ ...current, messages: [...current.messages, userMessage, notice], updatedAt: new Date().toISOString() }));
       return;
     }
+    const quickReply = quickReplyFor(experience?.tutor_exchanges, question);
+    if (quickReply) {
+      const userMessage = createMessage(session.id, 'user', question, 'sent');
+      const assistantMessage = createMessage(
+        session.id,
+        'assistant',
+        curatedReplyContent(quickReply),
+        'done',
+      );
+      setDraft('');
+      updateSession((current) => ({
+        ...current,
+        messages: [...current.messages, userMessage, assistantMessage],
+        updatedAt: new Date().toISOString(),
+      }));
+      return;
+    }
     cancelRef.current?.();
     const userMessage = createMessage(session.id, 'user', question, 'sent');
     const assistantMessage = createMessage(session.id, 'assistant', '', 'generating');
@@ -241,6 +301,11 @@ export function TutorDialog() {
         当前学习：{isPreview ? '预置内容预览（辅导不可用）' : '当前课程知识点'}
         <span className="ml-2 text-xs text-blue-700">知识点：{knowledgePointLabel}</span>
       </div>
+      {quickReplies.length > 0 && !isPreview && (
+        <div className="border border-slate-200 bg-slate-50 px-4 py-3 text-xs leading-5 text-slate-700">
+          可直接选择受控预置课程辅导记录查看快速回答。它们来自当前 demo 学生的持久化记录，不是本次实时模型回答；其他问题仍会进入 RAG、Evidence 与 QualityCheck 链路。
+        </div>
+      )}
       <ConversationPane
         agent={scopedTutorAgent}
         session={session}

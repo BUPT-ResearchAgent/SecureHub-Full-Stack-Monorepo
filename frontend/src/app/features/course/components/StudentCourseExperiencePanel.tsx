@@ -8,13 +8,10 @@ import {
   ChevronRight,
   ClipboardList,
   ExternalLink,
-  FileText,
   GraduationCap,
-  Layers3,
   Map as MapIcon,
   MessageCircle,
   Network,
-  PlayCircle,
   RefreshCw,
   ShieldCheck,
 } from 'lucide-react';
@@ -265,6 +262,9 @@ function ResourcesExperience({ onOpenTab }: { onOpenTab: (tab: string) => void }
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   if (!experience) return null;
   const selected = experience.resources.find((resource) => resource.logical_key === selectedKey) ?? experience.resources[0] ?? null;
+  const coveredTypes = Array.from(
+    new Set(experience.resources.map((resource) => resourceTypeLabels[resource.resource_type])),
+  );
   return (
     <section className="border border-slate-200 bg-white p-4" aria-label="课程七类资源">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -274,19 +274,25 @@ function ResourcesExperience({ onOpenTab }: { onOpenTab: (tab: string) => void }
         </div>
         <ActionButton icon={<ClipboardList className="h-4 w-4" />} onClick={() => onOpenTab('exam')}>打开课程练习</ActionButton>
       </div>
-      <div className="mt-4 grid gap-2 md:grid-cols-2 xl:grid-cols-4">
-        {experience.resources.map((resource) => (
-          <button
-            key={resource.logical_key}
-            type="button"
-            onClick={() => setSelectedKey(resource.logical_key)}
-            className={`min-h-24 border p-3 text-left transition-colors ${selected?.logical_key === resource.logical_key ? 'border-brand-blue-500 bg-brand-blue-50/40' : 'border-slate-200 bg-white hover:bg-slate-50'}`}
+      <div className="mt-4 grid gap-3 border-y border-slate-100 py-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end">
+        <label htmlFor="course-resource-selector" className="grid gap-1.5 text-sm font-medium text-slate-700">
+          选择要查看的资源
+          <select
+            id="course-resource-selector"
+            value={selected?.logical_key ?? ''}
+            onChange={(event) => setSelectedKey(event.target.value)}
+            className="h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm font-normal text-slate-800 outline-none focus:border-brand-blue-500 focus:ring-2 focus:ring-brand-blue-100"
           >
-            <div className="flex items-start justify-between gap-2"><ResourceIcon type={resource.resource_type} /><SourceChip kind={resource.source_kind} /></div>
-            <p className="mt-3 text-sm font-medium text-slate-800">{resourceTypeLabels[resource.resource_type]}</p>
-            <p className="mt-0.5 line-clamp-2 text-xs leading-5 text-slate-500">{resource.title}</p>
-          </button>
-        ))}
+            {experience.resources.map((resource) => (
+              <option key={resource.logical_key} value={resource.logical_key}>
+                {resourceTypeLabels[resource.resource_type]} · {resource.title} · v{resource.version}
+              </option>
+            ))}
+          </select>
+        </label>
+        <p className="text-xs leading-5 text-slate-500">
+          {experience.resources.length} 条持久化记录 · 覆盖 {coveredTypes.join('、') || '待补齐'}
+        </p>
       </div>
       {selected ? <><ResourceDetail resource={selected} onOpenExercises={() => onOpenTab('exam')} /><StudentResourceFeedbackPanel resource={selected} /></> : <p className="mt-4 text-sm text-slate-500">当前课程尚未提供可消费的资源记录。</p>}
     </section>
@@ -436,17 +442,6 @@ function TaskStatus({ status }: { status: 'todo' | 'active' | 'done' | 'blocked'
   const label = { todo: '待开始', active: '进行中', done: '已完成', blocked: '暂不可用' }[status];
   const tone = { todo: 'bg-slate-100 text-slate-600', active: 'bg-brand-blue-50 text-brand-blue-700', done: 'bg-emerald-50 text-emerald-700', blocked: 'bg-amber-50 text-amber-800' }[status];
   return <span className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium ${tone}`}>{label}</span>;
-}
-
-function ResourceIcon({ type }: { type: StudentCourseExperienceResource['resource_type'] }) {
-  const props = { className: 'h-4 w-4 text-brand-blue-700' };
-  if (type === 'doc') return <FileText {...props} />;
-  if (type === 'ppt') return <Layers3 {...props} />;
-  if (type === 'mindmap') return <Network {...props} />;
-  if (type === 'quiz') return <ClipboardList {...props} />;
-  if (type === 'lab') return <ShieldCheck {...props} />;
-  if (type === 'readings') return <BookOpen {...props} />;
-  return <PlayCircle {...props} />;
 }
 
 function ActionButton({ icon, children, onClick, disabled = false }: { icon: ReactNode; children: ReactNode; onClick: () => void; disabled?: boolean }) {

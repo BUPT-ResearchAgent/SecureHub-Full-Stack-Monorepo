@@ -12,12 +12,18 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
-import { Activity, CheckCircle2, ListChecks, Route, Sparkles } from 'lucide-react';
+import { Activity, CheckCircle2, ClipboardPenLine, ListChecks, Route, Sparkles } from 'lucide-react';
 import { toast } from 'sonner';
 import { Card } from '@/app/components/PageShell';
 import { ErrorState } from '@/app/components/StateView';
 import { CapabilityRadarCard } from '@/app/features/profile/components/CapabilityRadarCard';
 import { useSelectedCourse } from '@/app/features/course/catalog/useSelectedCourse';
+import {
+  fetchStudentAssessment,
+  submitStudentAssessment,
+  type StudentAssessmentRead,
+} from '@/app/features/course/studentExperience';
+import { useStudentCourseExperience } from '@/app/features/course/studentExperienceContext';
 import { getMockQuizItemsForCourse } from '@/lib/mock/courses.mock';
 import { isMockMode } from '@/lib/mock';
 import { normalizePersonaDimension } from '@/lib/persona-dimension-map';
@@ -94,6 +100,7 @@ export function AssessmentPanel() {
   const { assessment, taskContext, resources, workflowRoots } = useCourseState();
   const dispatch = useCourseDispatch();
   const { course } = useSelectedCourse();
+  const { experience, reload: reloadStudentExperience } = useStudentCourseExperience();
   const presenterMode = isMockMode();
   const isPreview = course?.contentStatus === 'preview';
   const isWebsec = course?.code === 'WEBSEC-101';
@@ -109,6 +116,14 @@ export function AssessmentPanel() {
   const [curatedQuestions, setCuratedQuestions] = useState<AssessmentQuestion[]>([]);
   const [curatedQuizLoading, setCuratedQuizLoading] = useState(false);
   const [curatedQuizError, setCuratedQuizError] = useState('');
+  const demoDraft = !presenterMode && !isPreview && isWebsec
+    ? experience?.assessment_demo_draft ?? null
+    : null;
+  const [demoAssignment, setDemoAssignment] = useState<StudentAssessmentRead | null>(null);
+  const [demoAssignmentLoading, setDemoAssignmentLoading] = useState(false);
+  const [demoAssignmentError, setDemoAssignmentError] = useState('');
+  const [demoAssignmentSubmitted, setDemoAssignmentSubmitted] = useState(false);
+  const [demoDraftNotice, setDemoDraftNotice] = useState('');
   useEffect(() => {
     if (presenterMode || !isWebsec || !course) {
       setCuratedQuestions([]);
@@ -133,6 +148,67 @@ export function AssessmentPanel() {
       disposed = true;
     };
   }, [course, isWebsec, presenterMode]);
+  useEffect(() => {
+    if (!demoDraft) {
+      setDemoAssignment(null);
+      setDemoAssignmentLoading(false);
+      setDemoAssignmentError('');
+      setDemoAssignmentSubmitted(false);
+      setDemoDraftNotice('');
+      return;
+    }
+    let disposed = false;
+    setDemoAssignment(null);
+    setDemoAssignmentLoading(true);
+    setDemoAssignmentError('');
+    setDemoAssignmentSubmitted(false);
+    setDemoDraftNotice('');
+    void fetchStudentAssessment(demoDraft.assignment_id)
+      .then((assignment) => {
+        if (!disposed) setDemoAssignment(assignment);
+      })
+      .catch((cause: unknown) => {
+        if (!disposed) {
+          setDemoAssignmentError(
+            cause instanceof Error ? cause.message : '无法读取受控演示作答关联的已发布作业。',
+          );
+        }
+      })
+      .finally(() => {
+        if (!disposed) setDemoAssignmentLoading(false);
+      });
+    return () => {
+      disposed = true;
+    };
+  }, [demoDraft?.assignment_id]);
+  const demoAssignmentQuestions = useMemo<AssessmentQuestion[]>(
+    () => (demoAssignment?.items ?? []).map((item) => ({
+      id: item.quiz_item_id,
+      type: item.question_type === 'multi_choice'
+        ? 'multiple'
+        : item.question_type === 'short_answer' || item.question_type === 'fill' || item.question_type === 'code'
+          ? 'short'
+          : 'single',
+      prompt: item.question,
+      options: item.options,
+    })),
+    [demoAssignment?.items],
+  );
+  const usableDemoDraft = useMemo(() => {
+    if (
+      !demoDraft
+      || !demoAssignment
+      || demoAssignment.submission_status !== 'open'
+      || !demoAssignmentQuestions.length
+    ) {
+      return null;
+    }
+    const questionIds = new Set(demoAssignmentQuestions.map((question) => question.id));
+    return Object.keys(demoDraft.answers).every((id) => questionIds.has(id))
+      && questionIds.size === Object.keys(demoDraft.answers).length
+      ? demoDraft
+      : null;
+  }, [demoAssignment, demoAssignmentQuestions, demoDraft]);
   const questions = useMemo<AssessmentQuestion[]>(
     () => {
       if ((presenterMode || isPreview) && course) {
@@ -144,10 +220,12 @@ export function AssessmentPanel() {
           options: item.options,
         }));
       }
+      if (usableDemoDraft) return demoAssignmentQuestions;
       return isWebsec ? curatedQuestions : realQuestions;
     },
-    [course?.id, course?.previewContentKey, curatedQuestions, isPreview, isWebsec, presenterMode, realQuestions],
+    [course?.id, course?.previewContentKey, curatedQuestions, demoAssignmentQuestions, isPreview, isWebsec, presenterMode, realQuestions, usableDemoDraft],
   );
+  const assessmentArtifactId = usableDemoDraft?.quiz_resource_id ?? quizResource?.id ?? null;
   const [answers, setAnswers] = useState<Record<string, AssessmentAnswer>>({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -172,6 +250,8 @@ export function AssessmentPanel() {
     setAssessmentAudit(null);
     setSubmittedAnswers([]);
     setCourseNextRecommendation('');
+    setDemoAssignmentSubmitted(false);
+    setDemoDraftNotice('');
   }, [course?.id]);
 
   // The durable terminal output is the only source used to restore the full
@@ -229,10 +309,28 @@ export function AssessmentPanel() {
     setEvents((current) => [...current, event]);
   };
 
+  const fillDemoDraft = () => {
+    if (!usableDemoDraft) return;
+    setAnswers(
+      Object.fromEntries(
+        Object.entries(usableDemoDraft.answers).map(([id, answer]) => [
+          id,
+          Array.isArray(answer) ? [...answer] : answer,
+        ]),
+      ),
+    );
+    setError('');
+    setDemoDraftNotice('已填入可编辑的受控演示作答；尚未提交、评分或更新能力画像。');
+  };
+
   const submit = async () => {
     if (loading) return;
     if (isPreview) {
       setError('这是只读预置题目预览；课程内容尚未就绪，不能提交评估或更新学习进度。');
+      return;
+    }
+    if (!assessmentArtifactId) {
+      setError('当前账户没有可提交的个人测验工件。请先完成已发布作业，或在资源工作台获取受权的测验资源。');
       return;
     }
     setLoading(true);
@@ -248,8 +346,29 @@ export function AssessmentPanel() {
         prompt: question.prompt,
         answer: answers[question.id]!,
         kpId: question.kpId,
-      }));
+    }));
     setSubmittedAnswers(submitted);
+
+    if (usableDemoDraft && !demoAssignmentSubmitted) {
+      try {
+        const assignmentSubmission = await submitStudentAssessment(
+          usableDemoDraft.assignment_id,
+          Object.fromEntries(
+            submitted.map((question) => [question.id, question.answer]),
+          ),
+        );
+        setDemoAssignmentSubmitted(true);
+        setDemoDraftNotice(
+          assignmentSubmission.status === 'late'
+            ? '受控演示作答已按迟交状态写入真实作业；现在继续执行评估工作流。'
+            : '受控演示作答已写入真实作业；现在继续执行评估工作流。',
+        );
+      } catch (cause) {
+        setLoading(false);
+        setError(cause instanceof Error ? `作业提交失败：${cause.message}` : '作业提交失败，未启动能力画像更新。');
+        return;
+      }
+    }
 
     startCourseTask({
       intent: 'run_assessment',
@@ -264,7 +383,7 @@ export function AssessmentPanel() {
             options: questions.find((candidate) => candidate.id === question.id)?.options ?? [],
             question_type: questions.find((candidate) => candidate.id === question.id)?.type ?? 'single',
           })),
-        quizArtifactId: isWebsec ? `websec-quiz-bank:${course?.id ?? taskContext.courseId}` : quizArtifact.resource.id,
+        quizArtifactId: assessmentArtifactId,
       },
     }, createCourseTaskLifecycle('run_assessment', dispatch, {
       onProgress(progress) {
@@ -287,6 +406,7 @@ export function AssessmentPanel() {
           if (audited.length > 0) report.updatedCapabilities = audited;
           setAssessmentAudit(audit);
           dispatch({ type: 'setAssessment', assessment: report });
+          reloadStudentExperience();
           if (!presenterMode) {
             void recordCourseProgress(taskContext.courseId, {
               knowledge_point_id: taskContext.kpId,
@@ -335,7 +455,11 @@ export function AssessmentPanel() {
 
   const hasSubmitted = Boolean(assessment);
   const score = Math.round((assessment?.score ?? 0) * 100);
-  const canSubmit = !isPreview && !loading && questions.length > 0 && questions.every((question) => hasAnswer(answers[question.id]));
+  const canSubmit = !isPreview
+    && !loading
+    && Boolean(assessmentArtifactId)
+    && questions.length > 0
+    && questions.every((question) => hasAnswer(answers[question.id]));
 
   return (
     <>
@@ -352,7 +476,9 @@ export function AssessmentPanel() {
               <div>
                 {curatedQuizLoading && '正在读取通过质量校验的 WEBSEC-101 题库…'}
                 {curatedQuizError && `题库读取失败：${curatedQuizError}`}
-                {!curatedQuizLoading && !curatedQuizError && `当前评估使用 ${questions.length} 道已精选、已通过质量校验的持久化题目。`}
+                {!curatedQuizLoading && !curatedQuizError && (usableDemoDraft
+                  ? `当前评估读取“${usableDemoDraft.assignment_title}”的 ${questions.length} 道已发布冻结题目，并引用当前学生的持久化测验工件。`
+                  : `当前评估使用 ${questions.length} 道已精选、已通过质量校验的持久化题目。`)}
               </div>
             ) : !quizResource && (
               <div className="flex flex-wrap items-center justify-between gap-2">
@@ -370,6 +496,41 @@ export function AssessmentPanel() {
             {!isWebsec && quizResource && quizArtifact.error && `测验资源读取失败：${quizArtifact.error}`}
             {!isWebsec && quizResource && !quizArtifact.isLoading && !quizArtifact.error && !realQuestions.length && '测验资源内容无法解析，请在资源工作台重新生成练习题。'}
             </div>
+          )}
+          {demoDraft && (
+            <section className="rounded-lg border border-brand-blue-200 bg-brand-blue-50/40 p-3" aria-label="受控演示作答">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <p className="flex items-center gap-1.5 text-sm font-semibold text-brand-blue-950">
+                    <ClipboardPenLine className="h-4 w-4 text-brand-blue-700" />
+                    受控演示作答
+                  </p>
+                  <p className="mt-1 text-xs leading-5 text-brand-blue-900">
+                    仅会把当前 demo 学生的已持久化作答记录写入可编辑草稿；不会预填分数、能力画像或成功状态。
+                  </p>
+                </div>
+                {usableDemoDraft && (
+                  <button
+                    type="button"
+                    onClick={fillDemoDraft}
+                    disabled={loading}
+                    className="inline-flex items-center gap-1.5 rounded-md border border-brand-blue-300 bg-white px-3 py-2 text-sm font-medium text-brand-blue-700 hover:bg-brand-blue-50 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    <ClipboardPenLine className="h-4 w-4" />
+                    填充受控演示作答
+                  </button>
+                )}
+              </div>
+              {demoAssignmentLoading && <p className="mt-3 text-xs text-brand-blue-800">正在核对当前学生的已发布作业与冻结题目…</p>}
+              {demoAssignmentError && <p className="mt-3 border border-rose-200 bg-rose-50 px-2.5 py-2 text-xs leading-5 text-rose-800">{demoAssignmentError}</p>}
+              {!demoAssignmentLoading && !demoAssignmentError && !usableDemoDraft && (
+                <p className="mt-3 border border-amber-200 bg-amber-50 px-2.5 py-2 text-xs leading-5 text-amber-900">
+                  当前关联作业已不再可提交或题目版本不匹配，因此不会填入默认答案。请刷新课程记录或使用新的已发布作业。
+                </p>
+              )}
+              {demoDraftNotice && <p className="mt-3 text-xs leading-5 text-brand-blue-900">{demoDraftNotice}</p>}
+              <p className="mt-2 text-[11px] leading-5 text-slate-600">{demoDraft.source_boundary}</p>
+            </section>
           )}
           {questions.map((question, index) => (
             <div key={question.id} className="rounded-lg border border-slate-100 p-4">

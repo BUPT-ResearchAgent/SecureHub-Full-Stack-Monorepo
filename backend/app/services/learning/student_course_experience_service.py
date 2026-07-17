@@ -50,6 +50,7 @@ from app.schemas.student_course_experience import (
     StudentCourseAssessmentDTO,
     StudentCourseAssignmentDTO,
     StudentCourseCapabilityDTO,
+    StudentCourseDemoAssessmentDraftDTO,
     StudentCourseEvidenceDTO,
     StudentCourseExperienceDTO,
     StudentCourseKnowledgeMetricDTO,
@@ -146,6 +147,11 @@ class StudentCourseExperienceService:
         )
         updates = await self._updates(actor.id, course_id)
         tutor_exchanges = await self._tutor_exchanges(actor.id)
+        assessment_demo_draft = await self._assessment_demo_draft(
+            user_id=actor.id,
+            course_id=course_id,
+            assignments=assignments,
+        )
         assessment = await self._assessment(actor.id, course_id)
 
         completed_count = sum(task.status == "done" for task in tasks)
@@ -193,6 +199,7 @@ class StudentCourseExperienceService:
             assignments=assignments,
             updates=updates,
             tutor_exchanges=tutor_exchanges,
+            assessment_demo_draft=assessment_demo_draft,
             assessment=assessment,
         )
 
@@ -453,9 +460,122 @@ class StudentCourseExperienceService:
                     ),
                     evidence=[] if evidence_status == "insufficient" else evidence_by_index.get(index, []),
                     recorded_at=event.occurred_at,
+                    quick_reply_available=(
+                        result.get("source_kind") == "curated-demo"
+                        and result.get("quick_reply_available") is True
+                    ),
                 )
             )
         return exchanges
+
+    async def _assessment_demo_draft(
+        self,
+        *,
+        user_id: UUID,
+        course_id: UUID,
+        assignments: list[StudentCourseAssignmentDTO],
+    ) -> StudentCourseDemoAssessmentDraftDTO | None:
+        """Read one explicitly seeded, current-student assessment draft.
+
+        The event is not a generic answer-key channel: it is accepted only
+        for the controlled showcase profile, an open assignment already in
+        this student's projection, and an owned active quiz resource that the
+        normal assessment workflow will validate again before it can run.
+        """
+
+        event = await self.session.scalar(
+            select(LearningEvent)
+            .where(
+                LearningEvent.user_id == user_id,
+                LearningEvent.event_type == "assessment_demo_draft",
+            )
+            .order_by(LearningEvent.occurred_at.desc())
+            .limit(1)
+        )
+        if event is None:
+            return None
+        result = dict(event.result or {})
+        if (
+            result.get("seed_profile") != "showcase_course"
+            or result.get("source_kind") != "curated-demo"
+        ):
+            return None
+
+        assignment_ids = {
+            assignment.id
+            for assignment in assignments
+            if assignment.assignment_status == "active"
+            and assignment.learner_status == "not_started"
+        }
+        parsed_assignment = _uuid_values([result.get("assignment_id")])
+        if len(parsed_assignment) != 1 or parsed_assignment[0] not in assignment_ids:
+            return None
+        assignment_id = parsed_assignment[0]
+        assignment = await self.session.get(AssessmentAssignment, assignment_id)
+        if assignment is None:
+            return None
+        items = list(
+            (
+                await self.session.execute(
+                    select(AssessmentItem)
+                    .where(AssessmentItem.assessment_version_id == assignment.assessment_version_id)
+                    .order_by(AssessmentItem.position)
+                )
+            ).scalars()
+        )
+        expected_ids = {str(item.quiz_item_id) for item in items}
+        raw_answers = result.get("answers")
+        if not expected_ids or not isinstance(raw_answers, dict):
+            return None
+        answers: dict[str, str | list[str]] = {}
+        for raw_key, raw_value in raw_answers.items():
+            question_ids = _uuid_values([raw_key])
+            if len(question_ids) != 1:
+                return None
+            key = str(question_ids[0])
+            if key not in expected_ids:
+                return None
+            if isinstance(raw_value, str) and raw_value.strip():
+                answers[key] = raw_value.strip()
+                continue
+            if (
+                isinstance(raw_value, list)
+                and raw_value
+                and all(isinstance(value, str) and value.strip() for value in raw_value)
+            ):
+                answers[key] = [value.strip() for value in raw_value]
+                continue
+            return None
+        if set(answers) != expected_ids:
+            return None
+
+        resource_ids = _uuid_values([result.get("quiz_resource_id")])
+        if len(resource_ids) != 1:
+            return None
+        resource = await self.session.get(GeneratedResource, resource_ids[0])
+        if (
+            resource is None
+            or resource.user_id != user_id
+            or resource.course_id != course_id
+            or resource.resource_type != "quiz"
+            or resource.status != "active"
+            or not resource.evidence_chunk_ids
+        ):
+            return None
+        assignment_dto = next(
+            item for item in assignments if item.id == assignment_id
+        )
+        return StudentCourseDemoAssessmentDraftDTO(
+            assignment_id=assignment_id,
+            assignment_title=assignment_dto.title,
+            quiz_resource_id=resource.id,
+            answers=answers,
+            source_kind="curated-demo",
+            source_boundary=str(
+                result.get("source_boundary")
+                or "受控预置演示作答仅填入可编辑草稿；分数、能力和路径只会在真实提交与工作流完成后更新。"
+            ),
+        )
 
     async def _tutor_evidence(
         self, results: list[dict[str, Any]]

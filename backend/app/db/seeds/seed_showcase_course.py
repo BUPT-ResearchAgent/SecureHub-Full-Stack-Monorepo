@@ -125,7 +125,7 @@ from app.services.learning.quiz_quality_service import QuizQualityService
 
 
 PROFILE = "showcase_course"
-MANIFEST_VERSION = "websec-101-showcase-v5"
+MANIFEST_VERSION = "websec-101-showcase-v6"
 MANIFEST_ID = stable_id("showcase-course:manifest:websec-101:v1")
 SEED_AT = datetime(2026, 7, 17, 9, 0, tzinfo=UTC)
 BASELINE_START = datetime(2026, 4, 8, 9, 0, tzinfo=UTC)
@@ -227,6 +227,8 @@ SHOWCASE_DEMO_PROFILE_KEYS = (
     "recommended_next_step",
     "source_boundary",
 )
+SHOWCASE_DEMO_ASSESSMENT_RESOURCE_KEY = "demo-student-assessment-quiz"
+SHOWCASE_DEMO_ASSESSMENT_EVENT_KEY = "demo-student-assessment-draft"
 
 
 # Fifteen additional quality-gated items bring the profile to 36 questions
@@ -800,6 +802,13 @@ def _resource_definitions() -> tuple[dict[str, Any], ...]:
 # continue through tutor_routing_v3 and its RAG/Evidence safety boundary.
 SHOWCASE_TUTOR_EXCHANGES: tuple[dict[str, str], ...] = (
     {
+        "question": "联合查询注入为什么要先判断列数？",
+        "concept": "在经过授权的课程复盘里，理解查询结果列数需要兼容，能帮助解释为什么不应把外部输入拼接进查询结构。防御重点不是试探外部系统，而是让查询结构由服务端固定，外部值只走参数绑定。",
+        "defensive_example": "课程作业中的报表接口把允许的字段和排序方式映射为服务端枚举；数据过滤条件使用参数绑定，并为异常输入记录最小审计事件与回归测试结果。",
+        "next_step": "回看“输入验证与参数化查询防御学习单”的查询结构边界，再完成已发布练习中的防御性说明题。",
+        "evidence_status": "available",
+    },
+    {
         "question": "为什么参数化查询不能替代排序字段的白名单？",
         "concept": "参数化查询适合把不可信数据值与查询语法分离；排序字段属于结构化选项，需要由服务端映射到有限、经过审核的字段集合。两种控制分别覆盖不同边界。",
         "defensive_example": "课程列表接口把筛选值作为参数绑定，把“按截止时间”映射为固定列名；未知排序选项返回可理解的校验错误并记录最小审计信息。",
@@ -1274,7 +1283,7 @@ async def _seed_learning_data(
                 occurred_at=occurred + timedelta(minutes=index),
             )
             counts["learning_events"] += int(created)
-        tutor_slugs = ("sql-injection", "xss-reflected", "file-upload", "ssrf", "secure-coding")
+        tutor_slugs = ("sql-injection", "sql-injection", "xss-reflected", "file-upload", "ssrf", "secure-coding")
         for tutor_index, (exchange, slug) in enumerate(zip(SHOWCASE_TUTOR_EXCHANGES, tutor_slugs, strict=True), start=len(event_specs)):
             event_id = _id("learning-event", f"{student_id}:{tutor_index}")
             evidence_available = exchange["evidence_status"] == "available"
@@ -1285,6 +1294,7 @@ async def _seed_learning_data(
                     "seed_profile": PROFILE,
                     "story": story,
                     "source_kind": "curated-demo",
+                    "quick_reply_available": student_id == DEMO_USER_ID,
                     "source_boundary": "可恢复的受控课程辅导记录，不是实时模型回答；新提问仍需走 RAG、Evidence 和安全边界。",
                     "evidence_snapshot_id": str(_id("evidence", "student-tutoring")) if evidence_available else None,
                     **exchange,
@@ -1748,26 +1758,49 @@ async def _seed_assessments(
         if assignment_index > 1:
             continue
         student_ids = sorted(grouped_students[target_id], key=str)
-        # The first sixteen roster rows provide both submitted and not-started
-        # states; at least 26 of the two class assignments are real submissions.
+        # Keep the default demo learner's assigned work open for the explicit
+        # controlled draft. The same number of non-demo submissions remains,
+        # so the class snapshot stays representative rather than being
+        # replaced by a front-end-only demo state.
+        submitted_student_ids = set(
+            student_id
+            for student_id in student_ids
+            if student_id != DEMO_USER_ID
+        )
+        submitted_student_ids = set(sorted(submitted_student_ids, key=str)[:13])
+        # Each class keeps both submitted and not-started states; at least 26
+        # of the two class assignments remain real submissions.
         for student_index, student_id in enumerate(student_ids):
             submission_id = _id("assessment-submission", f"{key}:{student_id}")
-            submitted = student_index < 13
+            submitted = student_id in submitted_student_ids
             status = "submitted" if submitted else "open"
             answer_payload: dict[str, Any] = {}
             for position, quiz_id in enumerate(selected_ids, start=1):
                 item, _ = by_id[quiz_id]
                 correct = (student_index + position + assignment_index) % 5 != 0
                 answer_payload[str(quiz_id)] = item.answer if correct else "需要复盘的回答"
+            if student_id == DEMO_USER_ID:
+                # The controlled answer set lives in its explicit draft event
+                # until the student clicks submit. Do not pre-populate the
+                # real open submission itself.
+                answer_payload = {}
             _, created = await _ensure(
                 session, AssessmentSubmission, submission_id, assignment_id=assignment_id, student_id=student_id,
                 answers=answer_payload, submitted_at=SEED_AT + timedelta(days=assignment_index * 3, minutes=student_index) if submitted else None,
                 status=status,
             )
             counts["assessment_submissions"] += int(created)
-            if not submitted:
-                continue
             grade_id = _id("grade", f"{key}:{student_id}")
+            if not submitted:
+                # A previous profile version could have created a grade before
+                # this learner became the reusable controlled draft account.
+                # Remove only that stable seed grade so open submission state
+                # and published-grade visibility cannot contradict each other.
+                existing_grade = await session.get(AssessmentGradeDecision, grade_id)
+                if existing_grade is not None:
+                    await session.delete(existing_grade)
+                    await session.flush()
+                continue
             score = round(54 + ((student_index * 7 + assignment_index * 3) % 39) + student_index / 100, 2)
             grade_state = "pending"
             final_score: float | None = None
@@ -1809,6 +1842,126 @@ async def _seed_assessments(
                 override_reason=override_reason, published_at=published_at, withdrawn_at=withdrawn_at,
             )
             counts["grade_decisions"] += int(created)
+
+
+async def _seed_demo_assessment_draft(session: AsyncSession, counts: dict[str, int]) -> None:
+    """Persist one editable demo draft for the existing demo learner only.
+
+    The draft intentionally references the same published, open assignment
+    and current-student active quiz artifact that the normal student APIs and
+    assessment workflow validate. It is not an answer-key fallback for other
+    students and it contains no precomputed score or capability mutation.
+    """
+
+    assignment_id = _id("assessment-assignment", "input-review")
+    assignment = await session.get(AssessmentAssignment, assignment_id)
+    if assignment is None or assignment.status != "active":
+        raise RuntimeError("showcase demo assessment assignment is not active")
+    submission = await session.get(
+        AssessmentSubmission,
+        _id("assessment-submission", f"input-review:{DEMO_USER_ID}"),
+    )
+    if submission is None or submission.status != "open" or submission.answers:
+        raise RuntimeError("showcase demo assessment draft requires an empty open submission")
+    items = list(
+        (
+            await session.execute(
+                select(AssessmentItem, QuizItem)
+                .join(QuizItem, QuizItem.id == AssessmentItem.quiz_item_id)
+                .where(AssessmentItem.assessment_version_id == assignment.assessment_version_id)
+                .order_by(AssessmentItem.position)
+            )
+        ).all()
+    )
+    if len(items) != 8:
+        raise RuntimeError("showcase demo assessment draft requires eight frozen questions")
+    answers: dict[str, str | list[str]] = {}
+    for assessment_item, quiz_item in items:
+        raw_answer = str(quiz_item.answer or "").strip()
+        if not raw_answer:
+            raise RuntimeError("showcase demo assessment draft encountered a question without an answer")
+        answers[str(assessment_item.quiz_item_id)] = (
+            [part.strip() for part in raw_answer.split(";") if part.strip()]
+            if quiz_item.type == "multi_choice"
+            else raw_answer
+        )
+    if len(answers) != len(items):
+        raise RuntimeError("showcase demo assessment draft has duplicate question references")
+
+    resource_id = _id("resource", SHOWCASE_DEMO_ASSESSMENT_RESOURCE_KEY)
+    resource_content = {
+        "source_type": "curated-demo",
+        "artifact_kind": "受控演示测验工件",
+        "question_types": sorted({quiz_item.type for _, quiz_item in items}),
+        "difficulty_layers": ["基础边界识别", "防御选择说明", "验证与复盘"],
+        "knowledge_points": ["HTTP 与会话", "输入验证", "浏览器输出", "上传与出站控制"],
+        "explanation_boundary": "该工件仅为受控课程演示提供可验证的评估来源；分数、能力变化和路径更新不在预置内容中计算。",
+        "source_boundary": "受控预置演示测验工件，已持久化到当前 demo 学生的课程资源记录；不是实时模型生成。",
+    }
+    _, created = await _ensure(
+        session,
+        GeneratedResource,
+        resource_id,
+        user_id=DEMO_USER_ID,
+        course_id=COURSE_WEBSEC_ID,
+        kp_id=node_id("sql-injection"),
+        agent_run_id=None,
+        workflow_run_id=None,
+        step_attempt_id=None,
+        parent_resource_id=None,
+        lineage_root_id=resource_id,
+        version=1,
+        resource_type="quiz",
+        title="WEBSEC-101 受控演示阶段评估工件",
+        content=resource_content,
+        object_key=None,
+        evidence_chunk_ids=_evidence_ids(session, chunk_id("sql-injection", 1)),
+        quality_score=0.9,
+        status="active",
+        metadata_={
+            "seed_profile": PROFILE,
+            "source_kind": "curated-demo",
+            "logical_key": SHOWCASE_DEMO_ASSESSMENT_RESOURCE_KEY,
+            "quality_state": "controlled_demo_ready",
+            "not_live_generated": True,
+        },
+    )
+    counts["resources"] += int(created)
+    _, created = await _ensure(
+        session,
+        ResourceVersion,
+        _id("resource-version", SHOWCASE_DEMO_ASSESSMENT_RESOURCE_KEY),
+        resource_id=resource_id,
+        version=1,
+        content=resource_content,
+        object_key=None,
+        change_summary="为受控 demo 学生提供可编辑、需显式提交的阶段评估草稿来源。",
+        metadata_={
+            "seed_profile": PROFILE,
+            "source_kind": "curated-demo",
+            "logical_key": SHOWCASE_DEMO_ASSESSMENT_RESOURCE_KEY,
+        },
+    )
+    counts["resource_versions"] += int(created)
+    _, created = await _ensure(
+        session,
+        LearningEvent,
+        _id("learning-event", SHOWCASE_DEMO_ASSESSMENT_EVENT_KEY),
+        user_id=DEMO_USER_ID,
+        event_type="assessment_demo_draft",
+        kp_id=node_id("sql-injection"),
+        resource_id=resource_id,
+        result={
+            "seed_profile": PROFILE,
+            "source_kind": "curated-demo",
+            "assignment_id": str(assignment_id),
+            "quiz_resource_id": str(resource_id),
+            "answers": answers,
+            "source_boundary": "受控预置演示作答仅会填入当前页面的可编辑草稿；须由学生显式提交，分数、能力和路径不会被预先写入。",
+        },
+        occurred_at=SEED_AT + timedelta(hours=2),
+    )
+    counts["demo_assessment_drafts"] += int(created)
 
 
 async def _seed_collaboration(session: AsyncSession, pairs: list[tuple[UUID, UUID]], counts: dict[str, int]) -> None:
@@ -1894,6 +2047,11 @@ async def _write_manifest(session: AsyncSession, counts: dict[str, int]) -> None
                 "display_name": SHOWCASE_DEMO_STUDENT_DISPLAY_NAME,
                 "story": SHOWCASE_DEMO_STUDENT_STORY,
                 "boundary": "复用现有本地 demo 登录；不是新增账户、真实在校学生或实时生成画像。",
+                "assessment_demo_draft": {
+                    "assignment": "WEBSEC-101-INPUT-REVIEW",
+                    "resource_key": SHOWCASE_DEMO_ASSESSMENT_RESOURCE_KEY,
+                    "boundary": "仅填入可编辑草稿，需学生显式提交；不预置分数、能力变化或成功工作流。",
+                },
             },
         },
         "resource_types": sorted({item["type"] for item in _resource_definitions()}),
@@ -1929,6 +2087,7 @@ async def _seed(session: AsyncSession) -> dict[str, Any]:
     await _seed_snapshots_and_recommendations(session, pairs, counts)
     await _seed_assets_and_syllabus(session, pairs, counts)
     await _seed_assessments(session, quizzes, pairs, counts)
+    await _seed_demo_assessment_draft(session, counts)
     await _seed_collaboration(session, pairs, counts)
     await _write_manifest(session, counts)
     verification = await _verify(session)
@@ -1961,7 +2120,17 @@ async def _verify(session: AsyncSession) -> dict[str, Any]:
         .join(WorkflowEvidenceSnapshot, WorkflowEvidenceSnapshot.agent_run_id == AgentRun.id)
         .where(AgentRun.workflow_name == "websec_showcase_seed", AgentRun.status == "succeeded", WorkflowEvidenceSnapshot.content_digest != "")
     )).all()
-    resource_rows = list((await session.execute(select(GeneratedResource).where(GeneratedResource.metadata_["seed_profile"].as_string() == PROFILE))).scalars()) if False else list((await session.execute(select(GeneratedResource).where(GeneratedResource.id.in_([_id("resource", str(item["key"])) for item in _resource_definitions()])))).scalars())
+    resource_ids = [
+        *[_id("resource", str(item["key"])) for item in _resource_definitions()],
+        _id("resource", SHOWCASE_DEMO_ASSESSMENT_RESOURCE_KEY),
+    ]
+    resource_rows = list(
+        (
+            await session.execute(
+                select(GeneratedResource).where(GeneratedResource.id.in_(resource_ids))
+            )
+        ).scalars()
+    )
     path_version_rows = list(
         (
             await session.execute(
@@ -1996,6 +2165,14 @@ async def _verify(session: AsyncSession) -> dict[str, Any]:
         CourseResourceRecommendation,
         _id("course-resource-recommendation", "demo-student:input-validation-baseline"),
     )
+    demo_assessment_submission = await session.get(
+        AssessmentSubmission,
+        _id("assessment-submission", f"input-review:{DEMO_USER_ID}"),
+    )
+    demo_assessment_draft_event = await session.get(
+        LearningEvent,
+        _id("learning-event", SHOWCASE_DEMO_ASSESSMENT_EVENT_KEY),
+    )
     resource_types = {row.resource_type for row in resource_rows}
     lineage_rows = [row for row in resource_rows if row.parent_resource_id and row.lineage_root_id and row.version > 1]
     resource_by_id = {row.id: row for row in resource_rows}
@@ -2005,6 +2182,9 @@ async def _verify(session: AsyncSession) -> dict[str, Any]:
     lab_resource = resource_by_id.get(_id("resource", "upload-lab"))
     reading_resource = resource_by_id.get(_id("resource", "ssrf-reading"))
     video_resource = resource_by_id.get(_id("resource", "websec-video-script"))
+    demo_assessment_resource = resource_by_id.get(
+        _id("resource", SHOWCASE_DEMO_ASSESSMENT_RESOURCE_KEY)
+    )
     tutor_event_count = await session.scalar(
         select(func.count(LearningEvent.id)).where(
             LearningEvent.user_id.in_(showcase_learner_ids), LearningEvent.event_type == "tutor_curated_exchange"
@@ -2057,6 +2237,26 @@ async def _verify(session: AsyncSession) -> dict[str, Any]:
         or demo_recommendation.status != "scheduled"
     ):
         errors.append("默认 demo 学生缺少可追溯的课程资源推荐")
+    if (
+        demo_assessment_submission is None
+        or demo_assessment_submission.status != "open"
+        or bool(demo_assessment_submission.answers)
+        or demo_assessment_resource is None
+        or demo_assessment_resource.user_id != DEMO_USER_ID
+        or demo_assessment_resource.status != "active"
+        or not demo_assessment_resource.evidence_chunk_ids
+    ):
+        errors.append("默认 demo 学生缺少可提交的持久化评估工件")
+    draft_result = dict(demo_assessment_draft_event.result or {}) if demo_assessment_draft_event else {}
+    if (
+        demo_assessment_draft_event is None
+        or demo_assessment_draft_event.user_id != DEMO_USER_ID
+        or draft_result.get("source_kind") != "curated-demo"
+        or draft_result.get("assignment_id") != str(_id("assessment-assignment", "input-review"))
+        or draft_result.get("quiz_resource_id") != str(_id("resource", SHOWCASE_DEMO_ASSESSMENT_RESOURCE_KEY))
+        or len(draft_result.get("answers") or {}) != 8
+    ):
+        errors.append("默认 demo 学生缺少受控演示作答草稿")
     if resource_types != {"doc", "ppt", "mindmap", "quiz", "lab", "readings", "video"}: errors.append("七类资源未齐全")
     if len(lineage_rows) < 3: errors.append("资源谱系版本不足 3 条")
     if doc_resource is None or not 900 <= len(str(doc_resource.content.get("body") or "")) <= 1600: errors.append("课程讲解文档未满足 900–1600 字教学质量要求")
@@ -2094,11 +2294,13 @@ async def _verify(session: AsyncSession) -> dict[str, Any]:
             errors.append(f"{label}缺少可恢复的课程辅导记录")
         if experience.assessment.scored_attempt_count <= 0:
             errors.append(f"{label}缺少可评分的课程作答")
+        if learner_id == DEMO_USER_ID and experience.assessment_demo_draft is None:
+            errors.append("默认 demo 学生体验未投影受控演示作答草稿")
         if experience.data_status != "ready":
             errors.append(f"{label}学生体验仍为 {experience.data_status}：{', '.join(experience.missing_dependencies)}")
     return {
         "profile": PROFILE, "manifest_version": MANIFEST_VERSION, "valid": not errors, "errors": errors,
-        "counts": {"students": len(user_rows), "demo_course_learners": int(demo_user is not None), "scenario_learners": len(showcase_learner_ids), "classes": len(classes), "enrollments": len(enrollment_rows), "groups": 4, "publishable_questions": len(publishable.items), "scored_students": len(scored_students), "agent_evidence_pairs": len(pair_rows), "resources": len(resource_rows), "lineage_versions": len(lineage_rows), "path_versions": len(path_version_rows), "path_candidates": len(path_candidate_rows), "resource_recommendations": len(course_resource_recommendation_rows), "assignments": len(assignment_rows), "submitted_or_late": len([row for row in submission_rows if row.status in {"submitted", "late"}]), "snapshots": len(snapshot_rows), "recommendations": len(recommendation_rows), "syllabus_versions": len(syllabus_rows), "notices": len(notice_rows), "course_updates": len(update_rows), "assets": len(asset_rows), "lecture_chunks": len(lecture_chunks)},
+        "counts": {"students": len(user_rows), "demo_course_learners": int(demo_user is not None), "scenario_learners": len(showcase_learner_ids), "classes": len(classes), "enrollments": len(enrollment_rows), "groups": 4, "publishable_questions": len(publishable.items), "scored_students": len(scored_students), "agent_evidence_pairs": len(pair_rows), "resources": len(resource_rows), "lineage_versions": len(lineage_rows), "path_versions": len(path_version_rows), "path_candidates": len(path_candidate_rows), "resource_recommendations": len(course_resource_recommendation_rows), "assignments": len(assignment_rows), "submitted_or_late": len([row for row in submission_rows if row.status in {"submitted", "late"}]), "demo_assessment_drafts": int(demo_assessment_draft_event is not None), "snapshots": len(snapshot_rows), "recommendations": len(recommendation_rows), "syllabus_versions": len(syllabus_rows), "notices": len(notice_rows), "course_updates": len(update_rows), "assets": len(asset_rows), "lecture_chunks": len(lecture_chunks)},
     }
 
 
@@ -2121,8 +2323,14 @@ async def _reset(session: AsyncSession) -> dict[str, int]:
     assignment_ids = [_id("assessment-assignment", key) for key in assessment_keys]
     submission_ids = [_id("assessment-submission", f"{key}:{student_id}") for key in assessment_keys[:2] for student_id in showcase_learner_ids]
     grade_ids = [_id("grade", f"{key}:{student_id}") for key in assessment_keys[:2] for student_id in showcase_learner_ids]
-    resource_ids = [_id("resource", str(item["key"])) for item in _resource_definitions()]
-    resource_version_ids = [_id("resource-version", str(item["key"])) for item in _resource_definitions()]
+    resource_ids = [
+        *[_id("resource", str(item["key"])) for item in _resource_definitions()],
+        _id("resource", SHOWCASE_DEMO_ASSESSMENT_RESOURCE_KEY),
+    ]
+    resource_version_ids = [
+        *[_id("resource-version", str(item["key"])) for item in _resource_definitions()],
+        _id("resource-version", SHOWCASE_DEMO_ASSESSMENT_RESOURCE_KEY),
+    ]
     recommendation_ids = [_id("recommendation", key) for key in ("input", "xss")]
     snapshot_ids = [_id("weakness-snapshot", f"{class_key}:{window}") for class_key in ("a", "b") for window in ("baseline", "recent")]
     signal_ids = [_id("external-signal", key) for key in ("ssrf", "secure-coding")]
@@ -2134,7 +2342,7 @@ async def _reset(session: AsyncSession) -> dict[str, int]:
     counts: dict[str, int] = defaultdict(int)
     result = await session.execute(
         delete(ResourceFeedback).where(
-            ResourceFeedback.student_id.in_(student_ids),
+            ResourceFeedback.student_id.in_(showcase_learner_ids),
             ResourceFeedback.course_id == COURSE_WEBSEC_ID,
         )
     )
@@ -2207,7 +2415,18 @@ async def _reset(session: AsyncSession) -> dict[str, int]:
     counts["agent_runs"] += await _delete_by_ids(session, AgentRun, run_ids)
     counts["workflow_runs"] += await _delete_by_ids(session, WorkflowRun, workflow_ids)
     counts["quiz_attempts"] += await _delete_by_ids(session, QuizAttempt, [_id("quiz-attempt", f"{student_id}:{window}:{slug}") for student_id in showcase_learner_ids for window in ("baseline", "recent") for slug in ("http-basics", "cookie-session", "sql-injection", "xss-reflected", "file-upload", "ssrf")])
-    counts["learning_events"] += await _delete_by_ids(session, LearningEvent, [_id("learning-event", f"{student_id}:{index}") for student_id in showcase_learner_ids for index in range(11)])
+    counts["learning_events"] += await _delete_by_ids(
+        session,
+        LearningEvent,
+        [
+            *[
+                _id("learning-event", f"{student_id}:{index}")
+                for student_id in showcase_learner_ids
+                for index in range(6 + len(SHOWCASE_TUTOR_EXCHANGES))
+            ],
+            _id("learning-event", SHOWCASE_DEMO_ASSESSMENT_EVENT_KEY),
+        ],
+    )
     counts["learning_tasks"] += await _delete_by_ids(session, LearningTask, [_id("learning-task", f"{student_id}:{slug}") for student_id in showcase_learner_ids for slug in ("http-basics", "sql-injection", "xss-reflected", "file-upload", "ssrf")])
     counts["learning_paths"] += await _delete_by_ids(session, LearningPath, [_id("learning-path", str(student_id)) for student_id in showcase_learner_ids])
     counts["quiz_evidence"] += await _delete_by_ids(session, QuizItemEvidence, [_id("quiz-evidence", str(item["key"])) for item in SHOWCASE_QUIZZES])

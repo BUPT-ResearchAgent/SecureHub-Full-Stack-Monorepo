@@ -50,6 +50,16 @@ async def test_student_experience_uses_current_student_records_and_quality_resou
     assert demo.tutor_exchanges
     assert demo.assessment.scored_attempt_count > 0
     assert demo.assignments
+    assert demo.assessment_demo_draft is not None
+    assert demo.assessment_demo_draft.assignment_title == "输入验证与输出边界复盘作业"
+    assert demo.assessment_demo_draft.source_kind == "curated-demo"
+    assert len(demo.assessment_demo_draft.answers) == 8
+    assert all(
+        isinstance(answer, str) or isinstance(answer, list)
+        for answer in demo.assessment_demo_draft.answers.values()
+    )
+    assert accelerated.assessment_demo_draft is None
+    assert recovery.assessment_demo_draft is None
     assert set(resource.resource_type for resource in demo.resources) == {
         "doc", "ppt", "mindmap", "quiz", "lab", "readings", "video"
     }
@@ -68,11 +78,13 @@ async def test_student_experience_uses_current_student_records_and_quality_resou
     assert resource_by_type["video"].content["is_playable_video"] is False
     assert all(item.source_boundary for item in accelerated.resources)
 
-    assert len(accelerated.tutor_exchanges) == 5
+    assert len(accelerated.tutor_exchanges) == 6
     insufficient = [item for item in accelerated.tutor_exchanges if item.evidence_status == "insufficient"]
     assert len(insufficient) == 1
     assert insufficient[0].evidence == []
     assert all(item.source_kind == "curated-demo" for item in accelerated.tutor_exchanges)
+    assert all(not item.quick_reply_available for item in accelerated.tutor_exchanges)
+    assert all(item.quick_reply_available for item in demo.tutor_exchanges)
 
     assert accelerated.assignments
     assert all(
