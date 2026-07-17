@@ -21,7 +21,7 @@ from app.api.v1.endpoints.workflow_adapter import (
     workflow_service,
 )
 from app.db.seeds._constants import COURSE_PRODUCT_BY_ID, CourseProductDefinition, resolve_course_product
-from app.deps import CurrentUserDep, SessionDep
+from app.deps import CurrentUserDep, RequiredCurrentUserDep, SessionDep
 from app.schemas.agent_control import WorkflowRunStartResponse
 from app.schemas.course import CoursePlanRequest, CoursePlanResponse
 from app.schemas.course_product import (
@@ -34,6 +34,7 @@ from app.schemas.course_product import (
 )
 from app.schemas.quiz_quality import PublishedQuizListDTO
 from app.schemas.resource import ResourceGenerateRequest
+from app.schemas.student_course_experience import StudentCourseExperienceDTO
 from app.services.course_catalog_service import (
     CourseCatalogService,
     CourseContentNotReadyError,
@@ -42,6 +43,10 @@ from app.services.course_catalog_service import (
 )
 from app.services.workflow_application_service import WorkflowApplicationService
 from app.services.learning.quiz_quality_service import QuizQualityError, QuizQualityService
+from app.services.learning.student_course_experience_service import (
+    StudentCourseExperienceError,
+    StudentCourseExperienceService,
+)
 
 
 router = APIRouter()
@@ -190,6 +195,13 @@ def _raise_quiz_quality_error(exc: QuizQualityError) -> None:
     ) from exc
 
 
+def _raise_student_course_experience_error(exc: StudentCourseExperienceError) -> None:
+    raise HTTPException(
+        status_code=exc.status_code,
+        detail={"code": exc.code, "message": exc.message},
+    ) from exc
+
+
 @router.get("/courses", response_model=list[CourseSummary])
 async def list_courses(
     session: SessionDep,
@@ -271,6 +283,28 @@ async def get_course_progress(
         )
     except (CourseProductNotFoundError, CourseProgressValidationError, CourseContentNotReadyError) as exc:
         _raise_course_product_error(exc)
+
+
+@router.get(
+    "/courses/{course_id}/student-experience",
+    response_model=StudentCourseExperienceDTO,
+)
+async def get_student_course_experience(
+    course_id: str,
+    session: SessionDep,
+    user: RequiredCurrentUserDep,
+) -> StudentCourseExperienceDTO:
+    """Return only the authenticated student's durable WEBSEC-101 projection."""
+
+    canonical_course_id = _contract_course_id(course_id)
+    _ready_course_product(canonical_course_id)
+    try:
+        return await StudentCourseExperienceService(session).get_experience(
+            actor=user,
+            course_id=canonical_course_id,
+        )
+    except StudentCourseExperienceError as exc:
+        _raise_student_course_experience_error(exc)
 
 
 @router.post("/courses/{course_id}/progress", response_model=CourseProgressDTO)

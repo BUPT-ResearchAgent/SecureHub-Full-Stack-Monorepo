@@ -1,8 +1,10 @@
 // Status: real
 
 import { useCallback, useEffect, useState } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
 import { Check, Loader2, RefreshCw, X } from 'lucide-react';
 import { toast } from 'sonner';
+import { ActionableEmptyState, ErrorState } from '@/app/components/StateView';
 import { useActiveRole } from '../store';
 import { isTeacherRole } from '../roles';
 import { TeacherShell } from '../components/TeacherShell';
@@ -12,6 +14,7 @@ import {
   fetchCourseUpdateSuggestions,
   type CourseUpdateSuggestion,
 } from '../api/courseUpdates';
+import { resolveAccessibleSelection, setRouteSelection } from '../routeState';
 
 const statusLabel: Record<CourseUpdateSuggestion['status'], string> = {
   draft: '草稿',
@@ -22,25 +25,38 @@ const statusLabel: Record<CourseUpdateSuggestion['status'], string> = {
   withdrawn: '已撤回',
 };
 
+function suggestionSummary(suggestion: CourseUpdateSuggestion): string {
+  const summary = suggestion.diff.summary ?? suggestion.diff.rationale ?? suggestion.diff.description;
+  return typeof summary === 'string' && summary.trim()
+    ? summary
+    : '该建议的详细内容需要在受权的 Evidence 与变更详情中查看。';
+}
+
 export function TeacherCourseUpdates() {
   const [role] = useActiveRole();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const requestedCourseId = searchParams.get('course');
   const [courses, setCourses] = useState<TeacherProductionCourse[]>([]);
   const [courseId, setCourseId] = useState('');
   const [suggestions, setSuggestions] = useState<CourseUpdateSuggestion[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   const loadCourses = useCallback(async () => {
     setLoading(true);
+    setError(null);
     try {
       const response = await fetchTeacherProductionCourses();
       setCourses(response.items);
-      setCourseId((current) => current || response.items[0]?.id || '');
+      setCourseId((current) => resolveAccessibleSelection(response.items, requestedCourseId, current));
     } catch (cause) {
-      toast.error(cause instanceof Error ? cause.message : '无法读取教师课程');
+      setCourses([]);
+      setCourseId('');
+      setError('无法读取教师课程，请检查登录身份或服务连接后重试。');
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [requestedCourseId]);
 
   const loadSuggestions = useCallback(async (selectedCourseId: string) => {
     if (!selectedCourseId) {
@@ -50,7 +66,8 @@ export function TeacherCourseUpdates() {
     try {
       setSuggestions(await fetchCourseUpdateSuggestions(selectedCourseId));
     } catch (cause) {
-      toast.error(cause instanceof Error ? cause.message : '无法读取课程更新建议');
+      setSuggestions([]);
+      setError('无法读取课程更新建议，请稍后重试。');
     }
   }, []);
 
@@ -62,6 +79,12 @@ export function TeacherCourseUpdates() {
     void loadSuggestions(courseId);
   }, [courseId, loadSuggestions]);
 
+  useEffect(() => {
+    if (courseId && requestedCourseId !== courseId) {
+      setRouteSelection(searchParams, setSearchParams, 'course', courseId);
+    }
+  }, [courseId, requestedCourseId, searchParams, setSearchParams]);
+
   if (!isTeacherRole(role)) return null;
 
   const decide = async (suggestion: CourseUpdateSuggestion, decision: 'adopt' | 'reject') => {
@@ -72,18 +95,25 @@ export function TeacherCourseUpdates() {
       setSuggestions((current) => current.map((item) => (item.id === updated.id ? updated : item)));
       toast.success(decision === 'adopt' ? '已采纳课程更新建议' : '已驳回课程更新建议');
     } catch (cause) {
-      toast.error(cause instanceof Error ? cause.message : '处置课程更新建议失败');
+      setError('课程更新建议处置失败，请稍后重试。');
     }
   };
 
+  const selectCourse = (nextCourseId: string) => {
+    setCourseId(nextCourseId);
+    setRouteSelection(searchParams, setSearchParams, 'course', nextCourseId, false);
+  };
+
   return (
-    <TeacherShell title="课程更新建议" subtitle="基于固定 Agent 与 Evidence 的版本化建议">
+    <TeacherShell title="课程更新建议" subtitle="基于固定 Agent 与 Evidence 的版本化建议；本页不提供未接入持久化 API 的一键填充或直接发布。">
+      {error && <ErrorState message={error} onRetry={() => void loadCourses()} retryText="重新读取" />}
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 pb-4">
         <select
           value={courseId}
-          onChange={(event) => setCourseId(event.target.value)}
-          className="h-9 min-w-56 rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-800"
+          onChange={(event) => selectCourse(event.target.value)}
+          className="h-9 min-w-0 rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-800 sm:min-w-56"
         >
+          {courses.length === 0 && <option value="">暂无本人课程</option>}
           {courses.map((course) => (
             <option key={course.id} value={course.id}>{course.code} · {course.title}</option>
           ))}
@@ -101,7 +131,7 @@ export function TeacherCourseUpdates() {
       {loading ? (
         <div className="flex min-h-48 items-center justify-center text-sm text-slate-500"><Loader2 className="mr-2 h-4 w-4 animate-spin" />正在读取课程</div>
       ) : suggestions.length === 0 ? (
-        <p className="py-12 text-center text-sm text-slate-500">当前课程暂无待展示的更新建议</p>
+        <ActionableEmptyState title="当前课程没有待处置更新建议" description="课程更新必须来自已完成运行与关联 Evidence 的受权工作流；此处不会用预置文案冒充可发布建议。可先查看班级学情或已保存的教学建议。" action={<Link to={`/teacher/teaching-insights?${new URLSearchParams(courseId ? { course: courseId } : {}).toString()}`} className="rounded-lg border border-brand-blue-200 bg-white px-3 py-2 text-xs font-medium text-brand-blue-700 hover:bg-brand-blue-50">前往薄弱点与建议</Link>} />
       ) : (
         <ul className="divide-y divide-slate-200">
           {suggestions.map((suggestion) => (
@@ -113,7 +143,7 @@ export function TeacherCourseUpdates() {
                     <span className="rounded bg-slate-100 px-2 py-0.5 text-xs text-slate-600">{statusLabel[suggestion.status]}</span>
                     <span className="text-xs text-slate-400">版本 {suggestion.version_no}</span>
                   </div>
-                  <p className="mt-2 text-sm text-slate-600">{JSON.stringify(suggestion.diff)}</p>
+                  <p className="mt-2 text-sm leading-6 text-slate-600">{suggestionSummary(suggestion)}</p>
                   <ul className="mt-2 space-y-1 text-xs text-slate-500">
                     {suggestion.impacts.map((impact) => (
                       <li key={impact.id}>{impact.impact_type} · {impact.rationale}</li>

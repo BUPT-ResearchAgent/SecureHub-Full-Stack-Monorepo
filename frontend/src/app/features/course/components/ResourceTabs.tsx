@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Briefcase, FilePenLine, FlaskConical, History, PlayCircle, Square, Trophy } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { ErrorBoundary } from '@/app/components/ErrorBoundary';
-import { LLMErrorState, LoadingState } from '@/app/components/StateView';
+import { getLLMErrorCopy, LLMErrorState, LoadingState } from '@/app/components/StateView';
 import { useEvidence } from '@/app/components/EvidenceDrawer';
 import { useAgentTraceDispatch } from '@/app/features/agents/store';
 import { isMockMode } from '@/lib/mock';
@@ -21,18 +21,13 @@ import { PptResourceView } from './PptResourceView';
 import { QuizResourceView } from './QuizResourceView';
 import { ReadingsResourceView } from './ReadingsResourceView';
 import { VideoResourceView } from './VideoResourceView';
-import { ResourceVariants } from '../resources/ResourceVariants';
 import { ResourceReplayDrawer } from '../resources/ResourceReplayDrawer';
-import { ResourceIterationCard } from '../resources/ResourceIterationCard';
 import { AgentDebatePanel } from '../resources/AgentDebatePanel';
 import { useRealResourceArtifact } from '../resources/realResourceArtifact';
 import {
   buildAgentDebate,
   buildReplayTimeline,
-  buildResourceVersions,
-  getResourceVariants,
 } from '@/lib/mock/resource-production.mock';
-import type { ResourceVariantKind, ResourceVersion } from '@/lib/types/resource-variant.types';
 
 const resourceTypes: ResourceType[] = ['doc', 'ppt', 'mindmap', 'quiz', 'lab', 'video', 'readings'];
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -45,6 +40,10 @@ type GenerationAttempt = {
 };
 
 const IDLE_ATTEMPT: GenerationAttempt = { status: 'idle' };
+
+function workflowMessage(code?: string, fallback?: string): string {
+  return getLLMErrorCopy(code, fallback).message;
+}
 
 function fallbackResource(type: ResourceType): ResourceItem {
   return {
@@ -119,10 +118,6 @@ export function ResourceTabs() {
   const [progressText, setProgressText] = useState('');
   const [replayOpen, setReplayOpen] = useState(false);
   const [debateOpen, setDebateOpen] = useState(false);
-  const [variantSelections, setVariantSelections] = useState<Partial<Record<ResourceType, ResourceVariantKind>>>({});
-  const [versionsByType, setVersionsByType] = useState<Partial<Record<ResourceType, ResourceVersion[]>>>({});
-  const [activeVersionByType, setActiveVersionByType] = useState<Partial<Record<ResourceType, number>>>({});
-  const [iterating, setIterating] = useState(false);
   const [bundleGenerating, setBundleGenerating] = useState(false);
   const presenterMode = isMockMode();
   const isPreview = course?.contentStatus === 'preview';
@@ -280,7 +275,7 @@ export function ResourceTabs() {
     })
       .then((progress) => courseDispatch({ type: 'setProgress', progress: progress.progress_percent }))
       .catch((cause: unknown) => {
-        setProgressText(cause instanceof Error ? `资源已生成，但进度同步失败：${cause.message}` : '资源已生成，但进度同步失败。');
+        setProgressText('资源已生成，学习进度仍在同步。请稍后刷新课程进度。');
       });
   };
 
@@ -346,25 +341,25 @@ export function ResourceTabs() {
           failAttempt(
             targetType,
             status.error?.code ?? `WORKFLOW_${status.status.toUpperCase()}`,
-            status.error?.message ?? `资源生成以 ${status.status} 状态结束。`,
+            workflowMessage(status.error?.code, status.error?.message),
           );
         },
         onError(error) {
           if (error.code === 'sse_reconnecting') {
-            setProgressText(error.message);
+            setProgressText('资源生成连接暂时中断，系统正在尝试恢复。');
             setAttempts((current) => ({
               ...current,
               [targetType]: {
                 ...(current[targetType] ?? IDLE_ATTEMPT),
                 status: 'generating',
                 errorCode: error.code,
-                errorMessage: error.message,
+                errorMessage: workflowMessage(error.code, error.message),
               },
             }));
             return;
           }
           setProgressText('');
-          failAttempt(targetType, error.code ?? 'WORKFLOW_CLIENT_ERROR', error.message);
+          failAttempt(targetType, error.code ?? 'WORKFLOW_CLIENT_ERROR', workflowMessage(error.code, error.message));
         },
     }), { mode: presenterMode ? 'fixture' : 'real' });
   };
@@ -426,18 +421,18 @@ export function ResourceTabs() {
           cancelled ? 'WORKFLOW_CANCELLED' : (status.error?.code ?? `WORKFLOW_${status.status.toUpperCase()}`),
           cancelled
             ? '本次完整资源包生成已取消，上一版资源保持不变。'
-            : (status.error?.message ?? `完整资源包生成以 ${status.status} 状态结束。`),
+            : workflowMessage(status.error?.code, status.error?.message),
           cancelled ? 'cancelled' : 'failed',
         ));
       },
       onError(error) {
         if (error.code === 'sse_reconnecting') {
-          setProgressText(error.message);
+          setProgressText('资源生成连接暂时中断，系统正在尝试恢复。');
           return;
         }
         setProgressText('');
         setBundleGenerating(false);
-        bundleTypes.forEach((type) => failAttempt(type, error.code ?? 'WORKFLOW_CLIENT_ERROR', error.message));
+        bundleTypes.forEach((type) => failAttempt(type, error.code ?? 'WORKFLOW_CLIENT_ERROR', workflowMessage(error.code, error.message)));
       },
     }), { mode: presenterMode ? 'fixture' : 'real' });
   };
@@ -491,17 +486,17 @@ export function ResourceTabs() {
           cancelled ? 'WORKFLOW_CANCELLED' : (status.error?.code ?? `WORKFLOW_${status.status.toUpperCase()}`),
           cancelled
             ? '本次重新生成已取消，上一版资源保持不变。'
-            : (status.error?.message ?? `资源重新生成以 ${status.status} 状态结束。`),
+            : workflowMessage(status.error?.code, status.error?.message),
           cancelled ? 'cancelled' : 'failed',
         );
       },
       onError(error) {
         if (error.code === 'sse_reconnecting') {
-          setProgressText(error.message);
+          setProgressText('资源重新生成连接暂时中断，系统正在尝试恢复。');
           return;
         }
         setProgressText('');
-        failAttempt(active, error.code ?? 'WORKFLOW_CLIENT_ERROR', error.message);
+        failAttempt(active, error.code ?? 'WORKFLOW_CLIENT_ERROR', workflowMessage(error.code, error.message));
       },
     }), { mode: presenterMode ? 'fixture' : 'real' });
   };
@@ -531,7 +526,7 @@ export function ResourceTabs() {
         ));
       })
       .catch((cause: unknown) => {
-        const message = cause instanceof Error ? cause.message : '取消请求失败，请稍后重试。';
+        const message = '取消请求暂时未完成。请稍后重新尝试，已完成资源不会受到影响。';
         setProgressText(`取消请求失败：${message}`);
         setAttempts((current) => {
           const next = { ...current };
@@ -702,21 +697,6 @@ export function ResourceTabs() {
         </button>
       )}
 
-      {presenterMode && resource.status === 'ready' && !variantSelections[active] && (
-        <ResourceVariants
-          variants={getResourceVariants(active)}
-          selectedKind={variantSelections[active]}
-          onSelect={(variant) => {
-            setVariantSelections((current) => ({ ...current, [active]: variant.kind }));
-            setVersionsByType((current) => ({
-              ...current,
-              [active]: buildResourceVersions(resource.content || variant.content),
-            }));
-            setActiveVersionByType((current) => ({ ...current, [active]: 1 }));
-          }}
-        />
-      )}
-
       {(resource.status === 'ready' || resource.status === 'idle') && <div className="relative">
         <div className="absolute right-4 top-4 z-10 flex items-center gap-2">
           <ResourceQualityBadge score={resource.qualityScore} />
@@ -747,42 +727,6 @@ export function ResourceTabs() {
 
       {presenterMode && debateOpen && resource.status === 'ready' && (
         <AgentDebatePanel debate={buildAgentDebate(active)} autoPlay />
-      )}
-
-      {presenterMode && resource.status === 'ready' && variantSelections[active] && (
-        <ResourceIterationCard
-          versions={versionsByType[active] ?? buildResourceVersions(resource.content)}
-          activeVersion={activeVersionByType[active] ?? 1}
-          pending={iterating}
-          onSubmit={(prompt) => {
-            setIterating(true);
-            const existing = versionsByType[active] ?? buildResourceVersions(resource.content);
-            window.setTimeout(() => {
-              const nextVersion = existing.length + 1;
-              const newVersion: ResourceVersion = {
-                version: nextVersion,
-                createdAt: new Date().toISOString(),
-                initiator: 'student-iteration',
-                prompt,
-                content: `${resource.content}\n\n## 学生反馈迭代（v${nextVersion}）\n\n${prompt}`,
-                qualityScore: Math.min(0.95, (existing[existing.length - 1].qualityScore ?? 0.8) + 0.04),
-                diff: [
-                  { kind: 'keep', text: existing[existing.length - 1].content },
-                  { kind: 'add', text: `\n\n## 学生反馈迭代（v${nextVersion}）\n\n${prompt}` },
-                ],
-              };
-              setVersionsByType((current) => ({
-                ...current,
-                [active]: [...existing, newVersion],
-              }));
-              setActiveVersionByType((current) => ({ ...current, [active]: nextVersion }));
-              setIterating(false);
-            }, 1100);
-          }}
-          onSwitchVersion={(version) => {
-            setActiveVersionByType((current) => ({ ...current, [active]: version }));
-          }}
-        />
       )}
 
       {presenterMode && (

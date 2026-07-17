@@ -68,7 +68,10 @@ export function CourseCatalogLanding({
           <p className="text-sm text-slate-500">正在从课程服务加载目录...</p>
         )}
         {catalog.status === 'error' && (
-          <p className="text-sm text-rose-600">课程目录加载失败：{catalog.error.message}</p>
+          <div className="flex flex-wrap items-center gap-3 border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-800">
+            <span>课程目录暂时无法读取，请检查登录状态或服务连接后重试。</span>
+            <button type="button" onClick={() => window.location.reload()} className="rounded-md border border-rose-200 bg-white px-2.5 py-1 text-xs font-medium text-rose-800 hover:bg-rose-100">重新读取</button>
+          </div>
         )}
         {catalog.status === 'ready' && courses.length === 0 && (
           <p className="text-sm text-slate-500">当前账号还没有可学习的课程。</p>

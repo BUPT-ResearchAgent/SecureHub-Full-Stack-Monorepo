@@ -53,15 +53,19 @@ from app.db.models.knowledge import (
     KnowledgeNode,
 )
 from app.db.models.learning import (
+    CourseResourceRecommendation,
     LearningEvent,
     LearningPath,
+    LearningPathDecision,
+    LearningPathReplanCandidate,
+    LearningPathVersion,
     LearningTask,
     QuizAttempt,
     QuizItem,
     QuizItemEvidence,
     QuizQualityReport,
 )
-from app.db.models.resource import GeneratedResource, ResourceVersion
+from app.db.models.resource import GeneratedResource, ResourceFeedback, ResourceVersion
 from app.db.models.storage import StorageObject
 from app.db.models.teaching import (
     Assessment,
@@ -127,6 +131,7 @@ __all__ = [
     "CourseSyllabusVersion",
     "CourseTeacherAssignment",
     "CourseResourceGovernance",
+    "CourseResourceRecommendation",
     "Document",
     "DocumentAsset",
     "GeneratedResource",
@@ -147,6 +152,9 @@ __all__ = [
     "KpPrerequisite",
     "LearningEvent",
     "LearningPath",
+    "LearningPathDecision",
+    "LearningPathReplanCandidate",
+    "LearningPathVersion",
     "LearningTask",
     "Message",
     "MessageDelivery",
@@ -156,6 +164,7 @@ __all__ = [
     "QuizReviewDecision",
     "QuizQualityReport",
     "ResourceVersion",
+    "ResourceFeedback",
     "RoleDefinition",
     "StudentGroup",
     "StudentGroupMember",

@@ -1,5 +1,5 @@
 // Status: real
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useEvidence } from '@/app/components/EvidenceDrawer';
 import { getLLMErrorCopy } from '@/app/components/StateView';
 import { useAgentTraceDispatch } from '@/app/features/agents/store';
@@ -9,6 +9,7 @@ import { resumeCourseTask, startCourseTask, tutorAnswerFromWorkflowStatus } from
 import { useCourseDispatch, useCourseState } from '../store';
 import { createCourseTaskLifecycle } from '../workflow/courseTaskLifecycle';
 import { useSelectedCourse } from '../catalog/useSelectedCourse';
+import { useStudentCourseExperience } from '../studentExperienceContext';
 
 const tutorAgent: ChatAgent = {
   id: 'path',
@@ -17,7 +18,11 @@ const tutorAgent: ChatAgent = {
   iconName: 'Compass',
   color: '#003399',
   systemPrompt: '围绕当前知识点给出证据驱动的中文答疑。',
-  starterQuestions: ['联合查询注入为什么要先判断列数？', '参数化查询和过滤输入有什么区别？', '如何判断当前页面有没有 SQL 注入风险？'],
+  starterQuestions: [
+    '如何为课程作业的排序字段设计服务端白名单？',
+    '输出上下文不同，为什么不能只做一次字符串替换？',
+    'URL 预览功能应如何检查服务端出站访问边界？',
+  ],
   outputStyle: 'path',
   capabilities: ['课程上下文', '证据引用', '多智能体路由'],
 };
@@ -51,9 +56,14 @@ function createSession(): ChatSession {
   };
 }
 
+function tutorFailureMessage(code?: string, fallback?: string): string {
+  return getLLMErrorCopy(code, fallback).message;
+}
+
 export function TutorDialog() {
   const { taskContext, tutorSessions } = useCourseState();
   const { course } = useSelectedCourse();
+  const { experience } = useStudentCourseExperience();
   const isPreview = course?.contentStatus === 'preview';
   const courseDispatch = useCourseDispatch();
   const evidence = useEvidence();
@@ -64,9 +74,18 @@ export function TutorDialog() {
     courseId: taskContext.courseId,
     session: tutorSessions[taskContext.courseId] ?? createSession(),
   }));
-  const [draft, setDraft] = useState('联合查询注入为什么要先判断列数？');
+  const [draft, setDraft] = useState(tutorAgent.starterQuestions[0]);
   const [generating, setGenerating] = useState(false);
   const session = sessionState.session;
+  const knowledgePointLabel = experience?.tasks.find((task) => task.status === 'active')?.knowledge_point
+    ?? experience?.tasks.find((task) => task.status === 'todo')?.knowledge_point
+    ?? course?.currentKnowledgePoint
+    ?? '当前课程知识点';
+  const scopedTutorAgent = useMemo<ChatAgent>(() => ({
+    ...tutorAgent,
+    starterQuestions: experience?.tutor_exchanges.slice(0, 3).map((exchange) => exchange.question)
+      ?? tutorAgent.starterQuestions,
+  }), [experience?.tutor_exchanges]);
 
   useEffect(() => {
     if (sessionState.courseId === taskContext.courseId) return;
@@ -103,7 +122,7 @@ export function TutorDialog() {
       setGenerating(false);
       patchMessage(messageId, {
         status: 'error',
-        content: status.error?.message ?? `辅导任务终态为 ${status.status}`,
+        content: `本次辅导未能完成。${tutorFailureMessage(status.error?.code, status.error?.message)}`,
       });
       return;
     }
@@ -112,7 +131,7 @@ export function TutorDialog() {
     } catch (error) {
       patchMessage(messageId, {
         status: 'error',
-        content: error instanceof Error ? error.message : '辅导结果无法展示，请重试该问题。',
+        content: '辅导结果暂时无法展示。请稍后重试该问题，或切换到相关课程资源继续学习。',
       });
     } finally {
       setGenerating(false);
@@ -141,7 +160,7 @@ export function TutorDialog() {
         onError(error) {
           if (error.recoverable) return;
           setGenerating(false);
-          patchMessage(pending.id, { status: 'error', content: error.message });
+          patchMessage(pending.id, { status: 'error', content: `辅导连接未能恢复。${tutorFailureMessage(error.code, error.message)}` });
         },
       }),
     );
@@ -197,7 +216,7 @@ export function TutorDialog() {
           const copy = getLLMErrorCopy(error.code, error.message);
           patchMessage(assistantMessage.id, {
             status: 'error',
-            content: `${copy.title}：${error.message || copy.message}`,
+            content: `${copy.title}：${copy.message}`,
           });
         },
     }));
@@ -220,10 +239,10 @@ export function TutorDialog() {
     <div className="space-y-4">
       <div className={`rounded-xl px-4 py-3 text-sm ${isPreview ? 'border border-amber-200 bg-amber-50 text-amber-900' : 'border border-blue-100 bg-blue-50 text-blue-900'}`}>
         当前学习：{isPreview ? '预置内容预览（辅导不可用）' : '当前课程知识点'}
-        <span className="ml-2 text-xs text-blue-700">知识点 ID：{taskContext.kpId}</span>
+        <span className="ml-2 text-xs text-blue-700">知识点：{knowledgePointLabel}</span>
       </div>
       <ConversationPane
-        agent={tutorAgent}
+        agent={scopedTutorAgent}
         session={session}
         draft={draft}
         isGenerating={generating}

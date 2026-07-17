@@ -35,7 +35,7 @@ export function CourseEntryCard({ course }: CourseEntryCardProps) {
       onWorkflowTerminal(status) {
         if (status.status !== 'succeeded') {
           setPlanning(false);
-          setError(status.error?.message ?? `学习路径任务终态为 ${status.status}`);
+          setError('学习路径暂未完成。请查看运行状态、调整学习上下文后重试。');
           return;
         }
         try {
@@ -50,8 +50,8 @@ export function CourseEntryCard({ course }: CourseEntryCardProps) {
                 .map((node) => node.id),
             },
           });
-        } catch (cause) {
-          setError(cause instanceof Error ? cause.message : '学习路径结果映射失败');
+        } catch {
+          setError('学习路径结果暂时无法展示，请稍后重试或查看运行详情。');
         } finally {
           setPlanning(false);
         }
@@ -59,7 +59,7 @@ export function CourseEntryCard({ course }: CourseEntryCardProps) {
       onError(workflowError) {
         if (workflowError.recoverable) return;
         setPlanning(false);
-        setError(workflowError.message);
+        setError('学习路径服务暂时不可用，请稍后重试。');
       },
     }));
   };
@@ -108,7 +108,7 @@ export function CourseEntryCard({ course }: CourseEntryCardProps) {
                 <div className="text-sm font-semibold text-slate-900">本次生成的个性化路径</div>
                 <p className="mt-1 text-xs text-slate-500">{generatedPath.nodes.length} 个步骤已写入 durable workflow 结果。</p>
               </div>
-              {generatedPath.workflowRunId && <Tag tone="green">Root {generatedPath.workflowRunId.slice(0, 8)}</Tag>}
+              {generatedPath.workflowRunId && <Tag tone="green">运行记录已创建</Tag>}
             </div>
             <ol className="mt-3 space-y-2">
               {generatedPath.nodes.map((node) => (

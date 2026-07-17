@@ -387,6 +387,50 @@ pnpm install --frozen-lockfile
 pnpm dev
 ```
 
+### 受控 WEBSEC-101 课程场景数据
+
+`websec-101-showcase-v5` 是仅供本地开发、比赛演示和明确授权测试数据库使用的显式 seed profile。它写入真实的课程、教学班、选课、作答、学习路径、可恢复辅导记录、资源、作业、AgentRun/Evidence 和治理关系，现有 API、权限和审计会照常消费这些实体。
+
+该 profile 包含 32 个虚构课程花名学生，以及复用本地登录账号的 1 名 demo 课程学习者。固定课程资料属于 `curated-demo`，外部链接保持 `external-preview` 来源边界；它们不是实时模型输出、平台自有视频或真实在校学生数据。seed 不会在应用启动时执行，并且当 `APP_ENV` 为 `production`、`prod` 或 `release` 时会拒绝运行。
+
+运行前必须确认：当前目录是 `backend/`、依赖已用 `uv` 同步、`DATABASE_URL` 指向明确授权的本地/比赛/测试 PostgreSQL、目标库已通过 `uv run alembic upgrade head` 到当前 head。不要将生产连接串或凭据写入文档、脚本或 Git。
+
+Windows PowerShell：
+
+```powershell
+cd backend
+uv sync --frozen
+uv run alembic upgrade head
+$env:SECUREHUB_ALLOW_SHOWCASE_SEED = '1'
+uv run python -m app.db.seeds.seed_showcase_course seed
+uv run python -m app.db.seeds.seed_showcase_course verify
+```
+
+macOS/Linux shell：
+
+```bash
+cd backend
+uv sync --frozen
+uv run alembic upgrade head
+SECUREHUB_ALLOW_SHOWCASE_SEED=1 uv run python -m app.db.seeds.seed_showcase_course seed
+SECUREHUB_ALLOW_SHOWCASE_SEED=1 uv run python -m app.db.seeds.seed_showcase_course verify
+```
+
+`verify` 应输出 `valid: True`，并报告 manifest、质量门、对象数和关系链检查结果。需要清理时，仅能在同一类受控环境中显式执行 profile-scoped reset；它只删除该 profile 所有的稳定 ID，不会替代备份、迁移验证或浏览器验收：
+
+```powershell
+cd backend
+$env:SECUREHUB_ALLOW_SHOWCASE_SEED = '1'
+uv run python -m app.db.seeds.seed_showcase_course reset
+```
+
+```bash
+cd backend
+SECUREHUB_ALLOW_SHOWCASE_SEED=1 uv run python -m app.db.seeds.seed_showcase_course reset
+```
+
+当前仅在 Windows 项目环境中完成了命令实测；macOS/Linux 使用相同的 `uv run python -m ...` 入口和项目相对资源路径，仍须在目标环境执行 `seed` 与 `verify` 后才能记录为该平台已验收。后端目录中的更详细约束见 [backend/README.md](./backend/README.md#controlled-websec-101-showcase-course-seed)。
+
 ### 体验建议路径
 
 1. 打开 `http://127.0.0.1:5173`，完成注册或登录。

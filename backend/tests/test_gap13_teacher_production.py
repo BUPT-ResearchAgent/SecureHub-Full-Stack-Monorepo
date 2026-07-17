@@ -8,6 +8,7 @@ from uuid import uuid4
 import pytest
 from sqlalchemy import select
 
+from app.api.v1.endpoints.teaching import student_assessment_assignment
 from app.db.models.agent.agent_run import AgentRun
 from app.db.models.education.education_domain import GovernanceAuditEvent
 from app.db.models.identity.user import User
@@ -192,8 +193,17 @@ async def test_gap13_teacher_production_is_scoped_durable_and_reversible(sqlite_
             evidence_snapshot_id=evidence.id,
             agent_run_id=agent_run.id,
             title="增加输入验证复盘",
-            actions=["在下一次作业前安排证据驱动复盘"],
-            rationale="真实作答样本显示此知识点分数偏低。",
+            actions=[
+                "在下一次作业前安排证据驱动的输入验证复盘，并说明参数化查询和白名单边界。",
+                "在同范围短测后复核覆盖率、错误率和平均分，再决定是否形成后续教学动作。",
+            ],
+            rationale=(
+                "当前快照只使用该教学班内可评分的真实作答，并已关联已完成运行的 Evidence。"
+                "教师需要先解释学生常见的输入边界误解，再安排防御性检查练习；该建议不会自动改写"
+                "课程正文、作业或成绩，后续行动仍需显式审核。教师应在短测后比较有效样本、错误率"
+                "和平均分变化，并保留运行编号与证据来源，避免把预置描述误称为实时结论。"
+            ),
+            expected_impact="预计下一轮同范围短测能提高输入验证知识点的有效覆盖率和平均分，并降低重复错误率；实际结果必须由新快照复核。",
         ),
     )
     assert recommendation.status == "pending"
@@ -236,6 +246,21 @@ async def test_gap13_teacher_production_is_scoped_durable_and_reversible(sqlite_
     )
     assignment_rows = await service.list_course_assignments(actor=teacher, course_id=COURSE_WEBSEC_ID)
     assert [row.id for row in assignment_rows.items] == [assignment.id]
+    student_assignment = await student_assessment_assignment(
+        assignment_id=assignment.id,
+        session=sqlite_session,
+        user=student,
+    )
+    assert student_assignment.assignment_id == assignment.id
+    assert len(student_assignment.items) == 2
+    assert all("answer" not in item.model_dump() and "explanation" not in item.model_dump() for item in student_assignment.items)
+    with pytest.raises(TeacherProductionError) as invalid_answer_scope:
+        await service.submit_assessment(
+            actor=student,
+            assignment_id=assignment.id,
+            payload=SubmitAssessmentRequest(answers={str(uuid4()): "版本外题目"}),
+        )
+    assert invalid_answer_scope.value.code == "SUBMISSION_ANSWERS_INVALID"
     submission = await service.submit_assessment(
         actor=student,
         assignment_id=assignment.id,

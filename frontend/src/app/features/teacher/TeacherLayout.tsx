@@ -5,7 +5,7 @@
 // 2. 头像旁中文身份徽章
 // 3. 按身份动态 navItems
 
-import { ArrowRight, Menu, ChevronDown, Bell, LogOut, ShieldAlert, ShieldCheck, UserCircle } from 'lucide-react';
+import { ArrowRight, Menu, ChevronDown, Bell, LogOut, ShieldAlert, ShieldCheck, UserCircle, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { NavLink, Navigate, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
@@ -25,7 +25,7 @@ import { RoleSwitcher } from './RoleSwitcher';
 import { ROLE_META, isTeacherRole, type TeacherRole } from './roles';
 import { MOCK_TEACHERS } from '@/lib/mock/teacher.mock';
 import { useActiveRole } from './store';
-import { canAccessTeacherPath, getTeacherNav } from './nav';
+import { canAccessTeacherPath, getTeacherNav, type TeacherNavItem } from './nav';
 
 export function TeacherLayout() {
   return (
@@ -42,6 +42,7 @@ function TeacherFrame() {
   const evidence = useEvidence();
   const [role] = useActiveRole();
   const [collapsed, setCollapsed] = useState(false);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
   useEffect(() => {
     // 若退出教师角色，自动回到学生工作台。
@@ -69,7 +70,7 @@ function TeacherFrame() {
   };
 
   return (
-    <div className="flex h-screen flex-col bg-slate-50 overflow-hidden">
+    <div className="flex h-screen min-h-dvh flex-col overflow-hidden bg-slate-50">
       {/* 身份配色条 */}
       <div
         aria-hidden
@@ -78,7 +79,7 @@ function TeacherFrame() {
       />
       <div className="flex flex-1 overflow-hidden">
         <aside
-          className={`bg-white border-r border-slate-200 text-slate-700 transition-all duration-300 flex flex-col ${
+          className={`hidden bg-white border-r border-slate-200 text-slate-700 transition-all duration-300 lg:flex lg:flex-col ${
             collapsed ? 'w-16' : 'w-44'
           }`}
         >
@@ -141,23 +142,34 @@ function TeacherFrame() {
         </aside>
 
         <div className="flex-1 flex flex-col overflow-hidden">
-          <header className="h-16 bg-white border-b border-slate-200 flex items-center justify-between px-6 shrink-0">
-            <div className="flex items-center gap-4 flex-1 max-w-xl">
+          <header className="flex min-h-16 shrink-0 items-center justify-between gap-2 border-b border-slate-200 bg-white px-3 py-2 sm:px-6">
+            <div className="flex min-w-0 flex-1 items-center gap-3">
+              <button
+                type="button"
+                onClick={() => setMobileNavOpen(true)}
+                aria-label="打开教师导航"
+                aria-expanded={mobileNavOpen}
+                className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 lg:hidden"
+              >
+                <Menu className="h-4 w-4" />
+              </button>
+              <div className="hidden min-w-0 flex-1 md:block">
               <GlobalSearch />
+              </div>
             </div>
-            <div className="flex items-center gap-2">
-              <RoleSwitcher />
+            <div className="flex shrink-0 items-center gap-1.5 sm:gap-2">
+              <div className="hidden sm:block"><RoleSwitcher /></div>
               <button className="relative p-2 hover:bg-slate-100 rounded-lg">
                 <Bell className="w-4 h-4 text-slate-600" />
                 <span className="absolute top-1.5 right-1.5 w-1.5 h-1.5 bg-red-500 rounded-full" />
               </button>
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <button className="flex max-w-[220px] items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-slate-100">
+                <button className="flex max-w-[220px] items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-slate-100">
                     <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-slate-100 text-base">
                       {teacher?.avatar ?? '🧑‍🏫'}
                     </div>
-                    <div className="flex flex-col items-start leading-tight">
+                    <div className="hidden flex-col items-start leading-tight sm:flex">
                       <span className="truncate text-sm text-slate-800">{displayName}</span>
                       <span className={`flex items-center gap-1 text-[10px] ${meta.badgeText}`}>
                         <span className={`inline-block h-1.5 w-1.5 rounded-full`} style={{ background: meta.accent }} />
@@ -196,7 +208,7 @@ function TeacherFrame() {
 
           <main className="flex-1 flex flex-col min-h-0">
             <div className="flex-1 overflow-y-auto">
-              <div className="max-w-[1280px] mx-auto px-5 py-4">
+              <div className="mx-auto max-w-[1280px] px-3 py-3 sm:px-5 sm:py-4">
                 <section className="mb-4 flex items-center gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
                   <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${meta.badge} ${meta.badgeText}`}>
                     <MetaIcon className="h-4 w-4" aria-hidden />
@@ -222,6 +234,68 @@ function TeacherFrame() {
         </div>
       </div>
       <EvidenceDrawer />
+      <TeacherMobileNavigation
+        open={mobileNavOpen}
+        role={role}
+        navItems={navItems}
+        pathname={location.pathname}
+        accent={meta.accent}
+        onClose={() => setMobileNavOpen(false)}
+      />
+    </div>
+  );
+}
+
+function TeacherMobileNavigation({
+  open,
+  role,
+  navItems,
+  pathname,
+  accent,
+  onClose,
+}: {
+  open: boolean;
+  role: TeacherRole;
+  navItems: TeacherNavItem[];
+  pathname: string;
+  accent: string;
+  onClose: () => void;
+}) {
+  if (!open) return null;
+  return (
+    <div className="fixed inset-0 z-50 lg:hidden" role="dialog" aria-modal="true" aria-label="教师导航">
+      <button type="button" aria-label="关闭教师导航" onClick={onClose} className="absolute inset-0 bg-slate-900/30" />
+      <aside className="relative flex h-full w-[min(82vw,20rem)] flex-col border-r border-slate-200 bg-white shadow-xl">
+        <div className="flex items-center justify-between border-b border-slate-200 px-4 py-4">
+          <div className="flex items-center gap-2">
+            <span className="flex h-8 w-8 items-center justify-center rounded-lg text-sm font-bold text-white" style={{ background: accent }}>教</span>
+            <span className="text-sm font-semibold text-slate-900">教师工作台</span>
+          </div>
+          <button type="button" onClick={onClose} aria-label="关闭" className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        <nav className="flex-1 overflow-y-auto px-3 py-3">
+          <ul className="space-y-1">
+            {navItems.map((item) => {
+              const active = item.path === '/teacher' ? pathname === '/teacher' : pathname.startsWith(item.path);
+              return (
+                <li key={item.path}>
+                  <NavLink
+                    to={item.path}
+                    onClick={onClose}
+                    className={`flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm ${active ? 'bg-brand-blue-50 font-medium text-brand-blue-700' : 'text-slate-600 hover:bg-slate-50'}`}
+                  >
+                    <item.icon className="h-4 w-4 shrink-0" />
+                    <span className="min-w-0 truncate">{item.label}</span>
+                  </NavLink>
+                </li>
+              );
+            })}
+          </ul>
+        </nav>
+        <p className="border-t border-slate-100 px-4 py-3 text-xs leading-5 text-slate-500">当前工作区会继续按 {ROLE_META[role].label} 的受权范围读取数据。</p>
+      </aside>
     </div>
   );
 }

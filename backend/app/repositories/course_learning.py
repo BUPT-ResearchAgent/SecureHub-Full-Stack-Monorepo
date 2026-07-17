@@ -9,7 +9,7 @@ profile tables instead of creating course-specific mirrors of those records.
 from collections.abc import Sequence
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models.knowledge.course import Course
@@ -84,6 +84,10 @@ class CourseLearningRepository:
             .group_by(GeneratedResource.kp_id)
         )
         if user_id is not None:
-            statement = statement.where(GeneratedResource.user_id == user_id)
+            # Course-curated resources are deliberately shared at course scope;
+            # personal artefacts remain visible only to their owner.
+            statement = statement.where(
+                or_(GeneratedResource.user_id.is_(None), GeneratedResource.user_id == user_id)
+            )
         result = await self.session.execute(statement)
         return {kp_id: int(count) for kp_id, count in result.all() if kp_id is not None}

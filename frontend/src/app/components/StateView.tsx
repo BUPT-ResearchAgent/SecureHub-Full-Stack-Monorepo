@@ -83,7 +83,7 @@ type LLMErrorCopy = {
   retry: boolean;
 };
 
-export function getLLMErrorCopy(code?: string, fallbackMessage?: string): LLMErrorCopy {
+export function getLLMErrorCopy(code?: string, _fallbackMessage?: string): LLMErrorCopy {
   const copies: Record<string, LLMErrorCopy> = {
     ApiKeyMissing: {
       tone: 'blue',
@@ -143,7 +143,7 @@ export function getLLMErrorCopy(code?: string, fallbackMessage?: string): LLMErr
   return copies[code ?? ''] ?? {
     tone: 'red',
     title: '生成失败',
-    message: fallbackMessage || 'LLM 生成链路暂时不可用，请稍后重试。',
+    message: '本次请求暂时无法完成，请检查输入或网络后重试。',
     retry: true,
   };
 }
@@ -179,7 +179,7 @@ export function LLMErrorState({
         )}
         <div className="min-w-0 flex-1">
           <p className="font-medium">{copy.title}</p>
-          <p className="mt-1 leading-6">{message || copy.message}</p>
+          <p className="mt-1 leading-6">{copy.message}</p>
           {onRetry && copy.retry && (
             <button
               type="button"
@@ -204,5 +204,28 @@ export function EmptyState({ text, icon }: { text: string; icon?: ReactNode }) {
       </div>
       {text}
     </div>
+  );
+}
+
+export function ActionableEmptyState({
+  title,
+  description,
+  action,
+  icon,
+}: {
+  title: string;
+  description: string;
+  action?: ReactNode;
+  icon?: ReactNode;
+}) {
+  return (
+    <section className="flex min-h-44 flex-col items-center justify-center rounded-xl border border-dashed border-slate-300 bg-slate-50/70 p-6 text-center">
+      <span className="flex h-10 w-10 items-center justify-center rounded-full bg-white text-slate-500 shadow-sm">
+        {icon ?? <FileSearch className="h-4 w-4" />}
+      </span>
+      <h2 className="mt-3 text-sm font-semibold text-slate-800">{title}</h2>
+      <p className="mt-1 max-w-lg text-sm leading-6 text-slate-500">{description}</p>
+      {action && <div className="mt-4">{action}</div>}
+    </section>
   );
 }

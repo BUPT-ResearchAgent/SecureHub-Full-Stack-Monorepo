@@ -24,6 +24,7 @@ from app.api.v1.endpoints import (
     research,
     resources,
     security,
+    student_learning_loop,
     system,
     teaching,
     tutor,
@@ -68,6 +69,7 @@ api_router.include_router(education.router, tags=["education"])
 api_router.include_router(teaching.router, tags=["teaching"])
 api_router.include_router(provider_credentials.router, tags=["provider-credentials"])
 api_router.include_router(courses.router, tags=["courses"])
+api_router.include_router(student_learning_loop.router, tags=["student-learning-loop"])
 api_router.include_router(resources.router, tags=["resources"])
 api_router.include_router(agents.router, tags=["agents"])
 api_router.include_router(agent_control.router, tags=["agent-control"])

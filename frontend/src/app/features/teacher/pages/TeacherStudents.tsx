@@ -1,8 +1,10 @@
 // Status: real
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
 import { AlertCircle, RefreshCw, Search, Users } from 'lucide-react';
 import { ApiError } from '@/lib/api';
+import { ActionableEmptyState } from '@/app/components/StateView';
 import {
   fetchTeachingClasses,
   fetchTeachingClassGroups,
@@ -15,11 +17,12 @@ import type {
   TeachingClassRoster,
 } from '../types/education';
 import { isTeacherRole } from '../roles';
+import { resolveAccessibleSelection, setRouteSelection } from '../routeState';
 import { TeacherShell } from '../components/TeacherShell';
 
 function errorMessage(error: unknown): string {
   if (error instanceof ApiError) {
-    return error.code ? `${error.code}：${error.message}` : error.message;
+    return '无法读取教学关系，请检查登录身份、教学班归属或服务连接后重试。';
   }
   return '无法读取真实教学关系，请检查登录状态和服务连接。';
 }
@@ -30,6 +33,8 @@ function dateLabel(value: string): string {
 
 export function TeacherStudents() {
   const [role] = useActiveRole();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const requestedClassId = searchParams.get('class');
   const [classes, setClasses] = useState<TeachingClassListResponse['items']>([]);
   const [selectedClassId, setSelectedClassId] = useState('');
   const [roster, setRoster] = useState<TeachingClassRoster | null>(null);
@@ -45,11 +50,7 @@ export function TeacherStudents() {
     try {
       const response = await fetchTeachingClasses();
       setClasses(response.items);
-      setSelectedClassId((current) =>
-        current && response.items.some((item) => item.id === current)
-          ? current
-          : (response.items[0]?.id ?? ''),
-      );
+      setSelectedClassId((current) => resolveAccessibleSelection(response.items, requestedClassId, current));
     } catch (loadError) {
       setClasses([]);
       setSelectedClassId('');
@@ -57,7 +58,7 @@ export function TeacherStudents() {
     } finally {
       setLoadingClasses(false);
     }
-  }, []);
+  }, [requestedClassId]);
 
   const loadDetails = useCallback(async (classId: string) => {
     setLoadingDetail(true);
@@ -91,6 +92,15 @@ export function TeacherStudents() {
     void loadDetails(selectedClassId);
   }, [loadDetails, selectedClassId]);
 
+  useEffect(() => {
+    if (selectedClassId && requestedClassId !== selectedClassId) {
+      setRouteSelection(searchParams, setSearchParams, 'class', selectedClassId);
+    }
+    if (!selectedClassId && requestedClassId) {
+      setRouteSelection(searchParams, setSearchParams, 'class', '');
+    }
+  }, [requestedClassId, searchParams, selectedClassId, setSearchParams]);
+
   const visibleStudents = useMemo(() => {
     if (!roster) return [];
     const normalized = keyword.trim();
@@ -102,6 +112,11 @@ export function TeacherStudents() {
   const refresh = async () => {
     await loadClasses();
     if (selectedClassId) await loadDetails(selectedClassId);
+  };
+
+  const selectClass = (nextClassId: string) => {
+    setSelectedClassId(nextClassId);
+    setRouteSelection(searchParams, setSearchParams, 'class', nextClassId, false);
   };
 
   if (!isTeacherRole(role)) return null;
@@ -137,7 +152,7 @@ export function TeacherStudents() {
           <select
             id="teaching-class"
             value={selectedClassId}
-            onChange={(event) => setSelectedClassId(event.target.value)}
+            onChange={(event) => selectClass(event.target.value)}
             disabled={loadingClasses || classes.length === 0}
             className="h-9 min-w-64 rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-700 focus:border-brand-blue-500 focus:outline-none disabled:cursor-not-allowed disabled:bg-slate-50"
           >
@@ -160,11 +175,7 @@ export function TeacherStudents() {
       </section>
 
       {!loadingClasses && classes.length === 0 && !error && (
-        <section className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-8 text-center">
-          <Users className="mx-auto h-7 w-7 text-slate-400" />
-          <h2 className="mt-3 text-sm font-semibold text-slate-700">暂无可访问教学班</h2>
-          <p className="mt-1 text-xs text-slate-500">需要先完成课程教师归属与教学班分配，页面不会展示演示名册。</p>
-        </section>
+        <ActionableEmptyState title="暂无可访问教学班" description="需要先完成课程教师归属与教学班分配，页面不会展示演示名册或其他教师的学生。" icon={<Users className="h-5 w-5" />} action={<Link to="/teacher/courses" className="rounded-lg border border-brand-blue-200 bg-white px-3 py-2 text-xs font-medium text-brand-blue-700 hover:bg-brand-blue-50">查看课程归属</Link>} />
       )}
 
       {selectedClassId && (
@@ -185,7 +196,8 @@ export function TeacherStudents() {
                 />
               </div>
             </div>
-            <table className="w-full text-left text-sm">
+            <div className="overflow-x-auto">
+            <table className="min-w-[560px] w-full text-left text-sm">
               <thead className="bg-slate-50 text-xs text-slate-500">
                 <tr>
                   <th className="px-4 py-2.5">学生</th>
@@ -209,6 +221,7 @@ export function TeacherStudents() {
                 )}
               </tbody>
             </table>
+            </div>
           </section>
 
           <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
