@@ -114,3 +114,5 @@ data/reports/*.docx
 
 # MindSpider 入库运行时产物（每次跑 CLI 可重建）
 data/storage/news/**
+
+backend/.tmp-tests/
