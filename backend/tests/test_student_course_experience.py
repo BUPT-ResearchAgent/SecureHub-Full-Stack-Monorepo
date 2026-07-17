@@ -9,15 +9,22 @@ from fastapi import HTTPException
 from sqlalchemy import func, select
 
 from app.api.v1.endpoints.courses import get_student_course_experience
+from app.api.v1.endpoints.teaching import (
+    student_assessment_assignment,
+    submit_assessment_assignment,
+)
 from app.db.models.identity.user import User
 from app.db.models.learning.quiz_attempt import QuizAttempt
 from app.db.seeds._constants import COURSE_WEBSEC_ID, DEMO_USER_ID
 from app.db.seeds.seed_education_domain import DEMO_COURSE_TEACHER_ID
 from app.db.seeds.seed_showcase_course import (
+    SHOWCASE_DEMO_COMPREHENSIVE_ASSESSMENT_KEY,
+    _id,
     SHOWCASE_DEMO_STUDENT_DISPLAY_NAME,
     _student_id,
     run,
 )
+from app.schemas.teacher_production import SubmitAssessmentRequest
 
 
 @pytest.mark.anyio
@@ -51,9 +58,9 @@ async def test_student_experience_uses_current_student_records_and_quality_resou
     assert demo.assessment.scored_attempt_count > 0
     assert demo.assignments
     assert demo.assessment_demo_draft is not None
-    assert demo.assessment_demo_draft.assignment_title == "输入验证与输出边界复盘作业"
+    assert demo.assessment_demo_draft.assignment_title == "WEBSEC-101 阶段综合评估（36 题）"
     assert demo.assessment_demo_draft.source_kind == "curated-demo"
-    assert len(demo.assessment_demo_draft.answers) == 8
+    assert len(demo.assessment_demo_draft.answers) == 36
     assert all(
         isinstance(answer, str) or isinstance(answer, list)
         for answer in demo.assessment_demo_draft.answers.values()
@@ -102,6 +109,42 @@ async def test_student_experience_uses_current_student_records_and_quality_resou
     )
     assert accelerated.assessment.scored_attempt_count == own_attempt_count
     assert accelerated.assessment.metrics
+
+
+@pytest.mark.anyio
+async def test_demo_comprehensive_assessment_uses_frozen_36_items_and_real_submission_api(
+    sqlite_session,
+) -> None:
+    await run(sqlite_session)
+    demo_student = await sqlite_session.get(User, DEMO_USER_ID)
+    assert demo_student is not None
+    experience = await get_student_course_experience(
+        course_id=str(COURSE_WEBSEC_ID), session=sqlite_session, user=demo_student
+    )
+    draft = experience.assessment_demo_draft
+    assert draft is not None
+    assert draft.assignment_id == _id(
+        "assessment-assignment", SHOWCASE_DEMO_COMPREHENSIVE_ASSESSMENT_KEY
+    )
+    assignment = await student_assessment_assignment(
+        assignment_id=draft.assignment_id,
+        session=sqlite_session,
+        user=demo_student,
+    )
+    assert assignment.submission_status == "open"
+    assert len(assignment.items) == 36
+    assert [item.position for item in assignment.items] == list(range(1, 37))
+    assert set(draft.answers) == {str(item.quiz_item_id) for item in assignment.items}
+    assert all("answer" not in item.model_dump() for item in assignment.items)
+
+    submission = await submit_assessment_assignment(
+        assignment_id=draft.assignment_id,
+        payload=SubmitAssessmentRequest(answers=draft.answers),
+        session=sqlite_session,
+        user=demo_student,
+    )
+    assert submission.status in {"submitted", "late"}
+    assert submission.student_id == DEMO_USER_ID
 
 
 @pytest.mark.anyio

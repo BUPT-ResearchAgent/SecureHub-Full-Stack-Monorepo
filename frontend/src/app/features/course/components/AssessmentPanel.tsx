@@ -76,6 +76,7 @@ const EMPTY_QUIZ_RESOURCE = {
   content: '',
   evidenceRefs: [],
 };
+const QUESTIONS_PER_PAGE = 6;
 
 function hasAnswer(value: AssessmentAnswer | undefined): boolean {
   return Array.isArray(value) ? value.length > 0 : Boolean(value?.trim());
@@ -235,6 +236,7 @@ export function AssessmentPanel() {
   const [assessmentAudit, setAssessmentAudit] = useState<AssessmentAuditProjection | null>(null);
   const [submittedAnswers, setSubmittedAnswers] = useState<SubmittedAnswer[]>([]);
   const [courseNextRecommendation, setCourseNextRecommendation] = useState('');
+  const [questionPage, setQuestionPage] = useState(0);
   const latestAssessmentRoot = useMemo(
     () => Object.values(workflowRoots)
       .filter((root) => root.intent === 'run_assessment' && root.status === 'succeeded')
@@ -252,7 +254,22 @@ export function AssessmentPanel() {
     setCourseNextRecommendation('');
     setDemoAssignmentSubmitted(false);
     setDemoDraftNotice('');
+    setQuestionPage(0);
   }, [course?.id]);
+
+  const questionPageCount = Math.max(1, Math.ceil(questions.length / QUESTIONS_PER_PAGE));
+  const visibleQuestions = useMemo(
+    () => questions.slice(questionPage * QUESTIONS_PER_PAGE, (questionPage + 1) * QUESTIONS_PER_PAGE),
+    [questionPage, questions],
+  );
+  const answeredQuestionCount = useMemo(
+    () => questions.filter((question) => hasAnswer(answers[question.id])).length,
+    [answers, questions],
+  );
+
+  useEffect(() => {
+    setQuestionPage((current) => Math.min(current, questionPageCount - 1));
+  }, [questionPageCount]);
 
   // The durable terminal output is the only source used to restore the full
   // audit after a refresh; the persisted client store merely retains the root.
@@ -270,6 +287,7 @@ export function AssessmentPanel() {
         setSubmittedAnswers(audit.submittedAnswers);
         setCourseNextRecommendation(audit.nextRecommendation ?? '');
         dispatch({ type: 'setAssessment', assessment: report });
+        reloadStudentExperience();
       })
       .catch(() => {
         // The already-persisted result remains visible if its audit fetch is temporarily unavailable.
@@ -277,15 +295,19 @@ export function AssessmentPanel() {
     return () => {
       disposed = true;
     };
-  }, [assessmentAudit?.rootRunId, dispatch, latestAssessmentRoot]);
+  }, [assessmentAudit?.rootRunId, dispatch, latestAssessmentRoot, reloadStudentExperience]);
 
-  const selectedCapabilities = useMemo<CapabilityDTO[]>(
-    () => {
-      const audited = auditedCapabilities(assessmentAudit?.capabilityChanges ?? []);
-      return audited.length > 0 ? audited : assessment?.updatedCapabilities ?? [];
-    },
-    [assessment?.updatedCapabilities, assessmentAudit?.capabilityChanges],
-  );
+  const selectedCapabilities = useMemo<CapabilityDTO[]>(() => {
+    const persisted = experience?.capabilities ?? [];
+    const audited = auditedCapabilities(assessmentAudit?.capabilityChanges ?? []);
+    const workflowCapabilities = assessment?.updatedCapabilities ?? [];
+    const updates = audited.length > 0 ? audited : workflowCapabilities;
+    if (!persisted.length) return updates;
+    if (!updates.length) return persisted;
+    const merged = new Map(persisted.map((capability) => [capability.dimension, capability]));
+    updates.forEach((capability) => merged.set(capability.dimension, capability));
+    return [...merged.values()];
+  }, [assessment?.updatedCapabilities, assessmentAudit?.capabilityChanges, experience?.capabilities]);
 
   // 提交完拿到 score 后，把 0 → score 做 1.2s 的缓动（同步喂给圆环 SVG）。
   useEffect(() => {
@@ -319,8 +341,9 @@ export function AssessmentPanel() {
         ]),
       ),
     );
+    setQuestionPage(0);
     setError('');
-    setDemoDraftNotice('已填入可编辑的受控演示作答；尚未提交、评分或更新能力画像。');
+    setDemoDraftNotice(`已填入 ${Object.keys(usableDemoDraft.answers).length} 道可编辑的受控演示作答；尚未提交、评分或更新能力画像。`);
   };
 
   const submit = async () => {
@@ -506,7 +529,7 @@ export function AssessmentPanel() {
                     受控演示作答
                   </p>
                   <p className="mt-1 text-xs leading-5 text-brand-blue-900">
-                    仅会把当前 demo 学生的已持久化作答记录写入可编辑草稿；不会预填分数、能力画像或成功状态。
+                    仅会把当前 demo 学生的 36 道持久化冻结题目作答写入可编辑草稿；不会预填分数、能力画像或成功状态。
                   </p>
                 </div>
                 {usableDemoDraft && (
@@ -517,7 +540,7 @@ export function AssessmentPanel() {
                     className="inline-flex items-center gap-1.5 rounded-md border border-brand-blue-300 bg-white px-3 py-2 text-sm font-medium text-brand-blue-700 hover:bg-brand-blue-50 disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     <ClipboardPenLine className="h-4 w-4" />
-                    填充受控演示作答
+                    一键填充 {Object.keys(usableDemoDraft.answers).length} 道题
                   </button>
                 )}
               </div>
@@ -532,10 +555,43 @@ export function AssessmentPanel() {
               <p className="mt-2 text-[11px] leading-5 text-slate-600">{demoDraft.source_boundary}</p>
             </section>
           )}
-          {questions.map((question, index) => (
+          {questions.length > 0 && (
+            <section className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5" aria-label="评估题目进度">
+              <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-600">
+                <span>已完成 {answeredQuestionCount}/{questions.length} 题</span>
+                <span>第 {questionPage + 1}/{questionPageCount} 页，每页 {QUESTIONS_PER_PAGE} 题</span>
+              </div>
+              <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-200" aria-hidden>
+                <div
+                  className="h-full rounded-full bg-brand-blue-600 transition-[width] duration-300"
+                  style={{ width: `${(answeredQuestionCount / questions.length) * 100}%` }}
+                />
+              </div>
+              {questionPageCount > 1 && (
+                <div className="mt-3 flex flex-wrap gap-1.5" aria-label="评估题目分页">
+                  {Array.from({ length: questionPageCount }, (_, page) => (
+                    <button
+                      key={page}
+                      type="button"
+                      onClick={() => setQuestionPage(page)}
+                      aria-current={page === questionPage ? 'page' : undefined}
+                      className={`min-w-8 rounded-md border px-2 py-1 text-xs font-medium ${
+                        page === questionPage
+                          ? 'border-brand-blue-600 bg-brand-blue-600 text-white'
+                          : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-100'
+                      }`}
+                    >
+                      {page + 1}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </section>
+          )}
+          {visibleQuestions.map((question, index) => (
             <div key={question.id} className="rounded-lg border border-slate-100 p-4">
               <p className="text-sm font-semibold text-slate-900">
-                {index + 1}. {question.prompt}
+                {questionPage * QUESTIONS_PER_PAGE + index + 1}. {question.prompt}
               </p>
               {question.type !== 'short' && <div className="mt-3 grid gap-2">
                 {question.options.map((option) => {
@@ -624,11 +680,11 @@ export function AssessmentPanel() {
       </Card>
 
       <div className="space-y-4">
-        <Card title="评估反馈" subtitle="分数与建议会写回画像">
+        <Card title="评估反馈" subtitle="仅展示成功 assessment_update_v2 的耐久反馈与能力回写">
           <div className="flex flex-col items-center gap-2 rounded-lg bg-slate-50 p-4">
             <ScoreRing score={hasSubmitted ? animatedScore : 0} />
             <p className="text-sm text-slate-500">
-              {hasSubmitted ? '当前评估得分' : '提交评估后查看得分'}
+              {hasSubmitted ? '当前耐久评估得分' : '提交后待耐久工作流成功再查看反馈'}
             </p>
             {hasSubmitted && score >= 80 && (
               <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] text-emerald-700">

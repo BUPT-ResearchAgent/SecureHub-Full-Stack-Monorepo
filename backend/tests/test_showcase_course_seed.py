@@ -19,7 +19,9 @@ from app.db.models.resource.generated_resource import GeneratedResource
 from app.db.models.teaching.teacher_production import (
     AssessmentAssignment,
     AssessmentGradeDecision,
+    AssessmentItem,
     AssessmentSubmission,
+    AssessmentVersion,
     ClassWeaknessSnapshot,
 )
 from app.db.models.workflow_runtime import WorkflowEvidenceSnapshot
@@ -30,10 +32,13 @@ from app.db.seeds.seed_education_domain import (
 )
 from app.db.seeds.seed_showcase_course import (
     MANIFEST_VERSION,
+    SHOWCASE_DEMO_COMPREHENSIVE_ASSESSMENT_KEY,
     SHOWCASE_LECTURE_ASSET_ID,
     SHOWCASE_LECTURE_DOCUMENT_ID,
     SHOWCASE_LECTURE_OBJECT_KEY,
     SHOWCASE_LECTURE_PATH,
+    _demo_comprehensive_quiz_ids,
+    _id,
     _parse_args,
     _read_showcase_lecture,
     _require_explicit_opt_in,
@@ -117,8 +122,9 @@ async def test_showcase_seed_is_idempotent_consumable_and_profile_scoped(sqlite_
         "path_versions": 33,
         "path_candidates": 1,
         "resource_recommendations": 2,
-        "assignments": 3,
+        "assignments": 4,
         "submitted_or_late": 26,
+        "demo_assessment_questions": 36,
         "demo_assessment_drafts": 1,
         "snapshots": 4,
         "recommendations": 2,
@@ -192,7 +198,34 @@ async def test_showcase_seed_is_idempotent_consumable_and_profile_scoped(sqlite_
         and row.version > 1
         for row in resources
     ) >= 3
-    assert len(list((await sqlite_session.execute(select(AssessmentAssignment))).scalars())) == 3
+    assert len(list((await sqlite_session.execute(select(AssessmentAssignment))).scalars())) == 4
+    demo_assignment = await sqlite_session.get(
+        AssessmentAssignment,
+        _id("assessment-assignment", SHOWCASE_DEMO_COMPREHENSIVE_ASSESSMENT_KEY),
+    )
+    assert demo_assignment is not None
+    assert demo_assignment.target_type == "student"
+    assert demo_assignment.student_id == DEMO_USER_ID
+    demo_version = await sqlite_session.get(AssessmentVersion, demo_assignment.assessment_version_id)
+    assert demo_version is not None and demo_version.state == "published"
+    demo_items = list(
+        (
+            await sqlite_session.execute(
+                select(AssessmentItem)
+                .where(AssessmentItem.assessment_version_id == demo_version.id)
+                .order_by(AssessmentItem.position)
+            )
+        ).scalars()
+    )
+    assert len(demo_items) == 36
+    assert [item.position for item in demo_items] == list(range(1, 37))
+    assert [item.quiz_item_id for item in demo_items] == _demo_comprehensive_quiz_ids(
+        {
+            item.canonical_key.rsplit(":", maxsplit=1)[-1]: item.id
+            for item in publishable
+            if item.canonical_key.startswith("websec:showcase:v1:")
+        }
+    )
     assert len(
         [
             row

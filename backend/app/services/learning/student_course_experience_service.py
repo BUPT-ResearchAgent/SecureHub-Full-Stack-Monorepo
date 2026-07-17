@@ -498,6 +498,7 @@ class StudentCourseExperienceService:
         if (
             result.get("seed_profile") != "showcase_course"
             or result.get("source_kind") != "curated-demo"
+            or result.get("assessment_profile") != "websec_comprehensive_36"
         ):
             return None
 
@@ -524,6 +525,8 @@ class StudentCourseExperienceService:
             ).scalars()
         )
         expected_ids = {str(item.quiz_item_id) for item in items}
+        if len(items) != 36 or len(expected_ids) != 36:
+            return None
         raw_answers = result.get("answers")
         if not expected_ids or not isinstance(raw_answers, dict):
             return None
