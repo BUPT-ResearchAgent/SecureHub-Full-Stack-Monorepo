@@ -446,6 +446,40 @@ async def _ensure(
     return row, False
 
 
+def _controlled_answer_maps_match(
+    persisted: object,
+    expected: dict[str, str | list[str]],
+) -> bool:
+    """Check whether a durable demo submission is the same controlled draft.
+
+    The seed uses this solely to decide whether a previously submitted demo
+    remains safe to expose as a recovery action. It never grades, rewrites,
+    or treats the comparison as a workflow success.
+    """
+
+    if not isinstance(persisted, dict) or set(map(str, persisted)) != set(expected):
+        return False
+
+    def signature(value: object) -> tuple[str, ...] | None:
+        if isinstance(value, list):
+            values = value
+        elif isinstance(value, str):
+            values = value.split(";")
+        else:
+            return None
+        normalized = sorted(
+            "".join(str(item).strip().lower().split())
+            for item in values
+            if str(item).strip()
+        )
+        return tuple(normalized) if normalized else None
+
+    return all(
+        signature(persisted.get(item_id)) == signature(answer)
+        for item_id, answer in expected.items()
+    )
+
+
 def _read_showcase_lecture() -> tuple[str, list[tuple[str, str]]]:
     """Load the versioned local lecture and retain its semantic section boundaries."""
 
@@ -1961,17 +1995,24 @@ async def _seed_demo_comprehensive_assessment(
         idempotency_key=f"{PROFILE}:{key}",
     )
     counts["assessment_assignments"] += int(created)
-    _, created = await _ensure(
-        session,
-        AssessmentSubmission,
-        _id("assessment-submission", f"{key}:{DEMO_USER_ID}"),
-        assignment_id=assignment_id,
-        student_id=DEMO_USER_ID,
-        answers={},
-        submitted_at=None,
-        status="open",
-    )
-    counts["assessment_submissions"] += int(created)
+    submission_id = _id("assessment-submission", f"{key}:{DEMO_USER_ID}")
+    existing_submission = await session.get(AssessmentSubmission, submission_id)
+    if existing_submission is None:
+        # The initial controlled scene starts with a real empty submission.
+        # After the learner explicitly submits, repeat seed commands must not
+        # turn that durable work back into an empty draft.
+        session.add(
+            AssessmentSubmission(
+                id=submission_id,
+                assignment_id=assignment_id,
+                student_id=DEMO_USER_ID,
+                answers={},
+                submitted_at=None,
+                status="open",
+            )
+        )
+        await session.flush()
+        counts["assessment_submissions"] += 1
 
 
 async def _seed_demo_assessment_draft(session: AsyncSession, counts: dict[str, int]) -> None:
@@ -1991,8 +2032,6 @@ async def _seed_demo_assessment_draft(session: AsyncSession, counts: dict[str, i
         AssessmentSubmission,
         _id("assessment-submission", f"{SHOWCASE_DEMO_COMPREHENSIVE_ASSESSMENT_KEY}:{DEMO_USER_ID}"),
     )
-    if submission is None or submission.status != "open" or submission.answers:
-        raise RuntimeError("showcase demo assessment draft requires an empty open submission")
     items = list(
         (
             await session.execute(
@@ -2017,6 +2056,23 @@ async def _seed_demo_assessment_draft(session: AsyncSession, counts: dict[str, i
         )
     if len(answers) != len(items):
         raise RuntimeError("showcase demo assessment draft has duplicate question references")
+    if (
+        submission is None
+        or submission.assignment_id != assignment_id
+        or submission.student_id != DEMO_USER_ID
+    ):
+        raise RuntimeError("showcase demo assessment draft is missing its current-student submission")
+    if submission.status == "open":
+        if submission.answers:
+            raise RuntimeError("showcase demo assessment draft found a non-empty open submission")
+    elif submission.status in {"submitted", "late"}:
+        # A completed controlled evaluation may be reviewed or deliberately
+        # re-evaluated through the real workflow.  Preserve it only when its
+        # durable answers are exactly the retained controlled draft.
+        if not _controlled_answer_maps_match(submission.answers, answers):
+            raise RuntimeError("showcase demo assessment submission no longer matches its controlled draft")
+    else:
+        raise RuntimeError("showcase demo assessment submission is not recoverable")
 
     resource_id = _id("resource", SHOWCASE_DEMO_ASSESSMENT_RESOURCE_KEY)
     resource_content = {
@@ -2341,6 +2397,25 @@ async def _verify(session: AsyncSession) -> dict[str, Any]:
         LearningEvent,
         _id("learning-event", SHOWCASE_DEMO_ASSESSMENT_EVENT_KEY),
     )
+    draft_result = dict(demo_assessment_draft_event.result or {}) if demo_assessment_draft_event else {}
+    draft_answers = draft_result.get("answers")
+    demo_submission_is_recoverable = (
+        demo_assessment_submission is not None
+        and (
+            (
+                demo_assessment_submission.status == "open"
+                and not demo_assessment_submission.answers
+            )
+            or (
+                demo_assessment_submission.status in {"submitted", "late"}
+                and isinstance(draft_answers, dict)
+                and _controlled_answer_maps_match(
+                    demo_assessment_submission.answers,
+                    draft_answers,
+                )
+            )
+        )
+    )
     resource_types = {row.resource_type for row in resource_rows}
     lineage_rows = [row for row in resource_rows if row.parent_resource_id and row.lineage_root_id and row.version > 1]
     resource_by_id = {row.id: row for row in resource_rows}
@@ -2406,9 +2481,7 @@ async def _verify(session: AsyncSession) -> dict[str, Any]:
     ):
         errors.append("默认 demo 学生缺少可追溯的课程资源推荐")
     if (
-        demo_assessment_submission is None
-        or demo_assessment_submission.status != "open"
-        or bool(demo_assessment_submission.answers)
+        not demo_submission_is_recoverable
         or demo_assessment is None
         or demo_assessment.kind != "exam"
         or demo_assessment.status != "published"
@@ -2431,8 +2504,7 @@ async def _verify(session: AsyncSession) -> dict[str, Any]:
         or not demo_assessment_resource.evidence_chunk_ids
         or demo_assessment_resource.content.get("question_count") != 36
     ):
-        errors.append("默认 demo 学生缺少 36 道冻结题目的可提交综合评估或能力回写基线")
-    draft_result = dict(demo_assessment_draft_event.result or {}) if demo_assessment_draft_event else {}
+        errors.append("默认 demo 学生缺少 36 道冻结题目的可提交或可恢复综合评估基线")
     if (
         demo_assessment_draft_event is None
         or demo_assessment_draft_event.user_id != DEMO_USER_ID

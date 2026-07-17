@@ -45,7 +45,7 @@ from app.db.models.teaching.teacher_production import (
     AssessmentSubmission,
     AssessmentVersion,
 )
-from app.db.models.workflow_runtime import WorkflowEvidenceSnapshot, WorkflowRun
+from app.db.models.workflow_runtime import WorkflowEvidenceSnapshot
 from app.schemas.student_course_experience import (
     StudentCourseAssessmentDTO,
     StudentCourseAssignmentDTO,
@@ -481,8 +481,9 @@ class StudentCourseExperienceService:
         for the controlled showcase profile, a current assignment already in
         this student's projection, and an owned active quiz resource that the
         normal assessment workflow will validate again before it can run. A
-        failed feedback root remains recoverable from the already-persisted
-        submission; a successful root never reopens the demo shortcut.
+        submitted controlled answer set remains recoverable for review and a
+        deliberately audited re-evaluation; it is never reopened as a new
+        blank submission or used to overwrite the learner's durable result.
         """
 
         event = await self.session.scalar(
@@ -554,6 +555,29 @@ class StudentCourseExperienceService:
         if set(answers) != expected_ids:
             return None
 
+        submission = await self.session.scalar(
+            select(AssessmentSubmission).where(
+                AssessmentSubmission.assignment_id == assignment_id,
+                AssessmentSubmission.student_id == user_id,
+            )
+        )
+        if submission is None:
+            return None
+        if submission.status == "open":
+            # An open controlled submission must remain genuinely empty until
+            # the learner explicitly submits the editable draft.
+            if submission.answers:
+                return None
+        elif submission.status in {"submitted", "late"}:
+            # Once submitted, only expose the recovery action when the
+            # persisted answer set is exactly the controlled draft.  This
+            # avoids presenting seed answers for a learner-edited submission
+            # that the real workflow would correctly reject as mismatched.
+            if not _assessment_answer_maps_match(submission.answers, answers):
+                return None
+        else:
+            return None
+
         resource_ids = _uuid_values([result.get("quiz_resource_id")])
         if len(resource_ids) != 1:
             return None
@@ -570,11 +594,6 @@ class StudentCourseExperienceService:
         assignment_dto = next(
             item for item in assignments if item.id == assignment_id
         )
-        if assignment_dto.learner_status in {"submitted", "late"} and await self._has_successful_assessment_feedback(
-            user_id=user_id,
-            assignment_id=assignment_id,
-        ):
-            return None
         return StudentCourseDemoAssessmentDraftDTO(
             assignment_id=assignment_id,
             assignment_title=assignment_dto.title,
@@ -585,34 +604,6 @@ class StudentCourseExperienceService:
                 result.get("source_boundary")
                 or "受控预置演示作答仅填入可编辑草稿；分数、能力和路径只会在真实提交与工作流完成后更新。"
             ),
-        )
-
-    async def _has_successful_assessment_feedback(
-        self,
-        *,
-        user_id: UUID,
-        assignment_id: UUID,
-    ) -> bool:
-        """Check durable roots in Python to keep JSON lookup portable to SQLite/PostgreSQL."""
-
-        runs = list(
-            (
-                await self.session.execute(
-                    select(WorkflowRun)
-                    .where(
-                        WorkflowRun.user_id == user_id,
-                        WorkflowRun.workflow_name == "assessment_update_v2",
-                        WorkflowRun.status == "succeeded",
-                    )
-                    .order_by(WorkflowRun.finished_at.desc(), WorkflowRun.id.desc())
-                )
-            ).scalars()
-        )
-        return any(
-            isinstance(run.input_payload, dict)
-            and isinstance(run.input_payload.get("context"), dict)
-            and str(run.input_payload["context"].get("assessment_assignment_id")) == str(assignment_id)
-            for run in runs
         )
 
     async def _tutor_evidence(
@@ -774,6 +765,41 @@ def _learner_assignment_status(
     if grade.status == "teacher_reviewed":
         return "teacher_review", None, "教师复核中，当前不显示未发布成绩。"
     return "grading", None, "系统评分或教师复核中，当前不显示未发布成绩。"
+
+
+def _assessment_answer_maps_match(
+    persisted: object,
+    expected: dict[str, str | list[str]],
+) -> bool:
+    """Compare a durable submission with the controlled draft without grading it.
+
+    This only establishes whether it is truthful to offer the demo learner a
+    recovery view of the same frozen answers.  It deliberately does not treat
+    a matching answer set as a score, QualityCheck result, or capability
+    update.
+    """
+
+    if not isinstance(persisted, dict) or set(map(str, persisted)) != set(expected):
+        return False
+
+    def signature(value: object) -> tuple[str, ...] | None:
+        if isinstance(value, list):
+            values = value
+        elif isinstance(value, str):
+            values = value.split(";")
+        else:
+            return None
+        normalized = sorted(
+            "".join(str(item).strip().lower().split())
+            for item in values
+            if str(item).strip()
+        )
+        return tuple(normalized) if normalized else None
+
+    return all(
+        signature(persisted.get(item_id)) == signature(answer)
+        for item_id, answer in expected.items()
+    )
 
 
 def _knowledge_metric(

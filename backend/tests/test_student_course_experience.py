@@ -15,6 +15,8 @@ from app.api.v1.endpoints.teaching import (
 )
 from app.db.models.identity.user import User
 from app.db.models.learning.quiz_attempt import QuizAttempt
+from app.db.models.teaching.teacher_production import AssessmentSubmission
+from app.db.models.workflow_runtime import WorkflowRun
 from app.db.seeds._constants import COURSE_WEBSEC_ID, DEMO_USER_ID
 from app.db.seeds.seed_education_domain import DEMO_COURSE_TEACHER_ID
 from app.db.seeds.seed_showcase_course import (
@@ -23,6 +25,7 @@ from app.db.seeds.seed_showcase_course import (
     SHOWCASE_DEMO_STUDENT_DISPLAY_NAME,
     _student_id,
     run,
+    verify,
 )
 from app.schemas.teacher_production import SubmitAssessmentRequest
 
@@ -145,6 +148,42 @@ async def test_demo_comprehensive_assessment_uses_frozen_36_items_and_real_submi
     )
     assert submission.status in {"submitted", "late"}
     assert submission.student_id == DEMO_USER_ID
+
+    # A durable feedback root must not make the real submitted answer set
+    # disappear from the controlled recovery projection.  It stays a review
+    # and explicitly audited re-evaluation entry, not a new blank attempt.
+    sqlite_session.add(
+        WorkflowRun(
+            workflow_name="assessment_update_v2",
+            user_id=DEMO_USER_ID,
+            status="succeeded",
+            input_payload={
+                "context": {"assessment_assignment_id": str(draft.assignment_id)}
+            },
+            idempotency_key="test:demo-comprehensive-assessment-success",
+        )
+    )
+    await sqlite_session.flush()
+    recovered = await get_student_course_experience(
+        course_id=str(COURSE_WEBSEC_ID), session=sqlite_session, user=demo_student
+    )
+    assert recovered.assessment_demo_draft is not None
+    assert recovered.assessment_demo_draft.answers == draft.answers
+
+    # Re-running the controlled seed must retain the learner's durable
+    # submission rather than silently reopening it with an empty answer map.
+    await run(sqlite_session)
+    persisted = await sqlite_session.get(
+        AssessmentSubmission,
+        _id(
+            "assessment-submission",
+            f"{SHOWCASE_DEMO_COMPREHENSIVE_ASSESSMENT_KEY}:{DEMO_USER_ID}",
+        ),
+    )
+    assert persisted is not None
+    assert persisted.status in {"submitted", "late"}
+    assert persisted.answers == draft.answers
+    assert (await verify(sqlite_session))["valid"] is True
 
 
 @pytest.mark.anyio
