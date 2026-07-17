@@ -404,11 +404,24 @@ class WorkflowActionService:
         from app.db.models.knowledge.knowledge_node import KnowledgeNode
         from app.db.models.learning.learning_path import LearningPath
         from app.db.models.learning.learning_task import LearningTask
+        from app.schemas.course_plan_profile import CoursePlanProfileSnapshot
 
         user_id = self._required_uuid(root_input.get("user_id"))
         course_id = self._course_id(root_input.get("course_id"))
         output = dict((state.get("generate_path") or {}).get("output") or {})
         task_specs = self._normalise_generated_path_tasks(output.get("nodes"))
+        try:
+            profile_snapshot = CoursePlanProfileSnapshot.model_validate(
+                root_input.get("profile_snapshot") or {}
+            )
+        except (TypeError, ValueError):
+            # Legacy roots may not have this field. Do not let an invalid
+            # optional audit projection block their already-accepted path.
+            profile_snapshot = CoursePlanProfileSnapshot()
+        personalization = {
+            "profile_snapshot": profile_snapshot.compact_payload(),
+            "rationale_codes": list(profile_snapshot.rationale_codes()),
+        }
 
         # A model may use an opaque identifier in a path node.  Only retain a
         # typed knowledge-node relation when it belongs to this course; the
@@ -453,6 +466,7 @@ class WorkflowActionService:
                 "nodes": output.get("nodes", []),
                 "edges": output.get("edges", []),
                 "milestones": output.get("milestones", []),
+                "personalization": personalization,
             },
         )
         self.session.add(path)
@@ -479,6 +493,7 @@ class WorkflowActionService:
             "path": output.get("nodes", []),
             "task_count": len(task_specs),
             "quality_score": self._as_float(output.get("quality_score")),
+            "personalization": personalization,
         }
 
     async def persist_capability(

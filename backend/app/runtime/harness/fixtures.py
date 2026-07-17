@@ -10,6 +10,8 @@ This module centralizes:
 - LLM completion fixtures keyed by skill name
 """
 
+from copy import deepcopy
+import json
 from typing import Any
 
 # --- Evidence fixtures ---------------------------------------------------
@@ -523,8 +525,122 @@ def default_llm_output(skill_name: str) -> dict[str, Any]:
     """Return a deep-ish copy of the canned LLM output for a skill, or a generic stub."""
     template = _DEFAULT_LLM_OUTPUTS.get(skill_name)
     if template is not None:
-        return dict(template)
+        return deepcopy(template)
     return {
         "content": f"[fixture] no canned output for skill {skill_name}, returning generic stub.",
         "quality_score": 0.6,
     }
+
+
+def fixture_llm_output(skill_name: str, *, prompt: str = "") -> dict[str, Any]:
+    """Return a deterministic fixture, including server-owned path variants.
+
+    Fixture mode is not a surrogate for T09. It does, however, need to model
+    the same bounded course-plan contract as the production prompt so local
+    paired tests can verify profile propagation without randomness.
+    """
+    output = default_llm_output(skill_name)
+    if skill_name != "GenerateLearningPath":
+        return output
+
+    from app.schemas.course_plan_profile import CoursePlanProfileSnapshot
+
+    snapshot = _course_plan_snapshot_from_prompt(prompt)
+    codes = snapshot.rationale_codes()
+    if not codes:
+        return output
+
+    nodes = output.get("nodes")
+    if not isinstance(nodes, list) or len(nodes) < 3:
+        return output
+    path_nodes = [dict(node) if isinstance(node, dict) else node for node in nodes]
+    if not all(isinstance(node, dict) for node in path_nodes):
+        return output
+
+    # Each variation is grounded in a fixed server classification, never in
+    # a raw profile string or clock/random value. Existing node IDs remain so
+    # the fixture still exercises the durable task materialisation path.
+    if "foundation_reinforcement" in codes:
+        path_nodes[0]["title"] = "Reinforce request-to-query boundaries"
+        path_nodes[0]["est_minutes"] = 40
+    elif "advanced_acceleration" in codes:
+        path_nodes[0]["title"] = "Accelerated SQLi threat-model review"
+        path_nodes[0]["est_minutes"] = 20
+
+    if "application_security_goal" in codes:
+        path_nodes[2]["title"] = "Apply parameterized queries in application review"
+    elif "secure_backend_goal" in codes:
+        path_nodes[2]["title"] = "Harden backend query boundaries"
+    elif "general_security_goal" in codes:
+        path_nodes[2]["title"] = "Validate parameterized-query defenses"
+
+    if "video_preference" in codes:
+        path_nodes[1]["title"] = "Watch a defensive SQLi walkthrough"
+    elif "lab_preference" in codes:
+        path_nodes[1]["title"] = "Practice defensive SQLi validation in a lab"
+    elif "quiz_preference" in codes:
+        path_nodes[1]["title"] = "Check SQLi payload recognition with a quiz"
+    elif "presentation_preference" in codes:
+        path_nodes[1]["title"] = "Review SQLi defense concepts in a slide deck"
+    elif "mindmap_preference" in codes:
+        path_nodes[1]["title"] = "Map SQLi attack and defense relationships"
+    elif "readings_preference" in codes:
+        path_nodes[1]["title"] = "Read an evidence-backed SQLi defense guide"
+    elif "document_preference" in codes:
+        path_nodes[1]["title"] = "Read a structured SQLi defense guide"
+
+    if "assessment_gap_reinforcement" in codes:
+        path_nodes.append(
+            {
+                "id": "fixture-assessment-gap-review",
+                "title": "Complete a targeted assessment-gap reinforcement",
+                "task_type": "practice",
+                "est_minutes": 25,
+            }
+        )
+    elif "known_weak_point_reinforcement" in codes:
+        path_nodes.append(
+            {
+                "id": "fixture-known-gap-review",
+                "title": "Complete a known weak-point reinforcement",
+                "task_type": "practice",
+                "est_minutes": 25,
+            }
+        )
+    elif "general_gap_reinforcement" in codes:
+        path_nodes.append(
+            {
+                "id": "fixture-general-gap-review",
+                "title": "Complete a general gap reinforcement",
+                "task_type": "practice",
+                "est_minutes": 25,
+            }
+        )
+
+    output["nodes"] = path_nodes
+    output["personalization_rationale"] = list(codes)
+    output["content"] = "Fixture learning path tailored to the durable profile projection."
+    return output
+
+
+def _course_plan_snapshot_from_prompt(prompt: str):
+    """Parse only the ContextBuilder task JSON; malformed prompts use default."""
+    from app.schemas.course_plan_profile import CoursePlanProfileSnapshot
+
+    task_marker = "[Task]\n"
+    schema_marker = "\n\nReturn JSON matching:"
+    start = prompt.find(task_marker)
+    if start < 0:
+        return CoursePlanProfileSnapshot()
+    start += len(task_marker)
+    end = prompt.find(schema_marker, start)
+    if end < 0:
+        return CoursePlanProfileSnapshot()
+    try:
+        task = json.loads(prompt[start:end])
+        if not isinstance(task, dict):
+            return CoursePlanProfileSnapshot()
+        snapshot = task.get("profile_snapshot")
+        return CoursePlanProfileSnapshot.model_validate(snapshot if isinstance(snapshot, dict) else {})
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return CoursePlanProfileSnapshot()

@@ -173,7 +173,7 @@ class FixtureProvider(BaseLLMProvider):
         )
 
     def _fixture_content(self, prompt: str) -> str:
-        from app.runtime.harness.fixtures import default_llm_output
+        from app.runtime.harness.fixtures import fixture_llm_output
 
         # 从 prompt 中识别 skill 名并返回对应 fixture
         for skill_name in [
@@ -184,7 +184,7 @@ class FixtureProvider(BaseLLMProvider):
         ]:
             if skill_name.lower() in prompt.lower():
                 import json
-                return json.dumps(default_llm_output(skill_name), ensure_ascii=False)
+                return json.dumps(fixture_llm_output(skill_name, prompt=prompt), ensure_ascii=False)
         import json
         return json.dumps({"content": f"[fixture] {prompt[:80]}...", "quality_score": 0.75}, ensure_ascii=False)
 
