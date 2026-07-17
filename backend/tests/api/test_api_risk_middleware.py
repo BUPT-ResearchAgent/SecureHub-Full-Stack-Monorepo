@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncIterator
 from pathlib import Path
 
 import pytest
@@ -68,3 +69,47 @@ async def test_api_risk_middleware_persists_redacted_audit_with_one_event_loop(
         assert asyncio.get_running_loop() is event_loop
     finally:
         await engine.dispose()
+
+
+@pytest.mark.anyio
+async def test_api_risk_middleware_skips_independent_audit_for_overridden_http_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Keep isolated HTTP contracts from opening an unrelated audit session."""
+
+    event_loop = asyncio.get_running_loop()
+    middleware_app = FastAPI()
+    middleware_app.add_middleware(ApiRiskMiddleware, enabled=True)
+
+    @middleware_app.get("/api/v1/isolated-probe")
+    async def isolated_probe() -> dict[str, bool]:
+        return {"ok": True}
+
+    async def isolated_get_session() -> AsyncIterator[None]:
+        yield None
+
+    sessionmaker_calls = 0
+
+    def unexpected_sessionmaker() -> object:
+        nonlocal sessionmaker_calls
+        sessionmaker_calls += 1
+        raise AssertionError("isolated HTTP request must not open an audit session")
+
+    monkeypatch.setattr(api_risk_middleware, "get_sessionmaker", unexpected_sessionmaker)
+    had_previous_override = get_session in middleware_app.dependency_overrides
+    previous_override = middleware_app.dependency_overrides.get(get_session)
+    middleware_app.dependency_overrides[get_session] = isolated_get_session
+    try:
+        transport = ASGITransport(app=middleware_app)
+        async with AsyncClient(transport=transport, base_url="http://testserver") as client:
+            response = await client.get("/api/v1/isolated-probe")
+
+        assert response.status_code == 200
+        assert response.json() == {"ok": True}
+        assert sessionmaker_calls == 0
+        assert asyncio.get_running_loop() is event_loop
+    finally:
+        if had_previous_override:
+            middleware_app.dependency_overrides[get_session] = previous_override
+        else:
+            middleware_app.dependency_overrides.pop(get_session, None)
