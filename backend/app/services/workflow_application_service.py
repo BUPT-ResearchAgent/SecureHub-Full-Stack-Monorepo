@@ -185,10 +185,11 @@ class WorkflowApplicationService:
                         raw_answers=validated_input.get("answers"),
                         context=validated_input.get("context"),
                     )
-                    # The root retains only a bounded, server-derived prompt
-                    # projection. The full learner answers remain in the
-                    # immutable published submission and are never copied
-                    # into a model prompt by the browser.
+                    # The root retains a server-derived prompt projection.
+                    # Complete answers are retained only while they fit the
+                    # bounded transport budget; the immutable published
+                    # submission remains the authorization source and is
+                    # never copied from the browser straight into a prompt.
                     validated_input["answers"] = prepared_answers
                     validated_input["context"] = prepared_context
                 capability_dimensions, persona_dimension_keys = await self._assessment_feedback_constraints(
@@ -1021,7 +1022,14 @@ class WorkflowApplicationService:
         )
         # Keep the summary on a real answer reference, rather than adding a
         # synthetic "answer" that would inflate the audit's answered count.
-        prompt_answers[0]["assessment_summary"] = summary
+        # The projection retains complete answers when they fit the Skill
+        # guardrail budget.  If a learner response is unusually long it is
+        # explicitly marked as a bounded excerpt, while the frozen objective
+        # scoring facts remain intact and authoritative.
+        prompt_answers = cls._bounded_assessment_prompt_answers(
+            prompt_answers,
+            summary=summary,
+        )
         canonical_context = {
             key: value
             for key, value in raw_context.items()
@@ -1208,18 +1216,31 @@ class WorkflowApplicationService:
         objective_matched = 0
         objective_review = 0
         subjective_submitted = 0
+        objective_earned_points = 0.0
+        objective_total_points = 0.0
+        total_assessment_points = 0.0
         for item, quiz_item, node in item_rows:
             item_id = str(item.quiz_item_id)
             learner_answer = persisted_answers[item_id]
+            try:
+                points = max(0.0, float(item.points))
+            except (TypeError, ValueError):
+                points = 0.0
+            total_assessment_points += points
             answers.append(
                 {
                     "quiz_item_id": item_id,
-                    "answer": WorkflowApplicationService._assessment_answer_excerpt(learner_answer),
+                    # The root has already verified this answer against the
+                    # immutable student submission. Do not shorten a normal
+                    # answer here: the former four-character projection made
+                    # valid Chinese answers look incomplete to RunAssessment.
+                    "answer": learner_answer,
                 }
             )
             topic_name = str(node.name).strip()[:24] or "未命名知识点"
             topic = topics[topic_name]
             if item.grading_mode == "objective":
+                objective_total_points += points
                 snapshot = item.question_snapshot if isinstance(item.question_snapshot, dict) else {}
                 expected = str(snapshot.get("answer") or quiz_item.answer or "").strip()
                 if not expected:
@@ -1230,6 +1251,7 @@ class WorkflowApplicationService:
                     )
                 if WorkflowApplicationService._assessment_answer_values_match(expected, learner_answer):
                     objective_matched += 1
+                    objective_earned_points += points
                     topic["objective_matched"] = int(topic["objective_matched"]) + 1
                 else:
                     objective_review += 1
@@ -1256,16 +1278,81 @@ class WorkflowApplicationService:
             for name, stats in sorted(topics.items())
             if stats["objective_review"] or stats["subjective_submitted"]
         ]
+        objective_floor_score = (
+            objective_earned_points / total_assessment_points
+            if total_assessment_points > 0
+            else 0.0
+        )
         return answers, {
             "source": "server_verified_published_submission",
             "objective": [objective_matched, objective_review],
             "subjective_submitted": subjective_submitted,
             "topic_schema": "[knowledge_point,objective_matched,objective_review,subjective_submitted]",
             "topics": topic_rows,
+            # This is a server-side deterministic result from the frozen
+            # assessment version and durable submission. It is a floor over
+            # the complete paper, not a frontend demo score and not an AI
+            # estimate of subjective answers.
+            "scoring": {
+                "source": "server_verified_frozen_objective_items",
+                "objective_earned_points": round(objective_earned_points, 6),
+                "objective_total_points": round(objective_total_points, 6),
+                "total_assessment_points": round(total_assessment_points, 6),
+                "objective_floor_score": round(objective_floor_score, 6),
+            },
         }
 
     @staticmethod
-    def _assessment_answer_excerpt(value: str | list[str], *, limit: int = 4) -> str | list[str]:
+    def _bounded_assessment_prompt_answers(
+        answers: list[dict[str, Any]],
+        *,
+        summary: dict[str, Any],
+        max_serialized_chars: int = 5_200,
+    ) -> list[dict[str, Any]]:
+        """Preserve full verified answers until a safe prompt budget requires excerpts.
+
+        ``SkillExecutor`` independently applies its unchanged 8,000-character
+        input guardrail. This helper leaves enough room for the typed workflow
+        fields and avoids repeating a valid answer as a misleading four-
+        character fragment. The scoring summary is not derived from excerpts.
+        """
+
+        def candidate(limit: int | None) -> list[dict[str, Any]]:
+            projected = [
+                {
+                    "quiz_item_id": str(item["quiz_item_id"]),
+                    "answer": (
+                        item["answer"]
+                        if limit is None
+                        else WorkflowApplicationService._assessment_answer_excerpt(
+                            item["answer"],
+                            limit=limit,
+                        )
+                    ),
+                }
+                for item in answers
+            ]
+            if projected:
+                projected[0]["assessment_summary"] = {
+                    **summary,
+                    "answer_transport": {
+                        "mode": "full" if limit is None else "bounded_excerpt",
+                        "excerpt_limit": limit,
+                    },
+                }
+            return projected
+
+        latest = candidate(None)
+        if len(json.dumps(latest, ensure_ascii=False, separators=(",", ":"))) <= max_serialized_chars:
+            return latest
+        for limit in (240, 160, 96, 64, 48, 32, 24, 16, 12, 8, 4):
+            latest = candidate(limit)
+            if len(json.dumps(latest, ensure_ascii=False, separators=(",", ":"))) <= max_serialized_chars:
+                return latest
+        return latest
+
+    @staticmethod
+    def _assessment_answer_excerpt(value: str | list[str], *, limit: int = 32) -> str | list[str]:
         if isinstance(value, str):
             return value[:limit]
         return [item[:limit] for item in value[:8]]
