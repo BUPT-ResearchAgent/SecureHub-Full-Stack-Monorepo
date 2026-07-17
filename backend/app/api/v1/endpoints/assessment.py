@@ -116,6 +116,11 @@ async def assessment_run(
         input_payload={
             "answers": payload.answers,
             "quiz_artifact_id": payload.quiz_artifact_id,
+            "context": (
+                {"assessment_assignment_id": str(payload.assessment_assignment_id)}
+                if payload.assessment_assignment_id is not None
+                else {}
+            ),
             "domain": product.domain,
         },
         mode=payload.mode,

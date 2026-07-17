@@ -253,7 +253,13 @@ export function createCourseTaskRequest(command: CourseTaskCommand): WorkflowRun
         input: {
           answers: command.payload.answers,
           quiz_artifact_id: command.payload.quizArtifactId,
-          context: { kp_id: kpId, current_path_node_ids: context.currentPathNodeIds },
+          context: {
+            kp_id: kpId,
+            current_path_node_ids: context.currentPathNodeIds,
+            ...(command.payload.assessmentAssignmentId
+              ? { assessment_assignment_id: assertUuid(command.payload.assessmentAssignmentId, 'assessmentAssignmentId') }
+              : {}),
+          },
         },
       };
     default:

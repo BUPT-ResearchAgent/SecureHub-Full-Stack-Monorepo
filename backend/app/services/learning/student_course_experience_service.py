@@ -45,7 +45,7 @@ from app.db.models.teaching.teacher_production import (
     AssessmentSubmission,
     AssessmentVersion,
 )
-from app.db.models.workflow_runtime import WorkflowEvidenceSnapshot
+from app.db.models.workflow_runtime import WorkflowEvidenceSnapshot, WorkflowRun
 from app.schemas.student_course_experience import (
     StudentCourseAssessmentDTO,
     StudentCourseAssignmentDTO,
@@ -478,9 +478,11 @@ class StudentCourseExperienceService:
         """Read one explicitly seeded, current-student assessment draft.
 
         The event is not a generic answer-key channel: it is accepted only
-        for the controlled showcase profile, an open assignment already in
+        for the controlled showcase profile, a current assignment already in
         this student's projection, and an owned active quiz resource that the
-        normal assessment workflow will validate again before it can run.
+        normal assessment workflow will validate again before it can run. A
+        failed feedback root remains recoverable from the already-persisted
+        submission; a successful root never reopens the demo shortcut.
         """
 
         event = await self.session.scalar(
@@ -506,7 +508,7 @@ class StudentCourseExperienceService:
             assignment.id
             for assignment in assignments
             if assignment.assignment_status == "active"
-            and assignment.learner_status == "not_started"
+            and assignment.learner_status in {"not_started", "submitted", "late"}
         }
         parsed_assignment = _uuid_values([result.get("assignment_id")])
         if len(parsed_assignment) != 1 or parsed_assignment[0] not in assignment_ids:
@@ -568,6 +570,11 @@ class StudentCourseExperienceService:
         assignment_dto = next(
             item for item in assignments if item.id == assignment_id
         )
+        if assignment_dto.learner_status in {"submitted", "late"} and await self._has_successful_assessment_feedback(
+            user_id=user_id,
+            assignment_id=assignment_id,
+        ):
+            return None
         return StudentCourseDemoAssessmentDraftDTO(
             assignment_id=assignment_id,
             assignment_title=assignment_dto.title,
@@ -578,6 +585,34 @@ class StudentCourseExperienceService:
                 result.get("source_boundary")
                 or "受控预置演示作答仅填入可编辑草稿；分数、能力和路径只会在真实提交与工作流完成后更新。"
             ),
+        )
+
+    async def _has_successful_assessment_feedback(
+        self,
+        *,
+        user_id: UUID,
+        assignment_id: UUID,
+    ) -> bool:
+        """Check durable roots in Python to keep JSON lookup portable to SQLite/PostgreSQL."""
+
+        runs = list(
+            (
+                await self.session.execute(
+                    select(WorkflowRun)
+                    .where(
+                        WorkflowRun.user_id == user_id,
+                        WorkflowRun.workflow_name == "assessment_update_v2",
+                        WorkflowRun.status == "succeeded",
+                    )
+                    .order_by(WorkflowRun.finished_at.desc(), WorkflowRun.id.desc())
+                )
+            ).scalars()
+        )
+        return any(
+            isinstance(run.input_payload, dict)
+            and isinstance(run.input_payload.get("context"), dict)
+            and str(run.input_payload["context"].get("assessment_assignment_id")) == str(assignment_id)
+            for run in runs
         )
 
     async def _tutor_evidence(

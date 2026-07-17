@@ -195,11 +195,13 @@ export function AssessmentPanel() {
     })),
     [demoAssignment?.items],
   );
+  const demoSubmissionAlreadyPersisted = demoAssignment?.submission_status === 'submitted'
+    || demoAssignment?.submission_status === 'late';
   const usableDemoDraft = useMemo(() => {
     if (
       !demoDraft
       || !demoAssignment
-      || demoAssignment.submission_status !== 'open'
+      || !['open', 'submitted', 'late'].includes(demoAssignment.submission_status)
       || !demoAssignmentQuestions.length
     ) {
       return null;
@@ -227,6 +229,7 @@ export function AssessmentPanel() {
     [course?.id, course?.previewContentKey, curatedQuestions, demoAssignmentQuestions, isPreview, isWebsec, presenterMode, realQuestions, usableDemoDraft],
   );
   const assessmentArtifactId = usableDemoDraft?.quiz_resource_id ?? quizResource?.id ?? null;
+  const demoAnswersLocked = Boolean(usableDemoDraft) && (demoAssignmentSubmitted || demoSubmissionAlreadyPersisted);
   const [answers, setAnswers] = useState<Record<string, AssessmentAnswer>>({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -343,7 +346,11 @@ export function AssessmentPanel() {
     );
     setQuestionPage(0);
     setError('');
-    setDemoDraftNotice(`已填入 ${Object.keys(usableDemoDraft.answers).length} 道可编辑的受控演示作答；尚未提交、评分或更新能力画像。`);
+    setDemoDraftNotice(
+      demoSubmissionAlreadyPersisted
+        ? `已载入 ${Object.keys(usableDemoDraft.answers).length} 道已持久化的受控演示作答；不会覆盖真实作业，提交后只会重试能力画像工作流。`
+        : `已填入 ${Object.keys(usableDemoDraft.answers).length} 道可编辑的受控演示作答；尚未提交、评分或更新能力画像。`,
+    );
   };
 
   const submit = async () => {
@@ -372,7 +379,7 @@ export function AssessmentPanel() {
     }));
     setSubmittedAnswers(submitted);
 
-    if (usableDemoDraft && !demoAssignmentSubmitted) {
+    if (usableDemoDraft && !demoAssignmentSubmitted && !demoSubmissionAlreadyPersisted) {
       try {
         const assignmentSubmission = await submitStudentAssessment(
           usableDemoDraft.assignment_id,
@@ -392,21 +399,19 @@ export function AssessmentPanel() {
         return;
       }
     }
+    if (usableDemoDraft && demoSubmissionAlreadyPersisted) {
+      setDemoAssignmentSubmitted(true);
+      setDemoDraftNotice('已引用此前真实提交的冻结作答；现在重新执行 Evidence、QualityCheck 与能力画像工作流。');
+    }
 
     startCourseTask({
       intent: 'run_assessment',
       context: taskContext,
       payload: {
         answers: submitted
-          .map((question) => ({
-            quiz_item_id: question.id,
-            answer: question.answer,
-            kp_id: question.kpId ?? taskContext.kpId,
-            question: question.prompt,
-            options: questions.find((candidate) => candidate.id === question.id)?.options ?? [],
-            question_type: questions.find((candidate) => candidate.id === question.id)?.type ?? 'single',
-          })),
+          .map((question) => ({ quiz_item_id: question.id, answer: question.answer })),
         quizArtifactId: assessmentArtifactId,
+        assessmentAssignmentId: usableDemoDraft?.assignment_id,
       },
     }, createCourseTaskLifecycle('run_assessment', dispatch, {
       onProgress(progress) {
@@ -529,7 +534,9 @@ export function AssessmentPanel() {
                     受控演示作答
                   </p>
                   <p className="mt-1 text-xs leading-5 text-brand-blue-900">
-                    仅会把当前 demo 学生的 36 道持久化冻结题目作答写入可编辑草稿；不会预填分数、能力画像或成功状态。
+                    {demoSubmissionAlreadyPersisted
+                      ? '当前 demo 学生已有真实冻结作答。可载入后重试评估工作流，不会覆盖作业、预填分数或伪造成功状态。'
+                      : '仅会把当前 demo 学生的 36 道持久化冻结题目作答写入可编辑草稿；不会预填分数、能力画像或成功状态。'}
                   </p>
                 </div>
                 {usableDemoDraft && (
@@ -540,7 +547,7 @@ export function AssessmentPanel() {
                     className="inline-flex items-center gap-1.5 rounded-md border border-brand-blue-300 bg-white px-3 py-2 text-sm font-medium text-brand-blue-700 hover:bg-brand-blue-50 disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     <ClipboardPenLine className="h-4 w-4" />
-                    一键填充 {Object.keys(usableDemoDraft.answers).length} 道题
+                    {demoSubmissionAlreadyPersisted ? '载入已提交的' : '一键填充'} {Object.keys(usableDemoDraft.answers).length} 道题
                   </button>
                 )}
               </div>
@@ -548,7 +555,7 @@ export function AssessmentPanel() {
               {demoAssignmentError && <p className="mt-3 border border-rose-200 bg-rose-50 px-2.5 py-2 text-xs leading-5 text-rose-800">{demoAssignmentError}</p>}
               {!demoAssignmentLoading && !demoAssignmentError && !usableDemoDraft && (
                 <p className="mt-3 border border-amber-200 bg-amber-50 px-2.5 py-2 text-xs leading-5 text-amber-900">
-                  当前关联作业已不再可提交或题目版本不匹配，因此不会填入默认答案。请刷新课程记录或使用新的已发布作业。
+                  当前关联作业不可恢复、已完成能力画像更新或题目版本不匹配，因此不会填入默认答案。请刷新课程记录或使用新的已发布作业。
                 </p>
               )}
               {demoDraftNotice && <p className="mt-3 text-xs leading-5 text-brand-blue-900">{demoDraftNotice}</p>}
@@ -611,7 +618,7 @@ export function AssessmentPanel() {
                         type={question.type === 'multiple' ? 'checkbox' : 'radio'}
                         name={question.id}
                         checked={picked}
-                        disabled={isPreview}
+                        disabled={isPreview || demoAnswersLocked}
                         onChange={(event) => setAnswers((current) => {
                           if (question.type !== 'multiple') return { ...current, [question.id]: option };
                           const existing = current[question.id];
@@ -632,7 +639,7 @@ export function AssessmentPanel() {
               {question.type === 'short' && (
                 <textarea
                   value={typeof answers[question.id] === 'string' ? answers[question.id] : ''}
-                  disabled={isPreview}
+                  disabled={isPreview || demoAnswersLocked}
                   onChange={(event) => setAnswers((current) => ({ ...current, [question.id]: event.target.value }))}
                   className="mt-3 min-h-[96px] w-full rounded-md border border-slate-200 px-3 py-2 text-sm outline-none focus:border-brand-blue-500"
                   placeholder="请输入你的判断理由"
