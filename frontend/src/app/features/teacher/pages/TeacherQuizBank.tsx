@@ -5,6 +5,7 @@ import { Link } from 'react-router-dom';
 import { ArrowRight, CircleAlert, CircleCheck, Database, Loader2, RefreshCw, ShieldCheck } from 'lucide-react';
 import { toast } from 'sonner';
 import { ErrorState } from '@/app/components/StateView';
+import { ApiError } from '@/lib/api';
 import { fetchWebsecQuizBank, validateWebsecQuizBank } from '../api/quizQuality';
 import {
   prepareTeacherQuizCandidates,
@@ -44,8 +45,23 @@ const reviewLabel: Record<TeacherQuizBankItem['review_status'], string> = {
   withdrawn: '已撤回',
 };
 
-function readError(_error: unknown): string {
-  return '题库请求暂时无法完成。请检查当前教师权限或服务连接后重试。';
+function readError(error: unknown): string {
+  if (error instanceof ApiError) {
+    if (error.status === 401) {
+      return '登录状态已失效，请重新登录后读取题库。';
+    }
+    if (error.status === 403) {
+      return `当前账号没有读取该课程题库的授权：${error.message}`;
+    }
+    if (error.status >= 500) {
+      return `题库服务返回 HTTP ${error.status}：${error.message}。这不是教师权限不足，请检查本地后端或代理连接后重试。`;
+    }
+    return `题库请求返回 HTTP ${error.status}：${error.message}`;
+  }
+  if (error instanceof TypeError) {
+    return '未能连接本地题库服务；已自动重试一次仍未成功。请检查后端是否正在重载或服务地址是否可达。';
+  }
+  return '题库请求暂时无法完成。请检查本地服务连接后重试。';
 }
 
 export function TeacherQuizBank() {
@@ -64,15 +80,19 @@ export function TeacherQuizBank() {
   const [reviewReason, setReviewReason] = useState('');
   const [candidatePreview, setCandidatePreview] = useState<TeacherQuizCandidatePreview | null>(null);
   const [preparingCandidates, setPreparingCandidates] = useState(false);
+  const [lastSuccessfulReadAt, setLastSuccessfulReadAt] = useState<string | null>(null);
   const quizAssist = useTeacherFormAssist(bank?.course_id ?? '', 'quiz_generation');
 
-  const refresh = async () => {
+  const refresh = async (): Promise<boolean> => {
     setLoading(true);
     setError('');
     try {
       setBank(await fetchWebsecQuizBank());
+      setLastSuccessfulReadAt(new Date().toISOString());
+      return true;
     } catch (cause) {
       setError(readError(cause));
+      return false;
     } finally {
       setLoading(false);
     }
@@ -88,9 +108,13 @@ export function TeacherQuizBank() {
     try {
       const run = await validateWebsecQuizBank();
       setLatestRun(run);
-      await refresh();
+      const refreshed = await refresh();
       if (run.result === 'passed') {
-        toast.success('WEBSEC-101 题库已通过确定性质量校验。');
+        if (refreshed) {
+          toast.success('WEBSEC-101 题库已通过确定性质量校验。');
+        } else {
+          toast.warning('质量校验已通过，但题库列表刷新失败；页面仅保留上次成功读取的数据。');
+        }
       } else {
         toast.error('题库质量校验发现问题，未通过题目不会进入学生入口。');
       }
@@ -259,9 +283,10 @@ export function TeacherQuizBank() {
 
       {loading && <div className="mt-5 flex items-center gap-2 rounded-2xl border border-slate-200 bg-white p-6 text-sm text-slate-500"><Loader2 className="h-4 w-4 animate-spin" />正在读取数据库题库…</div>}
       {!loading && error && <div className="mt-5"><ErrorState message={error} onRetry={() => void refresh()} /></div>}
+      {!loading && error && bank && <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-900">当前仍展示上次成功读取的持久化题库数据{lastSuccessfulReadAt ? `（${new Date(lastSuccessfulReadAt).toLocaleString('zh-CN')}）` : ''}，并不代表本次刷新成功。</p>}
       {!loading && !error && items.length === 0 && <div className="mt-5 rounded-2xl border border-dashed border-slate-300 bg-white/50 p-10 text-center text-sm text-slate-500">当前筛选没有持久化题目。</div>}
 
-      {!loading && !error && items.length > 0 && (
+      {!loading && (!error || Boolean(bank)) && items.length > 0 && (
         <ul className="mt-5 space-y-3">
           {items.map((item) => <QuizItemCard key={item.id} item={item} reviewing={reviewingId === item.id} onReview={review} />)}
         </ul>

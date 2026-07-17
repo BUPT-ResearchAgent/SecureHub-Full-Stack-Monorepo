@@ -1,11 +1,11 @@
-// Status: mock
+// Status: real
 //
 // 教师子页通用 shell：顶部 hero（标题 + 副标题 + 右侧操作）+ 内容区。
 
 import type { ReactNode } from 'react';
+import { useAuth } from '@/app/features/auth/store';
 import { useActiveRole } from '../store';
 import { ROLE_META, isTeacherRole } from '../roles';
-import { MOCK_TEACHERS } from '@/lib/mock/teacher.mock';
 
 export function TeacherShell({
   title,
@@ -19,9 +19,10 @@ export function TeacherShell({
   children: ReactNode;
 }) {
   const [role] = useActiveRole();
+  const { user } = useAuth();
   if (!isTeacherRole(role)) return null;
   const meta = ROLE_META[role];
-  const teacher = MOCK_TEACHERS[role];
+  const displayName = user?.display_name ?? '当前教师';
 
   return (
     <div className="space-y-5">
@@ -35,10 +36,10 @@ export function TeacherShell({
                 style={{ background: meta.accent }}
               />
               <span>
-                {meta.label} · {teacher.name}
+                {meta.label} · {displayName}
               </span>
               <span className="text-slate-300">/</span>
-              <span>{teacher.department}</span>
+              <span>服务端会话身份</span>
             </div>
             <h1 className="text-xl font-semibold text-slate-900">{title}</h1>
             {subtitle && <p className="text-sm text-slate-500">{subtitle}</p>}
