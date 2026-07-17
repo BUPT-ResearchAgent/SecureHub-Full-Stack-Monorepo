@@ -1,17 +1,31 @@
 // Status: real
 
 import { useEffect, useMemo, useState } from 'react';
-import { CircleAlert, CircleCheck, Database, Loader2, RefreshCw, ShieldCheck } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { ArrowRight, CircleAlert, CircleCheck, Database, Loader2, RefreshCw, ShieldCheck } from 'lucide-react';
 import { toast } from 'sonner';
 import { ErrorState } from '@/app/components/StateView';
 import { fetchWebsecQuizBank, validateWebsecQuizBank } from '../api/quizQuality';
-import { reviewTeacherQuizItem } from '../api/teacherProduction';
+import {
+  prepareTeacherQuizCandidates,
+  reviewTeacherQuizItem,
+  type TeacherQuizCandidatePreview,
+} from '../api/teacherProduction';
+import { TeacherFormAssistPanel, useTeacherFormAssist } from '../components/TeacherFormAssist';
 import { TeacherShell } from '../components/TeacherShell';
 import { isTeacherRole } from '../roles';
 import { useActiveRole } from '../store';
 import type { QuizQualityRun, TeacherQuizBankItem, TeacherQuizBankResponse } from '../types/quizQuality';
 
 type QualityFilter = 'all' | 'passed' | 'failed' | 'pending';
+
+type QuizPrefill = {
+  knowledge_node_id?: string | null;
+  question_type?: TeacherQuizBankItem['type'];
+  quantity?: number;
+  difficulty?: number;
+  reason?: string;
+};
 
 const typeLabel: Record<TeacherQuizBankItem['type'], string> = {
   single_choice: '单选',
@@ -30,8 +44,8 @@ const reviewLabel: Record<TeacherQuizBankItem['review_status'], string> = {
   withdrawn: '已撤回',
 };
 
-function readError(error: unknown): string {
-  return error instanceof Error ? error.message : '题库请求失败，请稍后重试。';
+function readError(_error: unknown): string {
+  return '题库请求暂时无法完成。请检查当前教师权限或服务连接后重试。';
 }
 
 export function TeacherQuizBank() {
@@ -43,6 +57,14 @@ export function TeacherQuizBank() {
   const [validating, setValidating] = useState(false);
   const [reviewingId, setReviewingId] = useState<string | null>(null);
   const [error, setError] = useState('');
+  const [knowledgeNodeId, setKnowledgeNodeId] = useState('');
+  const [questionType, setQuestionType] = useState<TeacherQuizBankItem['type'] | ''>('');
+  const [difficulty, setDifficulty] = useState(0);
+  const [quantity, setQuantity] = useState(8);
+  const [reviewReason, setReviewReason] = useState('');
+  const [candidatePreview, setCandidatePreview] = useState<TeacherQuizCandidatePreview | null>(null);
+  const [preparingCandidates, setPreparingCandidates] = useState(false);
+  const quizAssist = useTeacherFormAssist(bank?.course_id ?? '', 'quiz_generation');
 
   const refresh = async () => {
     setLoading(true);
@@ -81,7 +103,7 @@ export function TeacherQuizBank() {
 
   const review = async (item: TeacherQuizBankItem, decision: 'publish' | 'reject' | 'withdraw') => {
     if (!bank) return;
-    const reason = window.prompt(`请输入${decision === 'publish' ? '发布' : decision === 'reject' ? '驳回' : '撤回'}理由（写入业务审计）：`);
+    const reason = window.prompt(`请输入${decision === 'publish' ? '发布' : decision === 'reject' ? '驳回' : '撤回'}理由（写入业务审计）：`, reviewReason);
     if (!reason?.trim()) return;
     setReviewingId(item.id);
     setError('');
@@ -98,8 +120,51 @@ export function TeacherQuizBank() {
 
   const items = useMemo(() => {
     const source = bank?.items ?? [];
-    return filter === 'all' ? source : source.filter((item) => item.quality?.result === filter);
-  }, [bank?.items, filter]);
+    const qualityMatched = filter === 'all' ? source : source.filter((item) => item.quality?.result === filter);
+    return qualityMatched.filter((item) =>
+      (!knowledgeNodeId || item.knowledge_node_id === knowledgeNodeId)
+      && (!questionType || item.type === questionType)
+      && (!difficulty || item.difficulty === difficulty),
+    );
+  }, [bank?.items, difficulty, filter, knowledgeNodeId, questionType]);
+
+  const applyQuizPrefill = async () => {
+    const context = await quizAssist.apply();
+    if (!context) return;
+    const draft = context.draft as QuizPrefill;
+    setKnowledgeNodeId(draft.knowledge_node_id ?? '');
+    setQuestionType(draft.question_type ?? '');
+    setQuantity(draft.quantity ?? 8);
+    setDifficulty(draft.difficulty ?? 0);
+    setReviewReason(draft.reason ?? '');
+  };
+
+  const prepareCandidates = async () => {
+    if (!bank) return;
+    const teachingIntent = reviewReason.trim();
+    if (teachingIntent.length < 12) {
+      setError('请说明本次题目候选的教学意图或审核理由，至少 12 个字符。');
+      return;
+    }
+    setPreparingCandidates(true);
+    setError('');
+    try {
+      const preview = await prepareTeacherQuizCandidates(bank.course_id, {
+        knowledge_node_ids: knowledgeNodeId ? [knowledgeNodeId] : [],
+        question_types: questionType ? [questionType] : [],
+        quantity,
+        target_difficulty: difficulty || 3,
+        teaching_intent: teachingIntent,
+      });
+      setCandidatePreview(preview);
+      toast.success(`已从质量通过题库提取 ${preview.items.length} 道可审核候选。`);
+    } catch (cause) {
+      setCandidatePreview(null);
+      setError(readError(cause));
+    } finally {
+      setPreparingCandidates(false);
+    }
+  };
 
   if (!isTeacherRole(role)) return null;
 
@@ -109,6 +174,13 @@ export function TeacherQuizBank() {
     failed: bank?.items.filter((item) => item.quality?.result === 'failed').length ?? 0,
     pending: bank?.items.filter((item) => item.quality?.result === 'pending').length ?? 0,
   };
+  const candidateAssignmentHref = candidatePreview
+    ? `/teacher/assignments?${new URLSearchParams({
+      course_id: candidatePreview.course_id,
+      quiz_ids: candidatePreview.items.map((item) => item.id).join(','),
+      teaching_intent: candidatePreview.teaching_intent,
+    }).toString()}`
+    : '/teacher/assignments';
 
   return (
     <TeacherShell
@@ -132,6 +204,15 @@ export function TeacherQuizBank() {
           学生入口只读取 <span className="font-medium">curated + 质量通过</span> 的持久化题目。这里的“已精选”表示课程内容来源状态，不表示人工审核；自动校验不会标记为人工批准。
         </p>
       </section>
+
+      <TeacherFormAssistPanel purpose="quiz_generation" context={quizAssist.context} loading={quizAssist.loading} applying={quizAssist.applying} error={quizAssist.error} onApply={() => void applyQuizPrefill()} />
+      <section className="mt-4 border border-slate-200 bg-white p-4">
+        <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-sm font-semibold text-slate-800">候选编组、审核与组卷入口</h2><p className="mt-1 text-xs leading-5 text-slate-500">根据教学意图从当前课程中已发布且质量通过的持久化题目生成可审核候选，并记录审计。该操作不启动实时模型，也不会新建或自动发布题目；教师仍可逐题审核后进入作业冻结版本。</p></div><div className="flex items-center gap-2"><span className="rounded-full bg-slate-100 px-2 py-1 text-xs text-slate-600">目标 {quantity} 道</span><Link to={candidateAssignmentHref} className="inline-flex items-center gap-1 rounded-lg border border-brand-blue-200 px-2.5 py-1.5 text-xs font-medium text-brand-blue-800"><ArrowRight className="h-3.5 w-3.5" />前往组卷</Link></div></div>
+        <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-5"><select value={knowledgeNodeId} onChange={(event) => setKnowledgeNodeId(event.target.value)} className="rounded-lg border border-slate-200 px-3 py-2 text-xs"><option value="">全部知识点</option>{quizAssist.context?.knowledge_points.map((node) => <option key={node.id} value={node.id}>{node.label}</option>)}</select><select value={questionType} onChange={(event) => setQuestionType(event.target.value as TeacherQuizBankItem['type'] | '')} className="rounded-lg border border-slate-200 px-3 py-2 text-xs"><option value="">全部题型</option>{Object.entries(typeLabel).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select><select value={difficulty} onChange={(event) => setDifficulty(Number(event.target.value))} className="rounded-lg border border-slate-200 px-3 py-2 text-xs"><option value={0}>全部难度</option>{[1, 2, 3, 4, 5].map((value) => <option key={value} value={value}>难度 {value}</option>)}</select><input type="number" min={1} max={36} value={quantity} onChange={(event) => setQuantity(Math.max(1, Number(event.target.value) || 1))} className="rounded-lg border border-slate-200 px-3 py-2 text-xs" aria-label="目标题目数量" /><input value={reviewReason} onChange={(event) => setReviewReason(event.target.value)} placeholder="教学意图或审核理由（写入审计）" className="rounded-lg border border-slate-200 px-3 py-2 text-xs" /></div>
+        <button type="button" disabled={preparingCandidates || loading || !bank} onClick={() => void prepareCandidates()} className="mt-3 inline-flex items-center gap-1.5 rounded-lg bg-brand-blue-600 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50">{preparingCandidates ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ShieldCheck className="h-3.5 w-3.5" />}{preparingCandidates ? '正在提取候选…' : '生成可审核候选'}</button>
+      </section>
+
+      {candidatePreview && <section className="mt-4 border border-emerald-200 bg-emerald-50/50 p-4"><div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-sm font-semibold text-emerald-950">已准备可审核候选</h2><p className="mt-1 max-w-3xl text-xs leading-5 text-emerald-900">{candidatePreview.next_step}</p></div><Link to={candidateAssignmentHref} className="inline-flex items-center gap-1 rounded-lg border border-emerald-300 bg-white px-2.5 py-1.5 text-xs font-medium text-emerald-900"><ArrowRight className="h-3.5 w-3.5" />带入组卷</Link></div><p className="mt-2 text-xs text-emerald-800">来源：持久化质量通过题库 · 可用 {candidatePreview.available_count} 道 · 选中 {candidatePreview.items.length}/{candidatePreview.requested_quantity} 道 · {new Date(candidatePreview.prepared_at).toLocaleString('zh-CN')}</p><ul className="mt-3 grid gap-2 md:grid-cols-2">{candidatePreview.items.map((item) => <li key={item.id} className="border border-emerald-200 bg-white px-3 py-2 text-xs text-slate-700"><p className="font-medium">{item.canonical_key} · {item.knowledge_node_name}</p><p className="mt-1 text-slate-500">{typeLabel[item.question_type]} · 难度 {item.difficulty} · Evidence {item.evidence_count} · 质量通过</p></li>)}</ul></section>}
 
       {bank && (
         <section className="mt-4 grid gap-3 sm:grid-cols-3">
@@ -228,7 +309,7 @@ function QuizItemCard({
       <p className="mt-1 text-xs leading-5 text-slate-500">解析：{item.explanation}</p>
       <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3 text-[11px] text-slate-500">
         <span className="inline-flex items-center gap-1"><Database className="h-3 w-3" />{item.canonical_key} · v{item.content_version}</span>
-        <span>Evidence：{item.evidence.map((evidence) => evidence.citation_label ?? evidence.chunk_id).join('、') || '缺失'}</span>
+        <span>Evidence：{item.evidence.length === 0 ? '缺失' : item.evidence.map((evidence) => evidence.citation_label).filter((label): label is string => Boolean(label)).join('、') || `已关联 ${item.evidence.length} 条证据`}</span>
         {item.quality?.failure_codes.length ? <span className="text-rose-700">失败项：{item.quality.failure_codes.join('、')}</span> : null}
       </div>
       <div className="mt-3 flex flex-wrap justify-end gap-2">

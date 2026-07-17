@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query
@@ -30,20 +32,28 @@ from app.schemas.teacher_production import (
     BindCourseDocumentRequest,
     CorrectCourseAssetRequest,
     CourseAssetDTO,
+    CourseAssetKnowledgeDetailDTO,
     CourseAssetListDTO,
     CreateTeachingRecommendationRequest,
     GradeDecisionDTO,
     GradeOverrideRequest,
     ObjectiveScoreDTO,
+    QuizCandidatePrepareRequest,
+    QuizCandidatePreviewDTO,
     QuizReviewDecisionDTO,
     QuizReviewRequest,
     RecordSubjectiveSuggestionRequest,
+    StudentAssessmentReadDTO,
     StudentPublishedResultDTO,
     SubmitAssessmentRequest,
     TeacherAssignmentListDTO,
     TeacherAssessmentSubmissionListDTO,
     TeacherCourseListDTO,
     TeacherDashboardDTO,
+    TeacherFormContextDTO,
+    TeacherFormPrefillAuditDTO,
+    TeacherFormPurpose,
+    TeacherProductionPreflightDTO,
     TeachingRecommendationDTO,
     TeachingRecommendationDecisionRequest,
     TeachingRecommendationListDTO,
@@ -90,6 +100,79 @@ async def teacher_production_courses(
         _raise_domain_error(exc)
 
 
+@router.get(
+    "/teacher/production/courses/{course_id}/preflight",
+    response_model=TeacherProductionPreflightDTO,
+)
+async def teacher_production_preflight(
+    course_id: UUID,
+    session: SessionDep,
+    user: RequiredCurrentUserDep,
+    teaching_class_id: UUID | None = Query(default=None),
+    minimum_scored_students: int = Query(default=10, ge=1, le=10000),
+    knowledge_point_minimum_sample: Annotated[int, Query(ge=1, le=10000)] = 5,
+    window_start: Annotated[datetime | None, Query()] = None,
+    window_end: Annotated[datetime | None, Query()] = None,
+) -> TeacherProductionPreflightDTO:
+    try:
+        return await TeacherProductionService(session).preflight_course_work(
+            actor=user,
+            course_id=course_id,
+            teaching_class_id=teaching_class_id,
+            minimum_scored_students=minimum_scored_students,
+            knowledge_point_minimum_sample=knowledge_point_minimum_sample,
+            window_start=window_start,
+            window_end=window_end,
+        )
+    except TeacherProductionError as exc:
+        await session.rollback()
+        _raise_domain_error(exc)
+
+
+@router.get(
+    "/teacher/production/courses/{course_id}/form-contexts/{purpose}",
+    response_model=TeacherFormContextDTO,
+)
+async def teacher_form_context(
+    course_id: UUID,
+    purpose: TeacherFormPurpose,
+    session: SessionDep,
+    user: RequiredCurrentUserDep,
+) -> TeacherFormContextDTO:
+    try:
+        return await TeacherProductionService(session).get_form_context(
+            actor=user,
+            course_id=course_id,
+            purpose=purpose,
+        )
+    except TeacherProductionError as exc:
+        await session.rollback()
+        _raise_domain_error(exc)
+
+
+@router.post(
+    "/teacher/production/courses/{course_id}/form-contexts/{purpose}/prefill",
+    response_model=TeacherFormPrefillAuditDTO,
+)
+async def record_teacher_form_prefill(
+    course_id: UUID,
+    purpose: TeacherFormPurpose,
+    session: SessionDep,
+    user: RequiredCurrentUserDep,
+) -> TeacherFormPrefillAuditDTO:
+    try:
+        result = await TeacherProductionService(session).record_form_context_prefill(
+            actor=user,
+            course_id=course_id,
+            purpose=purpose,
+        )
+        await session.commit()
+        return result
+    except TeacherProductionError as exc:
+        await session.rollback()
+        _raise_domain_error(exc)
+
+
 @router.get("/teacher/production/courses/{course_id}/assets", response_model=CourseAssetListDTO)
 async def list_course_assets(
     course_id: UUID,
@@ -100,6 +183,24 @@ async def list_course_assets(
     try:
         return await TeacherProductionService(session).list_assets(
             actor=user, course_id=course_id, include_deleted=include_deleted
+        )
+    except TeacherProductionError as exc:
+        await session.rollback()
+        _raise_domain_error(exc)
+
+
+@router.get(
+    "/teacher/production/assets/{asset_id}/knowledge-detail",
+    response_model=CourseAssetKnowledgeDetailDTO,
+)
+async def course_asset_knowledge_detail(
+    asset_id: UUID,
+    session: SessionDep,
+    user: RequiredCurrentUserDep,
+) -> CourseAssetKnowledgeDetailDTO:
+    try:
+        return await TeacherProductionService(session).get_asset_knowledge_detail(
+            actor=user, asset_id=asset_id
         )
     except TeacherProductionError as exc:
         await session.rollback()
@@ -214,6 +315,27 @@ async def review_course_quiz_item(
     try:
         result = await TeacherProductionService(session).review_quiz(
             actor=user, course_id=course_id, quiz_item_id=quiz_item_id, payload=payload
+        )
+        await session.commit()
+        return result
+    except TeacherProductionError as exc:
+        await session.rollback()
+        _raise_domain_error(exc)
+
+
+@router.post(
+    "/teacher/production/courses/{course_id}/quiz-candidates/prepare",
+    response_model=QuizCandidatePreviewDTO,
+)
+async def prepare_course_quiz_candidates(
+    course_id: UUID,
+    payload: QuizCandidatePrepareRequest,
+    session: SessionDep,
+    user: RequiredCurrentUserDep,
+) -> QuizCandidatePreviewDTO:
+    try:
+        result = await TeacherProductionService(session).prepare_quiz_candidates(
+            actor=user, course_id=course_id, payload=payload
         )
         await session.commit()
         return result
@@ -401,6 +523,24 @@ async def assign_assessment_version(
         )
         await session.commit()
         return result
+    except TeacherProductionError as exc:
+        await session.rollback()
+        _raise_domain_error(exc)
+
+
+@router.get(
+    "/teaching/assessment-assignments/{assignment_id}",
+    response_model=StudentAssessmentReadDTO,
+)
+async def student_assessment_assignment(
+    assignment_id: UUID,
+    session: SessionDep,
+    user: RequiredCurrentUserDep,
+) -> StudentAssessmentReadDTO:
+    try:
+        return await TeacherProductionService(session).get_student_assessment(
+            actor=user, assignment_id=assignment_id
+        )
     except TeacherProductionError as exc:
         await session.rollback()
         _raise_domain_error(exc)

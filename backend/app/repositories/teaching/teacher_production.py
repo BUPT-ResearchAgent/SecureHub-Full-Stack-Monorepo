@@ -13,7 +13,8 @@ from collections.abc import Sequence
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import and_, func, select
+from sqlalchemy import and_, func, or_, select
+from app.db.models.collaboration.collaboration import ExternalSignal
 
 from app.db.models.education.education_domain import (
     CourseEnrollment,
@@ -24,12 +25,13 @@ from app.db.models.education.education_domain import (
 )
 from app.db.models.identity.user import User
 from app.db.models.knowledge.course import Course
+from app.db.models.knowledge.chunk import Chunk
 from app.db.models.knowledge.document import Document
 from app.db.models.knowledge.document_asset import DocumentAsset
 from app.db.models.knowledge.knowledge_node import KnowledgeNode
 from app.db.models.learning.quiz_attempt import QuizAttempt
 from app.db.models.learning.quiz_item import QuizItem
-from app.db.models.learning.quiz_quality import QuizQualityReport
+from app.db.models.learning.quiz_quality import QuizItemEvidence, QuizQualityReport
 from app.db.models.resource.generated_resource import GeneratedResource
 from app.db.models.teaching.teacher_production import (
     Assessment,
@@ -100,11 +102,72 @@ class TeachingProductionRepository(BaseRepository):
         )
         return {course_id: int(count) for course_id, count in rows.all()}
 
+    async def list_course_knowledge_nodes(self, *, course_id: UUID) -> Sequence[KnowledgeNode]:
+        result = await self.session.execute(
+            select(KnowledgeNode)
+            .where(KnowledgeNode.course_id == course_id)
+            .order_by(KnowledgeNode.level, KnowledgeNode.name, KnowledgeNode.id)
+        )
+        return result.scalars().all()
+
+    async def list_bindable_documents_for_course(
+        self, *, course_id: UUID, course_domain: str
+    ) -> Sequence[tuple[Document, DocumentAsset | None]]:
+        """List in-domain documents that are not currently active course bindings."""
+
+        statement = (
+            select(Document, DocumentAsset)
+            .outerjoin(DocumentAsset, DocumentAsset.document_id == Document.id)
+            .outerjoin(
+                CourseDocumentBinding,
+                and_(
+                    CourseDocumentBinding.document_id == Document.id,
+                    CourseDocumentBinding.course_id == course_id,
+                ),
+            )
+            .where(
+                Document.domain == course_domain,
+                or_(
+                    CourseDocumentBinding.id.is_(None),
+                    CourseDocumentBinding.status != "active",
+                ),
+            )
+            .order_by(Document.title, DocumentAsset.id)
+        )
+        result = await self.session.execute(statement)
+        return result.all()
+
     async def get_document(self, document_id: UUID) -> Document | None:
         return await self.session.get(Document, document_id)
 
     async def get_document_asset(self, asset_id: UUID) -> DocumentAsset | None:
         return await self.session.get(DocumentAsset, asset_id)
+
+    async def list_document_assets(self, *, document_id: UUID) -> Sequence[DocumentAsset]:
+        result = await self.session.execute(
+            select(DocumentAsset)
+            .where(DocumentAsset.document_id == document_id)
+            .order_by(DocumentAsset.created_at, DocumentAsset.id)
+        )
+        return result.scalars().all()
+
+    async def list_document_chunks(self, *, document_id: UUID) -> Sequence[Chunk]:
+        result = await self.session.execute(
+            select(Chunk)
+            .where(Chunk.document_id == document_id)
+            .order_by(Chunk.chunk_index)
+        )
+        return result.scalars().all()
+
+    async def list_knowledge_nodes_by_ids(self, ids: Sequence[UUID]) -> Sequence[KnowledgeNode]:
+        if not ids:
+            return []
+        result = await self.session.execute(
+            select(KnowledgeNode)
+            .where(KnowledgeNode.id.in_(ids))
+            .order_by(KnowledgeNode.name, KnowledgeNode.id)
+        )
+        return result.scalars().all()
 
     async def get_binding(self, binding_id: UUID) -> CourseDocumentBinding | None:
         return await self.session.get(CourseDocumentBinding, binding_id)
@@ -134,6 +197,21 @@ class TeachingProductionRepository(BaseRepository):
             statement = statement.where(CourseAssetGovernance.state != "deleted")
         result = await self.session.execute(statement)
         return result.all()
+
+    async def count_ready_assets_for_course(self, *, course_id: UUID) -> int:
+        value = await self.session.scalar(
+            select(func.count(CourseAssetGovernance.id))
+            .join(
+                CourseDocumentBinding,
+                CourseDocumentBinding.id == CourseAssetGovernance.binding_id,
+            )
+            .where(
+                CourseDocumentBinding.course_id == course_id,
+                CourseDocumentBinding.status == "active",
+                CourseAssetGovernance.state.in_(("ready", "corrected")),
+            )
+        )
+        return int(value or 0)
 
     async def get_asset(self, asset_id: UUID) -> CourseAssetGovernance | None:
         return await self.session.get(CourseAssetGovernance, asset_id)
@@ -228,6 +306,70 @@ class TeachingProductionRepository(BaseRepository):
     async def get_agent_run(self, agent_run_id: UUID) -> AgentRun | None:
         return await self.session.get(AgentRun, agent_run_id)
 
+    async def list_successful_agent_evidence_pairs(
+        self,
+    ) -> Sequence[tuple[AgentRun, WorkflowEvidenceSnapshot]]:
+        """Return durable linked candidates; the service applies course scope."""
+
+        result = await self.session.execute(
+            select(AgentRun, WorkflowEvidenceSnapshot)
+            .join(WorkflowEvidenceSnapshot, WorkflowEvidenceSnapshot.agent_run_id == AgentRun.id)
+            .where(
+                AgentRun.status == "succeeded",
+                WorkflowEvidenceSnapshot.content_digest.is_not(None),
+                WorkflowEvidenceSnapshot.content_digest != "",
+            )
+            .order_by(AgentRun.finished_at.desc(), AgentRun.id)
+        )
+        return result.all()
+
+    async def is_evidence_chunk_linked_to_course(
+        self, *, course_id: UUID, chunk_id: str | None
+    ) -> bool:
+        """Verify legacy Evidence scope through durable course-owned links.
+
+        Runtime snapshots retain opaque chunk identifiers for deletion
+        resilience.  Only UUID-shaped values can be joined back to a course;
+        an opaque legacy ID therefore still needs explicit course metadata.
+        """
+
+        if chunk_id is None:
+            return False
+        try:
+            persisted_chunk_id = UUID(str(chunk_id))
+        except (TypeError, ValueError):
+            return False
+
+        document_binding = await self.session.scalar(
+            select(CourseDocumentBinding.id)
+            .join(Chunk, Chunk.document_id == CourseDocumentBinding.document_id)
+            .where(
+                CourseDocumentBinding.course_id == course_id,
+                Chunk.id == persisted_chunk_id,
+            )
+        )
+        if document_binding is not None:
+            return True
+
+        quiz_evidence = await self.session.scalar(
+            select(QuizItemEvidence.id)
+            .join(QuizItem, QuizItem.id == QuizItemEvidence.quiz_item_id)
+            .join(KnowledgeNode, KnowledgeNode.id == QuizItem.kp_id)
+            .where(
+                QuizItemEvidence.chunk_id == persisted_chunk_id,
+                KnowledgeNode.course_id == course_id,
+            )
+        )
+        return quiz_evidence is not None
+
+    async def list_validated_external_signals(self) -> Sequence[ExternalSignal]:
+        result = await self.session.execute(
+            select(ExternalSignal)
+            .where(ExternalSignal.status == "validated")
+            .order_by(ExternalSignal.ingested_at.desc(), ExternalSignal.id)
+        )
+        return result.scalars().all()
+
     async def next_recommendation_version(self, course_id: UUID) -> int:
         value = await self.session.scalar(
             select(func.max(TeachingRecommendation.version_no)).where(
@@ -303,6 +445,42 @@ class TeachingProductionRepository(BaseRepository):
             .order_by(AssessmentAssignment.created_at.desc(), AssessmentAssignment.id)
         )
         return result.all()
+
+    async def assessment_activity_counts(self, *, course_id: UUID) -> dict[str, int]:
+        """Return durable assignment/submission facts for a teacher preflight.
+
+        These counts are explanatory only.  The weakness calculation itself
+        continues to use scored ``QuizAttempt`` rows because a valid learning
+        attempt can predate a formal assignment publication.
+        """
+
+        assignments = await self.list_course_assignments(course_id=course_id)
+        assignment_ids = [row[0].id for row in assignments]
+        if not assignment_ids:
+            return {
+                "active_assignment_count": 0,
+                "submitted_assignment_count": 0,
+                "graded_submission_count": 0,
+            }
+        submitted_count = await self.session.scalar(
+            select(func.count(AssessmentSubmission.id)).where(
+                AssessmentSubmission.assignment_id.in_(assignment_ids),
+                AssessmentSubmission.status.in_(("submitted", "late")),
+            )
+        )
+        graded_count = await self.session.scalar(
+            select(func.count(AssessmentGradeDecision.id))
+            .join(
+                AssessmentSubmission,
+                AssessmentSubmission.id == AssessmentGradeDecision.submission_id,
+            )
+            .where(AssessmentSubmission.assignment_id.in_(assignment_ids))
+        )
+        return {
+            "active_assignment_count": sum(1 for row in assignments if row[0].status == "active"),
+            "submitted_assignment_count": int(submitted_count or 0),
+            "graded_submission_count": int(graded_count or 0),
+        }
 
     async def get_assignment_context(
         self, assignment_id: UUID

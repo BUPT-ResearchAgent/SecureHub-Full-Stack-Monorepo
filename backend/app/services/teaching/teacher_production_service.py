@@ -11,7 +11,7 @@ successful Runtime/SkillExecutor AgentRun with a linked Evidence Snapshot.
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 import json
 from typing import Any, Iterable
@@ -28,6 +28,7 @@ from app.db.models.education.education_domain import (
 )
 from app.db.models.identity.user import User
 from app.db.models.identity.user_capability import UserCapability
+from app.db.models.knowledge.chunk import Chunk
 from app.db.models.knowledge.document import Document
 from app.db.models.knowledge.knowledge_node import KnowledgeNode
 from app.db.models.learning.learning_event import LearningEvent
@@ -53,6 +54,7 @@ from app.db.models.teaching.teacher_production import (
 )
 from app.repositories.education.education_domain import EducationRepository
 from app.repositories.teaching.teacher_production import TeachingProductionRepository
+from app.services.learning.quiz_quality_service import QuizQualityError, QuizQualityService
 from app.schemas.syllabus import (
     CreateSyllabusVersionRequest,
     GenerateSyllabusVersionRequest,
@@ -76,14 +78,22 @@ from app.schemas.teacher_production import (
     BindCourseDocumentRequest,
     CorrectCourseAssetRequest,
     CourseAssetDTO,
+    CourseAssetKnowledgeChunkDTO,
+    CourseAssetKnowledgeDetailDTO,
     CourseAssetListDTO,
+    CourseAssetPipelineEventDTO,
     CreateTeachingRecommendationRequest,
     GradeDecisionDTO,
     GradeOverrideRequest,
     ObjectiveScoreDTO,
+    QuizCandidateItemDTO,
+    QuizCandidatePrepareRequest,
+    QuizCandidatePreviewDTO,
     QuizReviewDecisionDTO,
     QuizReviewRequest,
     RecordSubjectiveSuggestionRequest,
+    StudentAssessmentQuestionDTO,
+    StudentAssessmentReadDTO,
     StudentPublishedResultDTO,
     SubmitAssessmentRequest,
     TeacherAssignmentDTO,
@@ -93,6 +103,16 @@ from app.schemas.teacher_production import (
     TeacherCourseDTO,
     TeacherCourseListDTO,
     TeacherDashboardDTO,
+    TeacherFormAgentEvidencePairDTO,
+    TeacherFormCandidateDTO,
+    TeacherFormContextDTO,
+    TeacherFormMaterialCandidateDTO,
+    TeacherFormPrefillAuditDTO,
+    TeacherFormPurpose,
+    TeacherFormQuizCandidateDTO,
+    TeacherProductionPreflightDTO,
+    PendingTeachingActionDTO,
+    TeachingPreflightActionDTO,
     TeachingRecommendationDTO,
     TeachingRecommendationDecisionRequest,
     TeachingRecommendationListDTO,
@@ -106,7 +126,9 @@ from app.schemas.teacher_production import (
 _COURSE_TEACHER_ROLES = {"course_teacher", "hybrid"}
 _PUBLISHABLE_QUIZ_STATUS = "curated"
 _QUALITY_VALIDATOR_VERSION = "websec-quiz-quality-v1"
-_WEAKNESS_SCORE_VERSION = "teacher-weakness-v1"
+_WEAKNESS_SCORE_VERSION = "teacher-weakness-v2"
+_DEFAULT_CLASS_MINIMUM_SAMPLE = 10
+_DEFAULT_KNOWLEDGE_POINT_MINIMUM_SAMPLE = 5
 
 
 def _as_utc(value: datetime) -> datetime:
@@ -182,6 +204,501 @@ class TeacherProductionService:
             calculated_at=datetime.now(UTC),
         )
 
+    async def preflight_course_work(
+        self,
+        *,
+        actor: User,
+        course_id: UUID,
+        teaching_class_id: UUID | None = None,
+        minimum_scored_students: int = _DEFAULT_CLASS_MINIMUM_SAMPLE,
+        knowledge_point_minimum_sample: int = _DEFAULT_KNOWLEDGE_POINT_MINIMUM_SAMPLE,
+        window_start: datetime | None = None,
+        window_end: datetime | None = None,
+    ) -> TeacherProductionPreflightDTO:
+        """Expose real prerequisites before a teacher starts a governed action.
+
+        This is intentionally read-only.  It reports the same durable facts
+        that existing submit paths validate; it never creates substitute IDs,
+        quality reports, AgentRuns, or Evidence Snapshots.
+        """
+
+        if not 1 <= minimum_scored_students <= 10000:
+            raise TeacherProductionError(
+                "INVALID_MINIMUM_SAMPLE",
+                "最小可评分学生数必须介于 1 和 10000 之间。",
+                422,
+            )
+        if not 1 <= knowledge_point_minimum_sample <= 10000:
+            raise TeacherProductionError(
+                "INVALID_KNOWLEDGE_POINT_SAMPLE",
+                "知识点最小有效样本必须介于 1 和 10000 之间。",
+                422,
+            )
+        if window_start is not None and window_end is not None and window_start > window_end:
+            raise TeacherProductionError("INVALID_TIME_WINDOW", "时间窗起点不能晚于终点。", 422)
+        await self._require_teacher_course(actor=actor, course_id=course_id)
+        if teaching_class_id is not None:
+            await self._validate_education_scope(
+                actor=actor,
+                course_id=course_id,
+                teaching_class_id=teaching_class_id,
+                group_id=None,
+            )
+
+        student_ids = await self.repo.list_student_ids_for_scope(
+            course_id=course_id,
+            teaching_class_id=teaching_class_id,
+            group_id=None,
+        )
+        attempts = await self.repo.list_quiz_attempt_contexts(
+            student_ids=student_ids,
+            course_id=course_id,
+        )
+        filtered_attempts = [
+            row
+            for row in attempts
+            if self._within_time_window(row[0].created_at, window_start, window_end)
+        ]
+        measured_attempts = [
+            row for row in filtered_attempts if self._attempt_score(row[0]) is not None
+        ]
+        scored_student_ids = {
+            attempt.user_id
+            for attempt, _, _ in measured_attempts
+            if self._attempt_score(attempt) is not None
+        }
+        knowledge_point_students: dict[UUID, set[UUID]] = defaultdict(set)
+        for attempt, _, node in measured_attempts:
+            knowledge_point_students[node.id].add(attempt.user_id)
+        publishable = await QuizQualityService(self.session).list_publishable_items(
+            course_id=course_id
+        )
+        assessment_activity = await self.repo.assessment_activity_counts(course_id=course_id)
+        ready_asset_count = await self.repo.count_ready_assets_for_course(course_id=course_id)
+        pairs = await self.repo.list_successful_agent_evidence_pairs()
+        successful_pair_count = 0
+        for run, evidence in pairs:
+            if await self._agent_evidence_pair_matches_course(
+                course_id=course_id,
+                run=run,
+                evidence=evidence,
+            ):
+                successful_pair_count += 1
+        snapshots = await self.repo.list_weakness_snapshots(course_id=course_id)
+        scoped_snapshot_count = sum(
+            1
+            for snapshot in snapshots
+            if teaching_class_id is None or snapshot.teaching_class_id == teaching_class_id
+        )
+        active_class_count = (await self.repo.count_classes_for_courses([course_id])).get(course_id, 0)
+        teaching_class_available = (
+            teaching_class_id is not None or active_class_count > 0
+        )
+        enrolled_count = len(student_ids)
+        scored_count = len(scored_student_ids)
+        coverage = round(scored_count / enrolled_count, 4) if enrolled_count else 0.0
+        weakness_ready = scored_count >= minimum_scored_students
+        knowledge_point_sample_ready_count = sum(
+            1
+            for students in knowledge_point_students.values()
+            if len(students) >= knowledge_point_minimum_sample
+        )
+        knowledge_point_sample_insufficient_count = sum(
+            1
+            for students in knowledge_point_students.values()
+            if len(students) < knowledge_point_minimum_sample
+        )
+        assignment_ready = len(publishable.items) >= 8
+        syllabus_ready = successful_pair_count > 0
+        recommendation_ready = scoped_snapshot_count > 0 and syllabus_ready
+        material_ready = ready_asset_count > 0
+
+        if window_start is None and window_end is None:
+            window_note = "时间窗：全部已持久化的可评分作答。"
+        elif not measured_attempts:
+            window_note = "所选时间窗内没有可评分作答；请扩大时间范围或先完成评分。"
+        else:
+            window_note = "时间窗已应用；快照会保留所选范围与最近一次作答时间。"
+
+        weakness_missing: list[str] = []
+        if enrolled_count == 0:
+            weakness_missing.append("当前范围没有有效选课学生，请先完成教学班选课。")
+        if assessment_activity["active_assignment_count"] == 0:
+            weakness_missing.append("当前课程没有进行中的作业；已有独立练习仍可计入作答聚合。")
+        if assessment_activity["submitted_assignment_count"] == 0:
+            weakness_missing.append("当前作业链路尚无学生提交；请发布作业并等待真实提交。")
+        if assessment_activity["graded_submission_count"] == 0:
+            weakness_missing.append("当前作业链路尚无评分记录；请完成客观评分或教师复核。")
+        if not measured_attempts:
+            weakness_missing.append(
+                "所选范围没有可评分的真实作答，不能生成薄弱知识点结论。"
+            )
+        elif scored_count < minimum_scored_students:
+            weakness_missing.append(
+                f"当前范围仅有 {scored_count} 名不同学生具备可评分作答；至少需要 {minimum_scored_students} 名。"
+            )
+
+        actions = [
+            TeachingPreflightActionDTO(
+                action="weakness_snapshot",
+                ready=weakness_ready,
+                missing_requirements=[] if weakness_ready else weakness_missing,
+                next_step=(
+                    (
+                        "可以按当前范围计算。知识点样本不足时仅显示“样本不足”，"
+                        "不会生成薄弱结论。"
+                    )
+                    if weakness_ready
+                    else "按上方缺失对象补齐真实选课、提交或评分，再重新计算薄弱知识点。"
+                ),
+            ),
+            TeachingPreflightActionDTO(
+                action="assignment_draft",
+                ready=assignment_ready,
+                missing_requirements=(
+                    []
+                    if assignment_ready
+                    else [
+                        f"当前课程只有 {len(publishable.items)} 道已发布且质量通过的题目；推荐填充至少需要 8 道。"
+                    ]
+                ),
+                next_step=(
+                    "可以选择质量通过题目并由教师确认后发布到教学班。"
+                    if assignment_ready
+                    else "先完成题目质量检查和教师审核，不能以草稿题替代。"
+                ),
+            ),
+            TeachingPreflightActionDTO(
+                action="syllabus_candidate",
+                ready=syllabus_ready,
+                missing_requirements=(
+                    []
+                    if syllabus_ready
+                    else ["没有课程范围内成功且可关联的 AgentRun/Evidence Snapshot。"]
+                ),
+                next_step=(
+                    "可以选择已有运行和证据作为大纲候选来源，教师仍需审核发布。"
+                    if syllabus_ready
+                    else "可先手写 typed 草稿；生成候选前必须补齐成功运行与 Evidence。"
+                ),
+            ),
+            TeachingPreflightActionDTO(
+                action="teaching_recommendation",
+                ready=recommendation_ready,
+                missing_requirements=(
+                    ([] if scoped_snapshot_count else ["当前范围没有已持久化的薄弱点快照。"])
+                    + ([] if syllabus_ready else ["没有课程范围内成功且可关联的 AgentRun/Evidence Snapshot。"])
+                ),
+                next_step=(
+                    "可以基于快照和可验证 Evidence 填充建议草稿，再由教师处置。"
+                    if recommendation_ready
+                    else "先计算真实快照并选择合法运行/证据对，不能填写伪造 UUID。"
+                ),
+            ),
+            TeachingPreflightActionDTO(
+                action="material_binding",
+                ready=material_ready,
+                missing_requirements=(
+                    [] if material_ready else ["当前课程没有处于 ready 或 corrected 状态的受治理资料资产。"]
+                ),
+                next_step=(
+                    "可以从可读课程资料中选择并填写绑定理由。"
+                    if material_ready
+                    else "先上传或登记课程讲义，完成处理和质量检查后再绑定。"
+                ),
+            ),
+        ]
+        return TeacherProductionPreflightDTO(
+            course_id=course_id,
+            teaching_class_id=teaching_class_id,
+            active_class_count=active_class_count,
+            teaching_class_available=teaching_class_available,
+            enrolled_student_count=enrolled_count,
+            scored_student_count=scored_count,
+            scored_attempt_count=len(measured_attempts),
+            scored_coverage_rate=coverage,
+            minimum_scored_student_count=minimum_scored_students,
+            knowledge_point_minimum_sample=knowledge_point_minimum_sample,
+            knowledge_point_sample_ready_count=knowledge_point_sample_ready_count,
+            knowledge_point_sample_insufficient_count=knowledge_point_sample_insufficient_count,
+            active_assignment_count=assessment_activity["active_assignment_count"],
+            submitted_assignment_count=assessment_activity["submitted_assignment_count"],
+            graded_submission_count=assessment_activity["graded_submission_count"],
+            window_start=window_start,
+            window_end=window_end,
+            window_note=window_note,
+            publishable_quiz_count=len(publishable.items),
+            successful_agent_evidence_pair_count=successful_pair_count,
+            ready_governed_asset_count=ready_asset_count,
+            weakness_snapshot_count=scoped_snapshot_count,
+            actions=actions,
+            calculated_at=datetime.now(UTC),
+        )
+
+    async def get_form_context(
+        self,
+        *,
+        actor: User,
+        course_id: UUID,
+        purpose: TeacherFormPurpose,
+    ) -> TeacherFormContextDTO:
+        """Return only durable, in-scope candidates for one teacher form.
+
+        This endpoint deliberately prepares editable drafts and selector values
+        only.  It neither creates assessments nor records a generated result;
+        each downstream submit path still performs its own permission, quality,
+        Evidence, and audit validation.
+        """
+
+        course = await self._require_teacher_course(actor=actor, course_id=course_id)
+        classes = await self.education.list_classes_for_teacher(
+            teacher_id=actor.id, course_id=course_id
+        )
+        class_counts = await self.education.enrollment_counts([item.id for item in classes])
+        class_candidates = [
+            TeacherFormCandidateDTO(
+                id=item.id,
+                label=f"{item.code} · {item.name}",
+                summary=f"{class_counts.get(item.id, 0)} 名有效选课学生，教学班状态：{item.status}。",
+                state=item.status,
+                occurred_at=item.created_at,
+            )
+            for item in classes
+        ]
+
+        nodes = await self.repo.list_course_knowledge_nodes(course_id=course_id)
+        knowledge_candidates = [
+            TeacherFormCandidateDTO(
+                id=node.id,
+                label=node.name,
+                summary=(node.description or "课程知识图谱节点，供教师选择并由服务端复核课程归属。")[:360],
+                state=node.node_type,
+                occurred_at=node.created_at,
+            )
+            for node in nodes
+        ]
+
+        publishable = await QuizQualityService(self.session).list_publishable_items(
+            course_id=course_id
+        )
+        quiz_candidates = [
+            TeacherFormQuizCandidateDTO(
+                id=item.id,
+                label=f"{item.canonical_key} · {item.knowledge_node_name}",
+                summary=item.question[:360],
+                state=f"{item.review_status} / {item.quality.result if item.quality else 'pending'}",
+                knowledge_node_id=item.knowledge_node_id,
+                knowledge_node_name=item.knowledge_node_name,
+                question_type=item.type,
+                difficulty=item.difficulty,
+                default_points=10.0,
+                grading_mode=(
+                    "objective" if item.type in {"single_choice", "multi_choice"} else "subjective"
+                ),
+            )
+            for item in publishable.items
+        ]
+
+        material_rows = await self.repo.list_bindable_documents_for_course(
+            course_id=course_id, course_domain=course.domain
+        )
+        seen_documents: set[UUID] = set()
+        material_candidates: list[TeacherFormMaterialCandidateDTO] = []
+        for document, asset in material_rows:
+            if document.id in seen_documents:
+                continue
+            seen_documents.add(document.id)
+            asset_summary = "已有源资产" if asset is not None else "仅有入库文档元数据"
+            material_candidates.append(
+                TeacherFormMaterialCandidateDTO(
+                    id=document.id,
+                    document_asset_id=asset.id if asset is not None else None,
+                    label=document.title,
+                    summary=f"{asset_summary}；文档状态：{document.status}；来源类型：{document.source_type}。",
+                    state=document.status,
+                    occurred_at=document.updated_at,
+                )
+            )
+
+        snapshots = await self.repo.list_weakness_snapshots(course_id=course_id)
+        snapshot_dtos = {snapshot.id: self._weakness_dto(snapshot) for snapshot in snapshots}
+        snapshot_candidates: list[TeacherFormCandidateDTO] = []
+        for snapshot in snapshots:
+            weak_points = snapshot_dtos[snapshot.id].weak_knowledge_points
+            class_label = next(
+                (candidate.label for candidate in class_candidates if candidate.id == snapshot.teaching_class_id),
+                "全课程范围",
+            )
+            labels = "、".join(point.knowledge_node_name for point in weak_points[:3]) or "暂无满足展示规则的知识点"
+            snapshot_candidates.append(
+                TeacherFormCandidateDTO(
+                    id=snapshot.id,
+                    label=f"{class_label} · 样本 {snapshot.sample_size}",
+                    summary=f"{snapshot.score_version}；重点观察：{labels}。",
+                    state="persisted",
+                    occurred_at=snapshot.computed_at,
+                )
+            )
+
+        pair_rows = []
+        for run, evidence in await self.repo.list_successful_agent_evidence_pairs():
+            if await self._agent_evidence_pair_matches_course(
+                course_id=course_id, run=run, evidence=evidence
+            ):
+                pair_rows.append((run, evidence))
+        pair_candidates: list[TeacherFormAgentEvidencePairDTO] = []
+        for run, evidence in pair_rows:
+            output = run.output_summary if isinstance(run.output_summary, dict) else {}
+            typed_raw = output.get("typed_syllabus") or output.get("syllabus") or output.get("typed_content")
+            try:
+                supports_typed_syllabus = isinstance(typed_raw, dict) and bool(
+                    TypedSyllabusContent.model_validate(typed_raw).modules
+                )
+            except ValidationError:
+                supports_typed_syllabus = False
+            suggested_score = output.get("suggested_score")
+            supports_subjective_grade = (
+                isinstance(suggested_score, (int, float)) and not isinstance(suggested_score, bool)
+            )
+            pair_candidates.append(
+                TeacherFormAgentEvidencePairDTO(
+                    agent_run_id=run.id,
+                    evidence_snapshot_id=evidence.id,
+                    label=f"{run.workflow_name} · 已完成证据",
+                    summary=(evidence.excerpt or evidence.content_digest)[:360],
+                    workflow_name=run.workflow_name,
+                    occurred_at=run.finished_at or evidence.created_at,
+                    supports_typed_syllabus=supports_typed_syllabus,
+                    supports_subjective_grade=supports_subjective_grade,
+                )
+            )
+
+        if purpose == "syllabus_candidate":
+            pair_candidates = [item for item in pair_candidates if item.supports_typed_syllabus]
+        elif purpose == "subjective_grade":
+            pair_candidates = [item for item in pair_candidates if item.supports_subjective_grade]
+
+        syllabus_versions: list[TeacherFormCandidateDTO] = []
+        syllabus = await self.repo.get_or_create_syllabus(course_id=course_id)
+        if syllabus is not None:
+            for version in await self.repo.list_syllabus_versions(syllabus.id):
+                typed = self._syllabus_dto(version).typed_content
+                syllabus_versions.append(
+                    TeacherFormCandidateDTO(
+                        id=version.id,
+                        label=f"v{version.version_no} · {typed.title}",
+                        summary=f"{len(typed.modules)} 个模块；状态：{version.state}。",
+                        state=version.state,
+                        occurred_at=version.updated_at,
+                    )
+                )
+
+        recommendations = await self.repo.list_recommendations(course_id=course_id)
+        recommendation_candidates = [
+            TeacherFormCandidateDTO(
+                id=item.id,
+                label=f"v{item.version_no} · {str((item.diff or {}).get('title') or '教学建议')}",
+                summary=str((item.diff or {}).get("rationale") or "已持久化教学建议。")[:360],
+                state=item.status,
+                occurred_at=item.created_at,
+            )
+            for item in recommendations
+        ]
+
+        eligible_pair_keys = {(item.agent_run_id, item.evidence_snapshot_id) for item in pair_candidates}
+        signal_candidates = [
+            TeacherFormCandidateDTO(
+                id=signal.id,
+                label=signal.title,
+                summary=f"{signal.kind} 信号，已验证并关联课程范围内 Evidence。",
+                state=signal.status,
+                occurred_at=signal.ingested_at,
+            )
+            for signal in await self.repo.list_validated_external_signals()
+            if (signal.agent_run_id, signal.evidence_snapshot_id) in eligible_pair_keys
+        ]
+
+        default_class_id = class_candidates[0].id if class_candidates else None
+        preflight = await self.preflight_course_work(
+            actor=actor,
+            course_id=course_id,
+            teaching_class_id=default_class_id,
+            minimum_scored_students=_DEFAULT_CLASS_MINIMUM_SAMPLE,
+            knowledge_point_minimum_sample=_DEFAULT_KNOWLEDGE_POINT_MINIMUM_SAMPLE,
+        )
+        dependency = next(
+            (
+                item
+                for item in preflight.actions
+                if item.action == self._form_context_action(purpose)
+            ),
+            None,
+        )
+        draft = self._form_context_draft(
+            purpose=purpose,
+            course_code=course.code,
+            teaching_classes=class_candidates,
+            knowledge_points=knowledge_candidates,
+            quiz_items=quiz_candidates,
+            material_candidates=material_candidates,
+            snapshots=snapshot_candidates,
+            snapshot_metrics=list(snapshot_dtos.values()),
+            pairs=pair_candidates,
+            signals=signal_candidates,
+            assignment_count=len(await self.repo.list_course_assignments(course_id=course_id)),
+        )
+        return TeacherFormContextDTO(
+            course_id=course.id,
+            course_label=f"{course.code} · {course.title}",
+            purpose=purpose,
+            teaching_classes=class_candidates,
+            knowledge_points=knowledge_candidates,
+            publishable_quiz_items=quiz_candidates,
+            material_candidates=material_candidates,
+            weakness_snapshots=snapshot_candidates,
+            agent_evidence_pairs=pair_candidates,
+            external_signals=signal_candidates,
+            syllabus_versions=syllabus_versions,
+            teaching_recommendations=recommendation_candidates,
+            dependency=dependency,
+            source_summary=[
+                "候选仅来自当前教师已授权的课程范围；内部标识只作为选择器值提交给既有服务端校验。",
+                "受控 WEBSEC-101 场景中的整理内容、外部链接和运行记录保留来源边界，不代表实时模型生成或生产验收。",
+            ],
+            draft=draft,
+            generated_at=datetime.now(UTC),
+        )
+
+    async def record_form_context_prefill(
+        self,
+        *,
+        actor: User,
+        course_id: UUID,
+        purpose: TeacherFormPurpose,
+    ) -> TeacherFormPrefillAuditDTO:
+        """Audit a real click on FormAssist without treating it as submission."""
+
+        await self._require_teacher_course(actor=actor, course_id=course_id)
+        recorded_at = datetime.now(UTC)
+        await self._audit(
+            actor=actor,
+            action="teacher_form.context_prefill",
+            object_type="teacher_form_context",
+            object_id=course_id,
+            reason="教师点击填充推荐内容；后续字段仍可编辑，未自动提交业务对象。",
+            metadata={
+                "course_id": str(course_id),
+                "purpose": purpose,
+                "selection_source": "context_prefill",
+                "does_not_submit": True,
+            },
+        )
+        return TeacherFormPrefillAuditDTO(
+            course_id=course_id,
+            purpose=purpose,
+            recorded_at=recorded_at,
+        )
+
     async def list_assets(
         self, *, actor: User, course_id: UUID, include_deleted: bool = False
     ) -> CourseAssetListDTO:
@@ -195,6 +712,120 @@ class TeacherProductionService:
             # update so serialising the DTO never triggers implicit async IO.
             await self.session.refresh(asset)
         return CourseAssetListDTO(items=[self._asset_dto(*row) for row in rows])
+
+    async def get_asset_knowledge_detail(
+        self, *, actor: User, asset_id: UUID
+    ) -> CourseAssetKnowledgeDetailDTO:
+        """Return a teacher-scoped projection of persisted source and chunk facts.
+
+        The projection deliberately does not initiate an upload, parser, or
+        embedding job.  A preprocessed seed asset remains labelled as such,
+        while an ordinary document shows only the facts stored by the existing
+        unified knowledge ingestion pipeline.
+        """
+
+        asset, binding, document = await self._require_asset_scope(actor=actor, asset_id=asset_id)
+        await self._reconcile_asset_state(asset, document)
+        await self.session.refresh(asset)
+        source_assets = await self.repo.list_document_assets(document_id=document.id)
+        source_asset = next(
+            (item for item in source_assets if item.id == asset.document_asset_id),
+            source_assets[0] if source_assets else None,
+        )
+        chunks = await self.repo.list_document_chunks(document_id=document.id)
+        node_ids: list[UUID] = []
+        for chunk in chunks:
+            raw_ids = (chunk.metadata_ or {}).get("kp_ids", [])
+            if not isinstance(raw_ids, list):
+                continue
+            for raw_id in raw_ids:
+                try:
+                    parsed = UUID(str(raw_id))
+                except (TypeError, ValueError):
+                    continue
+                if parsed not in node_ids:
+                    node_ids.append(parsed)
+        nodes = await self.repo.list_knowledge_nodes_by_ids(node_ids)
+        node_names = {node.id: node.name for node in nodes}
+
+        document_metadata = document.metadata_ if isinstance(document.metadata_, dict) else {}
+        asset_metadata = (
+            source_asset.metadata_ if source_asset is not None and isinstance(source_asset.metadata_, dict) else {}
+        )
+        timeline = self._asset_processing_timeline(
+            document_metadata=document_metadata,
+            document_updated_at=document.updated_at,
+            chunks=chunks,
+        )
+        indexed_count = sum(
+            1 for chunk in chunks if chunk.embedding_status == "ready" and chunk.embedding is not None
+        )
+        knowledge_labels = [node_names[node_id] for node_id in node_ids if node_id in node_names]
+        chunk_dtos: list[CourseAssetKnowledgeChunkDTO] = []
+        for chunk in chunks[:12]:
+            chunk_metadata = chunk.metadata_ if isinstance(chunk.metadata_, dict) else {}
+            chunk_node_names: list[str] = []
+            raw_ids = chunk_metadata.get("kp_ids", [])
+            if isinstance(raw_ids, list):
+                for raw_id in raw_ids:
+                    try:
+                        node_id_value = UUID(str(raw_id))
+                    except (TypeError, ValueError):
+                        continue
+                    if node_id_value in node_names:
+                        chunk_node_names.append(node_names[node_id_value])
+            raw_page = chunk_metadata.get("page_no")
+            page_no = raw_page if isinstance(raw_page, int) and raw_page > 0 else None
+            chapter = chunk_metadata.get("chapter")
+            chunk_dtos.append(
+                CourseAssetKnowledgeChunkDTO(
+                    chunk_index=chunk.chunk_index,
+                    chapter=str(chapter) if chapter else None,
+                    page_no=page_no,
+                    excerpt=self._chunk_excerpt(chunk.chunk_text),
+                    knowledge_points=list(dict.fromkeys(chunk_node_names)),
+                    embedding_status=chunk.embedding_status,
+                    quality_state=str(chunk_metadata.get("quality_state") or "未单独标记"),
+                )
+            )
+
+        def persisted_int(*values: Any) -> int | None:
+            for value in values:
+                if isinstance(value, int) and value >= 0:
+                    return value
+            return None
+
+        return CourseAssetKnowledgeDetailDTO(
+            asset=self._asset_dto(asset, binding, document),
+            source_type=document.source_type,
+            asset_type=source_asset.asset_type if source_asset is not None else None,
+            original_filename=(
+                str(asset_metadata.get("original_filename"))
+                if asset_metadata.get("original_filename")
+                else None
+            ),
+            mime_type=source_asset.mime_type if source_asset is not None else None,
+            size_bytes=source_asset.size_bytes if source_asset is not None else None,
+            page_count=persisted_int(asset_metadata.get("page_count"), document_metadata.get("page_count")),
+            chapter_count=persisted_int(
+                asset_metadata.get("chapter_count"), document_metadata.get("chapter_count"), len({item.chapter for item in chunk_dtos if item.chapter}),
+            ),
+            chunk_count=len(chunks),
+            indexed_chunk_count=indexed_count,
+            pending_index_chunk_count=max(0, len(chunks) - indexed_count),
+            processing_elapsed_ms=persisted_int(
+                asset_metadata.get("processing_elapsed_ms"), document_metadata.get("processing_elapsed_ms"),
+            ),
+            processing_mode=str(document_metadata.get("processing_mode") or "persistent_ingestion"),
+            source_boundary=str(
+                document_metadata.get("source_boundary")
+                or "该详情只显示统一知识资产层中已经持久化的来源、状态与分块记录。"
+            ),
+            source_url=str(document_metadata["source_url"]) if document_metadata.get("source_url") else document.url,
+            processing_timeline=timeline,
+            knowledge_points=knowledge_labels,
+            chunks=chunk_dtos,
+        )
 
     async def bind_document(
         self,
@@ -470,6 +1101,105 @@ class TeacherProductionService:
             created_at=decision.created_at,
         )
 
+    async def prepare_quiz_candidates(
+        self,
+        *,
+        actor: User,
+        course_id: UUID,
+        payload: QuizCandidatePrepareRequest,
+    ) -> QuizCandidatePreviewDTO:
+        """Select a teacher-auditable candidate set from the durable quiz bank.
+
+        This is intentionally a selection step, not a provider invocation.  It
+        uses only existing ``curated + passed`` questions, leaves quiz rows
+        unchanged, and records the teacher's intent before the existing human
+        review and assessment-version flows consume the selected IDs.
+        """
+
+        await self._require_teacher_course(actor=actor, course_id=course_id)
+        course_nodes = await self.repo.list_course_knowledge_nodes(course_id=course_id)
+        allowed_node_ids = {node.id for node in course_nodes}
+        requested_node_ids = list(dict.fromkeys(payload.knowledge_node_ids))
+        if any(node_id not in allowed_node_ids for node_id in requested_node_ids):
+            raise TeacherProductionError(
+                "QUIZ_CANDIDATE_SCOPE_DENIED",
+                "候选知识点不属于当前教师课程；请从课程知识点选择器重新选择。",
+                403,
+            )
+
+        try:
+            published = await QuizQualityService(self.session).list_publishable_items(
+                course_id=course_id
+            )
+        except QuizQualityError as exc:
+            raise TeacherProductionError(exc.code, exc.message, exc.status_code) from exc
+        allowed_types = set(payload.question_types)
+        pool = [
+            item
+            for item in published.items
+            if (not requested_node_ids or item.knowledge_node_id in requested_node_ids)
+            and (not allowed_types or item.type in allowed_types)
+        ]
+        pool.sort(
+            key=lambda item: (
+                abs(item.difficulty - payload.target_difficulty),
+                item.difficulty,
+                item.canonical_key,
+            )
+        )
+        if not pool:
+            raise TeacherProductionError(
+                "QUIZ_CANDIDATES_UNAVAILABLE",
+                "当前条件没有已发布且质量通过的真实题目；请放宽知识点、题型或难度后重试。",
+            )
+
+        selected = self._diversify_quiz_candidate_items(pool, payload.quantity)
+        prepared_at = datetime.now(UTC)
+        await self._audit(
+            actor=actor,
+            action="quiz_candidate.prepare",
+            object_type="course_quiz_candidate_preview",
+            object_id=course_id,
+            reason=payload.teaching_intent,
+            metadata={
+                "course_id": str(course_id),
+                "source": "persisted_quality_passed_bank",
+                "live_generation_started": False,
+                "knowledge_node_ids": [str(node_id) for node_id in requested_node_ids],
+                "question_types": list(payload.question_types),
+                "target_difficulty": payload.target_difficulty,
+                "requested_quantity": payload.quantity,
+                "available_count": len(pool),
+                "selected_quiz_item_ids": [str(item.id) for item in selected],
+            },
+        )
+        return QuizCandidatePreviewDTO(
+            course_id=course_id,
+            source="persisted_quality_passed_bank",
+            live_generation_started=False,
+            teaching_intent=payload.teaching_intent,
+            requested_quantity=payload.quantity,
+            available_count=len(pool),
+            items=[
+                QuizCandidateItemDTO(
+                    id=item.id,
+                    canonical_key=item.canonical_key,
+                    knowledge_node_id=item.knowledge_node_id,
+                    knowledge_node_name=item.knowledge_node_name,
+                    question_type=item.type,
+                    difficulty=item.difficulty,
+                    evidence_count=len(item.evidence),
+                    quality_state="passed",
+                )
+                for item in selected
+            ],
+            next_step=(
+                "候选仅来自持久化的质量通过题库；请逐题审核并在组卷页编辑题目组合、分值、"
+                "教学班与截止时间。该操作没有启动实时模型生成。"
+            ),
+            prepared_at=prepared_at,
+        )
+
     async def compute_weakness_snapshot(
         self, *, actor: User, course_id: UUID, payload: WeaknessSnapshotRequest
     ) -> WeaknessSnapshotDTO:
@@ -485,23 +1215,32 @@ class TeacherProductionService:
             teaching_class_id=payload.teaching_class_id,
             group_id=payload.group_id,
         )
-        if len(student_ids) < payload.minimum_sample:
-            raise TeacherProductionError(
-                "INSUFFICIENT_ASSESSMENT_SAMPLE", "当前范围的有效选课样本不足，不能生成薄弱知识点结论。"
-            )
         attempts = await self.repo.list_quiz_attempt_contexts(
             student_ids=student_ids, course_id=course_id
         )
         filtered_attempts = [
             row
             for row in attempts
-            if (payload.window_start is None or row[0].created_at >= payload.window_start)
-            and (payload.window_end is None or row[0].created_at <= payload.window_end)
+            if self._within_time_window(
+                row[0].created_at,
+                payload.window_start,
+                payload.window_end,
+            )
         ]
         measured = [row for row in filtered_attempts if self._attempt_score(row[0]) is not None]
         if not measured:
             raise TeacherProductionError(
                 "INSUFFICIENT_ASSESSMENT_SAMPLE", "当前范围没有可评分的真实作答，不能生成薄弱知识点结论。"
+            )
+        scored_student_ids = {attempt.user_id for attempt, _, _ in measured}
+        if len(scored_student_ids) < payload.minimum_sample:
+            raise TeacherProductionError(
+                "INSUFFICIENT_ASSESSMENT_SAMPLE",
+                (
+                    f"当前范围有 {len(student_ids)} 名有效选课学生，但仅 "
+                    f"{len(scored_student_ids)} 名不同学生具备可评分真实作答；"
+                    f"至少需要 {payload.minimum_sample} 名。"
+                ),
             )
 
         # These two sources are not duplicated: they make the source version
@@ -518,47 +1257,137 @@ class TeacherProductionService:
             )
         ).scalars().all()
 
-        values: dict[UUID, list[tuple[float, UUID, str]]] = defaultdict(list)
+        values: dict[UUID, list[tuple[float, UUID, str, datetime]]] = defaultdict(list)
         names: dict[UUID, str] = {}
         for attempt, _, node in measured:
             score = self._attempt_score(attempt)
             if score is None:
                 continue
-            values[node.id].append((score, attempt.user_id, str(attempt.id)))
+            values[node.id].append(
+                (score, attempt.user_id, str(attempt.id), _as_utc(attempt.created_at))
+            )
             names[node.id] = node.name
-        weak_points: list[dict[str, Any]] = []
+
+        metrics: list[dict[str, Any]] = []
         for node_id, records in values.items():
-            sample_size = len({student_id for _, student_id, _ in records})
-            average = sum(score for score, _, _ in records) / len(records)
-            weak_points.append(
+            sample_size = len({student_id for _, student_id, _, _ in records})
+            average = sum(score for score, _, _, _ in records) / len(records)
+            incorrect_rate = sum(1 for score, _, _, _ in records if score < 0.6) / len(records)
+            coverage_rate = sample_size / len(student_ids) if student_ids else 0.0
+            ordered = sorted(records, key=lambda row: row[3])
+            midpoint = ordered[len(ordered) // 2][3] if len(ordered) >= 2 else None
+            previous = [score for score, _, _, created_at in ordered if midpoint and created_at < midpoint]
+            recent = [score for score, _, _, created_at in ordered if midpoint and created_at >= midpoint]
+            previous_average = sum(previous) / len(previous) if previous else None
+            recent_average = sum(recent) / len(recent) if recent else None
+            if previous_average is None or recent_average is None:
+                trend = "insufficient_history"
+            elif recent_average - previous_average >= 0.04:
+                trend = "improving"
+            elif recent_average - previous_average <= -0.04:
+                trend = "deteriorating"
+            else:
+                trend = "stable"
+
+            if sample_size < payload.knowledge_point_minimum_sample:
+                attention_status = "insufficient_sample"
+                weakness_score: float | None = None
+            else:
+                trend_component = {
+                    "deteriorating": 1.0,
+                    "stable": 0.5,
+                    "insufficient_history": 0.4,
+                    "improving": 0.0,
+                }[trend]
+                weakness_score = min(
+                    1.0,
+                    max(
+                        0.0,
+                        0.45 * (1 - average)
+                        + 0.30 * incorrect_rate
+                        + 0.15 * (1 - coverage_rate)
+                        + 0.10 * trend_component,
+                    ),
+                )
+                if trend == "improving":
+                    attention_status = "improving"
+                elif weakness_score >= 0.45:
+                    attention_status = "needs_attention"
+                else:
+                    attention_status = "stable"
+            metrics.append(
                 {
                     "knowledge_node_id": str(node_id),
                     "knowledge_node_name": names[node_id],
                     "sample_size": sample_size,
                     "average_score": round(average, 6),
-                    "incorrect_rate": round(
-                        sum(1 for score, _, _ in records if score < 0.6) / len(records), 6
+                    "incorrect_rate": round(incorrect_rate, 6),
+                    "coverage_rate": round(coverage_rate, 6),
+                    "trend": trend,
+                    "attention_status": attention_status,
+                    "weakness_score": round(weakness_score, 6) if weakness_score is not None else None,
+                    "previous_average_score": (
+                        round(previous_average, 6) if previous_average is not None else None
                     ),
+                    "latest_attempt_at": ordered[-1][3].isoformat(),
                 }
             )
-        weak_points.sort(key=lambda row: (row["average_score"], -row["sample_size"], row["knowledge_node_id"]))
+        status_rank = {
+            "needs_attention": 0,
+            "improving": 1,
+            "stable": 2,
+            "insufficient_sample": 3,
+        }
+        metrics.sort(
+            key=lambda row: (
+                status_rank[row["attention_status"]],
+                -(row["weakness_score"] if row["weakness_score"] is not None else -1),
+                row["knowledge_node_id"],
+            )
+        )
+        weak_points = [
+            row for row in metrics if row["attention_status"] == "needs_attention"
+        ]
+        effective_window_start = payload.window_start or min(
+            _as_utc(attempt.created_at) for attempt, _, _ in measured
+        )
+        effective_window_end = payload.window_end or max(
+            _as_utc(attempt.created_at) for attempt, _, _ in measured
+        )
+        latest_attempt_at = max(_as_utc(attempt.created_at) for attempt, _, _ in measured)
         aggregate = {
             "weak_knowledge_points": weak_points[:12],
+            "knowledge_point_metrics": metrics[:24],
             "source_counts": {
                 "quiz_attempts": len(measured),
                 "learning_events": len(learning_events),
                 "user_capabilities": len(capabilities),
                 "enrolled_students": len(student_ids),
+                "scored_students": len(scored_student_ids),
             },
-            "limitations": "按题目作答聚合；能力与学习事件仅作为范围内已持久化学习上下文，不复制画像。",
+            "thresholds": {
+                "minimum_sample": payload.minimum_sample,
+                "knowledge_point_minimum_sample": payload.knowledge_point_minimum_sample,
+            },
+            "window": {
+                "start": effective_window_start.isoformat(),
+                "end": effective_window_end.isoformat(),
+                "latest_attempt_at": latest_attempt_at.isoformat(),
+            },
+            "limitations": (
+                "按实际可评分题目作答聚合；能力与学习事件仅作为范围内已持久化学习上下文，"
+                "不复制画像。知识点样本不足时只显示样本不足，不形成薄弱结论。"
+            ),
         }
         fingerprint = self._fingerprint(
             {
                 "course_id": str(course_id),
                 "teaching_class_id": str(payload.teaching_class_id) if payload.teaching_class_id else None,
                 "group_id": str(payload.group_id) if payload.group_id else None,
-                "window_start": payload.window_start.isoformat() if payload.window_start else None,
-                "window_end": payload.window_end.isoformat() if payload.window_end else None,
+                "window_start": effective_window_start.isoformat(),
+                "window_end": effective_window_end.isoformat(),
+                "minimum_sample": payload.minimum_sample,
+                "knowledge_point_minimum_sample": payload.knowledge_point_minimum_sample,
                 "attempts": [
                     {
                         "id": str(attempt.id),
@@ -590,9 +1419,9 @@ class TeacherProductionService:
                 course_id=course_id,
                 teaching_class_id=payload.teaching_class_id,
                 group_id=payload.group_id,
-                window_start=payload.window_start,
-                window_end=payload.window_end,
-                sample_size=len({attempt.user_id for attempt, _, _ in measured}),
+                window_start=effective_window_start,
+                window_end=effective_window_end,
+                sample_size=len(scored_student_ids),
                 score_version=_WEAKNESS_SCORE_VERSION,
                 input_fingerprint=fingerprint,
                 aggregates=aggregate,
@@ -608,6 +1437,12 @@ class TeacherProductionService:
                 metadata={
                     "course_id": str(course_id),
                     "sample_size": existing.sample_size,
+                    "scored_coverage_rate": round(
+                        existing.sample_size / len(student_ids), 6
+                    )
+                    if student_ids
+                    else 0.0,
+                    "knowledge_point_minimum_sample": payload.knowledge_point_minimum_sample,
                     "input_fingerprint": fingerprint,
                     "score_version": _WEAKNESS_SCORE_VERSION,
                 },
@@ -634,13 +1469,21 @@ class TeacherProductionService:
         snapshot = await self.repo.get_weakness_snapshot(payload.source_snapshot_id)
         if snapshot is None or snapshot.course_id != course_id:
             raise TeacherProductionError("COURSE_ACCESS_DENIED", "薄弱知识点快照不属于当前课程。", 403)
-        evidence = await self.repo.get_evidence_snapshot(payload.evidence_snapshot_id)
-        if evidence is None or not evidence.content_digest:
-            raise TeacherProductionError("INSUFFICIENT_EVIDENCE", "教学建议缺少可用 Evidence Snapshot。")
-        if payload.agent_run_id is not None:
-            await self._require_linked_completed_agent_result(
-                agent_run_id=payload.agent_run_id, evidence_snapshot_id=payload.evidence_snapshot_id
+        run, evidence = await self._require_linked_completed_agent_result(
+            agent_run_id=payload.agent_run_id,
+            evidence_snapshot_id=payload.evidence_snapshot_id,
+        )
+        if not await self._agent_evidence_pair_matches_course(
+            course_id=course_id,
+            run=run,
+            evidence=evidence,
+        ):
+            raise TeacherProductionError(
+                "COURSE_ACCESS_DENIED",
+                "所选 AgentRun/Evidence 不属于当前课程范围，不能用于教学建议。",
+                403,
             )
+        snapshot_dto = self._weakness_dto(snapshot)
         version = await self.repo.next_recommendation_version(course_id)
         row = TeachingRecommendation(
             id=uuid4(),
@@ -652,11 +1495,36 @@ class TeacherProductionService:
             agent_run_id=payload.agent_run_id,
             version_no=version,
             diff={
-                "kind": "curated" if payload.agent_run_id is None else "skill_candidate",
+                "kind": "skill_candidate",
                 "title": payload.title,
                 "actions": payload.actions,
                 "rationale": payload.rationale,
+                "expected_impact": payload.expected_impact,
                 "source_snapshot_fingerprint": snapshot.input_fingerprint,
+                "snapshot_basis": {
+                    "sample_size": snapshot_dto.sample_size,
+                    "scored_coverage_rate": snapshot_dto.scored_coverage_rate,
+                    "window_start": (
+                        snapshot_dto.window_start.isoformat()
+                        if snapshot_dto.window_start is not None
+                        else None
+                    ),
+                    "window_end": (
+                        snapshot_dto.window_end.isoformat()
+                        if snapshot_dto.window_end is not None
+                        else None
+                    ),
+                    "focus_knowledge_points": [
+                        point.knowledge_node_name
+                        for point in snapshot_dto.weak_knowledge_points[:3]
+                    ],
+                },
+                "evidence_basis": {
+                    "agent_run_id": str(run.id),
+                    "evidence_snapshot_id": str(evidence.id),
+                    "workflow_name": run.workflow_name,
+                    "excerpt": (evidence.excerpt or evidence.content_digest)[:360],
+                },
             },
             status="pending",
             created_by=actor.id,
@@ -673,8 +1541,9 @@ class TeacherProductionService:
                 "course_id": str(course_id),
                 "source_snapshot_id": str(snapshot.id),
                 "evidence_snapshot_id": str(evidence.id),
-                "agent_run_id": str(payload.agent_run_id) if payload.agent_run_id else None,
+                "agent_run_id": str(payload.agent_run_id),
                 "version_no": version,
+                "course_row_mutated": False,
             },
         )
         return self._recommendation_dto(row)
@@ -703,6 +1572,22 @@ class TeacherProductionService:
             raise TeacherProductionError("SUGGESTION_ALREADY_DECIDED", "教学建议已被处置，不能重复决定。")
         state = {"adopt": "adopted", "reject": "rejected", "withdraw": "withdrawn"}[payload.decision]
         row.status = state
+        pending_action_id: UUID | None = None
+        if payload.decision == "adopt":
+            # This is deliberately a structured pending draft inside the
+            # versioned recommendation record. It has no write path to a
+            # published course, assignment, resource, or syllabus.
+            pending_action_id = uuid4()
+            diff = dict(row.diff or {})
+            diff["pending_teaching_action"] = {
+                "id": str(pending_action_id),
+                "action_type": payload.action_type,
+                "title": payload.action_title,
+                "draft": payload.action_draft,
+                "status": "pending_review",
+                "created_at": datetime.now(UTC).isoformat(),
+            }
+            row.diff = diff
         decision = TeachingRecommendationDecision(
             id=uuid4(),
             recommendation_id=row.id,
@@ -712,15 +1597,39 @@ class TeacherProductionService:
         )
         self.session.add(decision)
         await self.session.flush()
-        # Adoption intentionally only records the teacher decision.  It never
-        # mutates the ready course catalog or its published content.
+        if pending_action_id is not None:
+            await self._audit(
+                actor=actor,
+                action="teaching_action.create",
+                object_type="pending_teaching_action",
+                object_id=pending_action_id,
+                reason="教师采纳教学建议后创建待审核教学动作草稿。",
+                metadata={
+                    "recommendation_id": str(row.id),
+                    "course_id": str(row.course_id),
+                    "action_type": payload.action_type,
+                    "status": "pending_review",
+                    "course_row_mutated": False,
+                    "published_content_mutated": False,
+                },
+            )
+        # Adoption intentionally creates only a pending action draft. It never
+        # mutates the ready course catalog or any published teaching content.
         await self._audit(
             actor=actor,
             action="teaching_recommendation.decide",
             object_type="teaching_recommendation",
             object_id=row.id,
             reason=payload.reason,
-            metadata={"decision": payload.decision, "result_status": state, "course_id": str(row.course_id)},
+            metadata={
+                "decision": payload.decision,
+                "result_status": state,
+                "course_id": str(row.course_id),
+                "pending_teaching_action_id": (
+                    str(pending_action_id) if pending_action_id is not None else None
+                ),
+                "course_row_mutated": False,
+            },
         )
         return self._recommendation_dto(row)
 
@@ -942,6 +1851,11 @@ class TeacherProductionService:
         if assignment.status != "active" or assessment.status != "published":
             raise TeacherProductionError("SUBMISSION_WINDOW_CLOSED", "当前评估未开放提交。")
         await self._require_student_assignment_scope(actor=actor, assignment=assignment, course_id=assessment.course_id)
+        version = await self.repo.get_assessment_version(assignment.assessment_version_id)
+        if version is None or version.state != "published":
+            raise TeacherProductionError("SUBMISSION_WINDOW_CLOSED", "当前评估版本未处于已发布状态。")
+        version_items = await self.repo.list_assessment_items(version.id)
+        self._validate_student_answers(payload=payload, version_items=version_items)
         now = datetime.now(UTC)
         due_at = _as_utc(assignment.due_at)
         if now > due_at and not assignment.allow_late:
@@ -974,6 +1888,75 @@ class TeacherProductionService:
             },
         )
         return self._submission_dto(submission)
+
+    async def get_student_assessment(
+        self, *, actor: User, assignment_id: UUID
+    ) -> StudentAssessmentReadDTO:
+        """Expose only the published question snapshot to an assigned student.
+
+        The frozen source record retains answers and explanations for
+        deterministic server-side scoring; this student projection excludes
+        both so publishing an assignment does not reveal its solution key.
+        """
+
+        if actor.role != "student":
+            raise TeacherProductionError("ASSESSMENT_SCOPE_DENIED", "只有已选课学生可以读取评估。", 403)
+        context = await self.repo.get_assignment_context(assignment_id)
+        if context is None:
+            raise TeacherProductionError("ASSESSMENT_SCOPE_DENIED", "评估布置不存在或不可访问。", 404)
+        assignment, version, assessment = context
+        if (
+            assignment.status != "active"
+            or assessment.status != "published"
+            or version.state != "published"
+        ):
+            raise TeacherProductionError("SUBMISSION_WINDOW_CLOSED", "当前评估未开放阅读。")
+        await self._require_student_assignment_scope(
+            actor=actor, assignment=assignment, course_id=assessment.course_id
+        )
+        existing_submission = await self.repo.get_submission_for_assignment_student(
+            assignment_id=assignment.id, student_id=actor.id
+        )
+        items = await self.repo.list_assessment_items(version.id)
+        question_dtos: list[StudentAssessmentQuestionDTO] = []
+        for item in items:
+            snapshot = item.question_snapshot if isinstance(item.question_snapshot, dict) else {}
+            question = str(snapshot.get("question") or "").strip()
+            knowledge_node_name = str(snapshot.get("knowledge_node_name") or "").strip()
+            question_type = str(snapshot.get("type") or "").strip()
+            if not question or not knowledge_node_name or not question_type:
+                raise TeacherProductionError(
+                    "ASSESSMENT_VERSION_LOCKED",
+                    "已发布评估版本缺少可供学生读取的冻结题目字段。",
+                )
+            raw_options = snapshot.get("options")
+            options = [str(option) for option in raw_options] if isinstance(raw_options, list) else []
+            raw_content_version = snapshot.get("content_version")
+            content_version = raw_content_version if isinstance(raw_content_version, int) else 1
+            question_dtos.append(
+                StudentAssessmentQuestionDTO(
+                    quiz_item_id=item.quiz_item_id,
+                    position=item.position,
+                    points=item.points,
+                    grading_mode=item.grading_mode,  # type: ignore[arg-type]
+                    knowledge_node_name=knowledge_node_name,
+                    question_type=question_type,
+                    question=question,
+                    options=options,
+                    content_version=max(1, content_version),
+                )
+            )
+        return StudentAssessmentReadDTO(
+            assignment_id=assignment.id,
+            course_id=assessment.course_id,
+            title=version.title,
+            instructions=version.instructions,
+            due_at=assignment.due_at,
+            allow_late=assignment.allow_late,
+            status="active",
+            submission_status=(existing_submission.status if existing_submission else "open"),  # type: ignore[arg-type]
+            items=question_dtos,
+        )
 
     async def list_assignment_submissions(
         self, *, actor: User, assignment_id: UUID
@@ -1543,6 +2526,232 @@ class TeacherProductionService:
     # ------------------------------------------------------------------
 
     @staticmethod
+    def _form_context_action(purpose: TeacherFormPurpose) -> str | None:
+        return {
+            "assignment": "assignment_draft",
+            "teaching_recommendation": "teaching_recommendation",
+            "syllabus_candidate": "syllabus_candidate",
+            "asset_binding": "material_binding",
+            "quiz_generation": "assignment_draft",
+        }.get(purpose)
+
+    @staticmethod
+    def _form_context_draft(
+        *,
+        purpose: TeacherFormPurpose,
+        course_code: str,
+        teaching_classes: list[TeacherFormCandidateDTO],
+        knowledge_points: list[TeacherFormCandidateDTO],
+        quiz_items: list[TeacherFormQuizCandidateDTO],
+        material_candidates: list[TeacherFormMaterialCandidateDTO],
+        snapshots: list[TeacherFormCandidateDTO],
+        snapshot_metrics: list[WeaknessSnapshotDTO],
+        pairs: list[TeacherFormAgentEvidencePairDTO],
+        signals: list[TeacherFormCandidateDTO],
+        assignment_count: int,
+    ) -> dict[str, Any]:
+        """Build high-quality editable defaults from durable context only."""
+
+        default_class = teaching_classes[0] if teaching_classes else None
+        default_pair = pairs[0] if pairs else None
+        selected_items: list[TeacherFormQuizCandidateDTO] = []
+        selected_nodes: set[UUID] = set()
+        for item in quiz_items:
+            if item.knowledge_node_id not in selected_nodes:
+                selected_items.append(item)
+                selected_nodes.add(item.knowledge_node_id)
+            if len(selected_items) >= 8:
+                break
+        for item in quiz_items:
+            if len(selected_items) >= 8:
+                break
+            if item.id not in {selected.id for selected in selected_items}:
+                selected_items.append(item)
+
+        if purpose == "assignment":
+            return {
+                "teaching_class_id": str(default_class.id) if default_class else None,
+                "logical_key": f"{course_code.lower()}-input-defense-{assignment_count + 1:02d}",
+                "title": "输入验证、SQL 注入与 XSS 防御复盘作业",
+                "instructions": (
+                    "面向当前教学班巩固输入边界、参数化查询和安全输出编码。请先阅读关联资料，"
+                    "按题目顺序完成概念辨析、风险识别与防御验证；提交中说明所依据的安全控制，"
+                    "不要提供可直接滥用的攻击载荷。"
+                ),
+                "due_at": (datetime.now(UTC) + timedelta(days=7)).replace(second=0, microsecond=0).isoformat(),
+                "allow_late": True,
+                "items": [
+                    {
+                        "quiz_item_id": str(item.id),
+                        "points": item.default_points,
+                        "grading_mode": item.grading_mode,
+                    }
+                    for item in selected_items
+                ],
+                "knowledge_point_coverage": list(
+                    dict.fromkeys(item.knowledge_node_name for item in selected_items)
+                ),
+                "reason": "FormAssist 从当前课程已发布且质量通过的题目中选择分层题目，教师确认后才会冻结版本并布置。",
+            }
+
+        if purpose == "teaching_recommendation":
+            snapshot = snapshots[0] if snapshots else None
+            snapshot_metric = snapshot_metrics[0] if snapshot_metrics else None
+            focus_points = (
+                snapshot_metric.weak_knowledge_points[:2] if snapshot_metric is not None else []
+            )
+            if not focus_points and snapshot_metric is not None:
+                focus_points = [
+                    point
+                    for point in snapshot_metric.knowledge_point_metrics
+                    if point.attention_status != "insufficient_sample"
+                ][:2]
+            focus_label = "、".join(point.knowledge_node_name for point in focus_points)
+            if not focus_label:
+                focus_label = "当前快照中样本充足的防御知识点"
+            has_attention = any(
+                point.attention_status == "needs_attention" for point in focus_points
+            )
+            return {
+                "teaching_class_id": str(default_class.id) if default_class else None,
+                "minimum_sample": _DEFAULT_CLASS_MINIMUM_SAMPLE,
+                "knowledge_point_minimum_sample": _DEFAULT_KNOWLEDGE_POINT_MINIMUM_SAMPLE,
+                "source_snapshot_id": str(snapshot.id) if snapshot else None,
+                "agent_run_id": str(default_pair.agent_run_id) if default_pair else None,
+                "evidence_snapshot_id": str(default_pair.evidence_snapshot_id) if default_pair else None,
+                "title": (
+                    f"围绕{focus_label}安排分层防御复盘与检查练习"
+                    if has_attention
+                    else f"基于{focus_label}完善下一轮防御性学习检查"
+                ),
+                "actions": [
+                    f"在下一次课前为{focus_label}补充防御性对照学习单，要求学生标注每项控制的适用边界和验证依据。",
+                    "按已保存快照组织小组复盘，先解释错误模式与前置概念，再完成不包含可滥用载荷的防御性检查点。",
+                    "两周后使用同一课程范围内质量通过的题目进行短测，比较覆盖率、错误率与平均分变化后再决定是否创建课程更新或大纲候选。",
+                ],
+                "rationale": (
+                    "建议仅引用当前范围内已持久化的学习快照和已完成运行的 Evidence。快照中的有效样本、"
+                    "覆盖率、错误率与趋势会在提交前由服务端再次核验；样本不足的知识点只作为观察项，不被"
+                    "写成确定性薄弱结论。该草稿用于帮助教师判断复盘节奏与资料安排，不自动修改已发布课程、"
+                    "作业或学生成绩，教师可按教学班实际情况继续编辑后再提交。"
+                ),
+                "expected_impact": (
+                    "预计在下一次同范围短测中提高相关知识点的有效覆盖率和平均分，并降低重复错误率；"
+                    "实际效果必须以新的真实可评分作答快照复核，不以预置文本替代结果。"
+                ),
+            }
+
+        if purpose == "syllabus_candidate":
+            module_nodes = knowledge_points[:4]
+            modules = [
+                {
+                    "module_id": f"module-{index + 1}",
+                    "title": title,
+                    "knowledge_node_ids": [str(node.id)],
+                    "learning_outcome": outcome,
+                    "activities": activities,
+                }
+                for index, (node, title, outcome, activities) in enumerate(
+                    zip(
+                        module_nodes,
+                        ["HTTP 与认证边界", "输入验证与 SQL 注入防御", "浏览器输出与 XSS 防御", "上传、SSRF 与综合验证"],
+                        [
+                            "能够说明请求、身份与授权边界，并识别需要复核的信任转换。",
+                            "能够将输入校验、参数化查询和错误处理映射到可验证的防御控制。",
+                            "能够区分输出上下文，选择合适的编码和内容安全策略。",
+                            "能够为文件处理与服务端请求设计最小权限、校验和审计检查点。",
+                        ],
+                        [
+                            ["认证流程边界图解", "会话安全检查清单"],
+                            ["防御性案例拆解", "参数化查询与白名单复盘"],
+                            ["输出上下文对照练习", "安全编码评审"],
+                            ["资源访问范围建模", "综合检查与复盘"],
+                        ],
+                    )
+                )
+            ]
+            return {
+                "typed_content": {
+                    "title": "WEBSEC-101 Web 安全基础课程大纲",
+                    "summary": (
+                        "本课程以 HTTP 信任边界、身份认证、输入验证和常见 Web 风险的防御与验证为主线。"
+                        "学生将在受控案例中练习识别风险来源、选择安全控制、阅读证据并完成检查点，而非学习可直接复现的攻击操作。"
+                        "课程通过分层练习、资料复盘和阶段测评把知识点、资源与后续教学动作连接为可审计的学习链路。"
+                    ),
+                    "learning_outcomes": [
+                        "识别 Web 请求、认证、授权和数据处理中的信任边界。",
+                        "为输入、输出、文件和服务端请求选择可验证的防御控制。",
+                        "依据课程资料和 Evidence 解释安全决策，并完成防御性复盘。",
+                    ],
+                    "modules": modules,
+                    "assessment_plan": "每个模块设置资料检查点与质量通过题目；阶段测评用于回写能力画像，教师复核后决定资料、作业或大纲候选的后续动作。",
+                    "source_note": "草稿基于当前课程知识图谱、已入库资料与可验证 Evidence 整理；它不是实时模型生成结果，教师审核后才可发布。",
+                },
+                "agent_run_id": str(default_pair.agent_run_id) if default_pair else None,
+                "evidence_snapshot_id": str(default_pair.evidence_snapshot_id) if default_pair else None,
+                "reason": "基于当前课程可验证的运行与 Evidence 生成候选，教师将对模块、学习活动、评估与来源说明进行编辑和审核。",
+            }
+
+        if purpose == "subjective_grade":
+            return {
+                "agent_run_id": str(default_pair.agent_run_id) if default_pair else None,
+                "evidence_snapshot_id": str(default_pair.evidence_snapshot_id) if default_pair else None,
+                "reason": "仅将已完成且与当前课程关联的运行作为主观题建议依据；最终成绩仍需教师复核、覆盖理由和发布操作。",
+            }
+
+        if purpose == "asset_binding":
+            material = material_candidates[0] if material_candidates else None
+            return {
+                "document_id": str(material.id) if material else None,
+                "document_asset_id": str(material.document_asset_id) if material and material.document_asset_id else None,
+                "purpose": "teaching_material",
+                "reason": "将该已入库资料用于输入验证与安全编码模块的课前阅读、课堂复盘和作业证据定位；来源、版权与处理状态请在详情中复核。",
+            }
+
+        if purpose == "quiz_generation":
+            node = knowledge_points[0] if knowledge_points else None
+            return {
+                "knowledge_node_id": str(node.id) if node else None,
+                "question_type": "short_answer",
+                "quantity": 8,
+                "difficulty": 3,
+                "reason": "建议围绕一个当前课程知识点配置分层审核范围；候选题必须先经过既有质量检查和教师审核，才能进入作业或学生入口。",
+            }
+
+        if purpose == "course_update":
+            signal = signals[0] if signals else None
+            node = knowledge_points[0] if knowledge_points else None
+            return {
+                "signal_id": str(signal.id) if signal else None,
+                "knowledge_node_id": str(node.id) if node else None,
+                "impact_type": "emphasize",
+                "title": "补充服务端请求与访问控制的防御性复盘",
+                "summary": (
+                    "结合当前课程中已验证的外部信号与学习表现，在本周复盘中补充服务端请求、访问控制和网络出站约束的边界说明。"
+                    "面向目标教学班提供一份可读的检查清单，帮助学生先识别可信输入、目标地址和权限范围，再完成资源阅读与质量通过练习。"
+                    "本更新仅创建待教师处置的候选，不会自动替换已发布课程内容；关联资料、Evidence 和后续作业均需由教师确认。"
+                ),
+                "rationale": "已验证信号与课程 Evidence 支持对该知识点进行强调；建议先发布补充资料和短复盘，再根据后续样本决定是否调整大纲。",
+                "student_next_step": "在课程资源工作台阅读关联资料，完成防御性检查清单，并在下一次质量通过练习中说明控制选择理由。",
+                "reason": "教师根据可验证信号创建可编辑课程更新候选，提交后仍需显式采纳或驳回。",
+                "source_boundary": "受控课程场景的预置整理候选，非实时模型生成或生产验收结论。",
+            }
+
+        if purpose == "notice":
+            return {
+                "teaching_class_id": str(default_class.id) if default_class else None,
+                "title": "本周 Web 安全防御复盘与阶段练习安排",
+                "body": (
+                    "面向当前教学班：请在本周四课前完成“输入验证与安全输出”资源中的阅读检查点。"
+                    "课堂将围绕参数化查询、白名单校验和输出编码进行防御性复盘，请带着自己的控制选择理由参加讨论。"
+                    "完成后进入课程资源工作台的关联练习提交答案；资料来源和 Evidence 可在详情查看。"
+                ),
+                "reason": "通知草稿说明了受众、时间、学习任务、下一步和资源入口，教师可按实际教学安排修改后投递。",
+            }
+
+        return {}
+
+    @staticmethod
     def _require_teacher_role(actor: User) -> None:
         if actor.role not in _COURSE_TEACHER_ROLES:
             raise TeacherProductionError("TEACHER_ROLE_REQUIRED", "当前账号不具备课程教师身份。", 403)
@@ -1604,6 +2813,91 @@ class TeacherProductionService:
                 parent.state = "corrected"
         await self.session.flush()
 
+    @staticmethod
+    def _asset_processing_timeline(
+        *,
+        document_metadata: dict[str, Any],
+        document_updated_at: datetime,
+        chunks: Iterable[Chunk],
+    ) -> list[CourseAssetPipelineEventDTO]:
+        raw_timeline = document_metadata.get("processing_timeline")
+        timeline: list[CourseAssetPipelineEventDTO] = []
+        if isinstance(raw_timeline, list):
+            for raw_event in raw_timeline:
+                if not isinstance(raw_event, dict):
+                    continue
+                state = str(raw_event.get("state") or "pending")
+                if state not in {"completed", "pending", "failed"}:
+                    state = "pending"
+                occurred_at: datetime | None = None
+                raw_time = raw_event.get("occurred_at")
+                if isinstance(raw_time, str):
+                    try:
+                        occurred_at = datetime.fromisoformat(raw_time.replace("Z", "+00:00"))
+                    except ValueError:
+                        occurred_at = None
+                stage = str(raw_event.get("stage") or "persisted_state")
+                label = str(raw_event.get("label") or "已读取持久化处理记录")
+                timeline.append(
+                    CourseAssetPipelineEventDTO(
+                        stage=stage,
+                        label=label,
+                        state=state,  # type: ignore[arg-type]
+                        occurred_at=occurred_at,
+                        source="persisted_metadata",
+                    )
+                )
+        if timeline:
+            return timeline
+
+        chunk_rows = list(chunks)
+        indexed = bool(chunk_rows) and all(
+            row.embedding_status == "ready" and row.embedding is not None for row in chunk_rows
+        )
+        return [
+            CourseAssetPipelineEventDTO(
+                stage="document_persisted",
+                label="统一知识文档已持久化，可查看来源与分块记录",
+                state="completed",
+                occurred_at=document_updated_at,
+                source="persisted_record",
+            ),
+            CourseAssetPipelineEventDTO(
+                stage="chunk_status",
+                label=("全部分块已具备可用向量索引" if indexed else "分块已持久化，向量化/索引状态以现有任务为准"),
+                state="completed" if indexed else "pending",
+                occurred_at=document_updated_at if indexed else None,
+                source="persisted_record",
+            ),
+        ]
+
+    @staticmethod
+    def _chunk_excerpt(text: str) -> str:
+        compact = " ".join(text.split())
+        return compact[:720] if compact else "（该分块没有可显示的文本内容）"
+
+    @staticmethod
+    def _validate_student_answers(
+        *, payload: SubmitAssessmentRequest, version_items: Iterable[AssessmentItem]
+    ) -> None:
+        """Reject answer keys outside the immutable, published version snapshot."""
+
+        if not payload.answers:
+            raise TeacherProductionError("SUBMISSION_ANSWERS_INVALID", "请至少提交一道当前评估版本中的题目答案。")
+        allowed_ids = {str(item.quiz_item_id) for item in version_items}
+        submitted_ids: set[str] = set()
+        for raw_key in payload.answers:
+            try:
+                submitted_ids.add(str(UUID(raw_key)))
+            except (TypeError, ValueError, AttributeError):
+                raise TeacherProductionError(
+                    "SUBMISSION_ANSWERS_INVALID", "提交答案必须对应当前评估版本中的真实题目。"
+                ) from None
+        if not submitted_ids <= allowed_ids:
+            raise TeacherProductionError(
+                "SUBMISSION_ANSWERS_INVALID", "提交包含不属于当前已发布评估版本的题目。"
+            )
+
     async def _validate_education_scope(
         self,
         *,
@@ -1656,6 +2950,36 @@ class TeacherProductionService:
                 "Evidence Snapshot 与 AgentRun 没有可验证关联，拒绝接受生成式结果。",
             )
         return run, evidence
+
+    async def _agent_evidence_pair_matches_course(
+        self, *, course_id: UUID, run: Any, evidence: Any
+    ) -> bool:
+        """Verify linkage and scope without accepting ambiguous course metadata."""
+
+        linked_by_run = evidence.agent_run_id == run.id
+        linked_by_chunk = evidence.chunk_id is not None and evidence.chunk_id in {
+            str(chunk_id) for chunk_id in (run.evidence_chunk_ids or [])
+        }
+        if not linked_by_run and not linked_by_chunk:
+            return False
+        course_id_text = str(course_id)
+        contexts = (
+            run.input_summary,
+            run.output_summary,
+            evidence.citation,
+            evidence.source,
+        )
+        scoped_course_ids = {
+            str(context["course_id"])
+            for context in contexts
+            if isinstance(context, dict) and context.get("course_id") is not None
+        }
+        if scoped_course_ids:
+            return scoped_course_ids == {course_id_text}
+        return await self.repo.is_evidence_chunk_linked_to_course(
+            course_id=course_id,
+            chunk_id=evidence.chunk_id,
+        )
 
     async def _require_assessment_owner(self, *, actor: User, assessment_id: UUID) -> Assessment:
         assessment = await self.repo.get_assessment(assessment_id)
@@ -1845,6 +3169,43 @@ class TeacherProductionService:
         )
 
     @staticmethod
+    def _diversify_quiz_candidate_items(items: Iterable[Any], quantity: int) -> list[Any]:
+        """Round-robin durable items across knowledge points for a usable draft."""
+
+        buckets: dict[UUID, list[Any]] = defaultdict(list)
+        for item in items:
+            buckets[item.knowledge_node_id].append(item)
+
+        selected: list[Any] = []
+        while len(selected) < quantity:
+            progressed = False
+            for node_id in sorted(buckets, key=str):
+                bucket = buckets[node_id]
+                if not bucket:
+                    continue
+                selected.append(bucket.pop(0))
+                progressed = True
+                if len(selected) >= quantity:
+                    break
+            if not progressed:
+                break
+        return selected
+
+    @staticmethod
+    def _within_time_window(
+        created_at: datetime,
+        window_start: datetime | None,
+        window_end: datetime | None,
+    ) -> bool:
+        """Compare SQLite and PostgreSQL timestamps with the same UTC meaning."""
+
+        created = _as_utc(created_at)
+        return (
+            (window_start is None or created >= _as_utc(window_start))
+            and (window_end is None or created <= _as_utc(window_end))
+        )
+
+    @staticmethod
     def _attempt_score(attempt: Any) -> float | None:
         if isinstance(attempt.score, int | float) and not isinstance(attempt.score, bool):
             return min(1.0, max(0.0, float(attempt.score)))
@@ -1900,6 +3261,10 @@ class TeacherProductionService:
     def _weakness_dto(snapshot: ClassWeaknessSnapshot) -> WeaknessSnapshotDTO:
         aggregate = snapshot.aggregates if isinstance(snapshot.aggregates, dict) else {}
         points = aggregate.get("weak_knowledge_points", [])
+        metrics = aggregate.get("knowledge_point_metrics", points)
+        source_counts = aggregate.get("source_counts", {})
+        thresholds = aggregate.get("thresholds", {})
+        window = aggregate.get("window", {})
         return WeaknessSnapshotDTO(
             id=snapshot.id,
             course_id=snapshot.course_id,
@@ -1909,11 +3274,44 @@ class TeacherProductionService:
             score_version=snapshot.score_version,
             input_fingerprint=snapshot.input_fingerprint,
             weak_knowledge_points=[WeaknessKnowledgePointDTO.model_validate(item) for item in points],
+            knowledge_point_metrics=[
+                WeaknessKnowledgePointDTO.model_validate(item) for item in metrics
+            ],
+            enrolled_student_count=int(source_counts.get("enrolled_students", 0)),
+            scored_student_count=int(source_counts.get("scored_students", snapshot.sample_size)),
+            scored_coverage_rate=round(
+                snapshot.sample_size / int(source_counts.get("enrolled_students", 0)),
+                6,
+            )
+            if int(source_counts.get("enrolled_students", 0))
+            else 0.0,
+            minimum_sample=int(
+                thresholds.get("minimum_sample", _DEFAULT_CLASS_MINIMUM_SAMPLE)
+            ),
+            knowledge_point_minimum_sample=int(
+                thresholds.get(
+                    "knowledge_point_minimum_sample",
+                    _DEFAULT_KNOWLEDGE_POINT_MINIMUM_SAMPLE,
+                )
+            ),
+            window_start=snapshot.window_start or window.get("start"),
+            window_end=snapshot.window_end or window.get("end"),
+            latest_attempt_at=window.get("latest_attempt_at"),
             computed_at=snapshot.computed_at,
         )
 
     @staticmethod
     def _recommendation_dto(row: TeachingRecommendation) -> TeachingRecommendationDTO:
+        diff = row.diff if isinstance(row.diff, dict) else {}
+        pending_action: PendingTeachingActionDTO | None = None
+        raw_action = diff.get("pending_teaching_action")
+        if isinstance(raw_action, dict):
+            try:
+                pending_action = PendingTeachingActionDTO.model_validate(raw_action)
+            except ValidationError:
+                # Historical recommendation rows may not yet have the newer
+                # action-draft shape. They remain readable and auditable.
+                pending_action = None
         return TeachingRecommendationDTO(
             id=row.id,
             course_id=row.course_id,
@@ -1921,8 +3319,9 @@ class TeacherProductionService:
             evidence_snapshot_id=row.evidence_snapshot_id,
             agent_run_id=row.agent_run_id,
             version_no=row.version_no,
-            diff=row.diff or {},
+            diff=diff,
             status=row.status,  # type: ignore[arg-type]
+            pending_teaching_action=pending_action,
             created_at=row.created_at,
         )
 

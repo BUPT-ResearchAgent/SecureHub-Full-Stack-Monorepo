@@ -25,6 +25,101 @@ export type TeacherProductionCourse = {
 
 export type TeacherProductionCourseList = { items: TeacherProductionCourse[] };
 
+export type TeacherProductionPreflight = {
+  course_id: string;
+  teaching_class_id?: string | null;
+  active_class_count: number;
+  teaching_class_available: boolean;
+  enrolled_student_count: number;
+  scored_student_count: number;
+  scored_attempt_count: number;
+  scored_coverage_rate: number;
+  minimum_scored_student_count: number;
+  knowledge_point_minimum_sample: number;
+  knowledge_point_sample_ready_count: number;
+  knowledge_point_sample_insufficient_count: number;
+  active_assignment_count: number;
+  submitted_assignment_count: number;
+  graded_submission_count: number;
+  window_start?: string | null;
+  window_end?: string | null;
+  window_note: string;
+  publishable_quiz_count: number;
+  successful_agent_evidence_pair_count: number;
+  ready_governed_asset_count: number;
+  weakness_snapshot_count: number;
+  actions: TeacherFormDependency[];
+  calculated_at: string;
+};
+
+export type TeacherFormPurpose =
+  | 'assignment'
+  | 'teaching_recommendation'
+  | 'syllabus_candidate'
+  | 'subjective_grade'
+  | 'asset_binding'
+  | 'quiz_generation'
+  | 'course_update'
+  | 'notice';
+
+export type TeacherFormCandidate = {
+  id: string;
+  label: string;
+  summary: string;
+  state: string;
+  occurred_at?: string | null;
+};
+
+export type TeacherFormQuizCandidate = TeacherFormCandidate & {
+  knowledge_node_id: string;
+  knowledge_node_name: string;
+  question_type: string;
+  difficulty: number;
+  default_points: number;
+  grading_mode: 'objective' | 'subjective';
+};
+
+export type TeacherFormMaterialCandidate = TeacherFormCandidate & {
+  document_asset_id?: string | null;
+};
+
+export type TeacherFormAgentEvidencePair = {
+  agent_run_id: string;
+  evidence_snapshot_id: string;
+  label: string;
+  summary: string;
+  workflow_name: string;
+  occurred_at?: string | null;
+  supports_typed_syllabus: boolean;
+  supports_subjective_grade: boolean;
+};
+
+export type TeacherFormDependency = {
+  action: 'weakness_snapshot' | 'assignment_draft' | 'syllabus_candidate' | 'teaching_recommendation' | 'material_binding';
+  ready: boolean;
+  missing_requirements: string[];
+  next_step: string;
+};
+
+export type TeacherFormContext = {
+  course_id: string;
+  course_label: string;
+  purpose: TeacherFormPurpose;
+  teaching_classes: TeacherFormCandidate[];
+  knowledge_points: TeacherFormCandidate[];
+  publishable_quiz_items: TeacherFormQuizCandidate[];
+  material_candidates: TeacherFormMaterialCandidate[];
+  weakness_snapshots: TeacherFormCandidate[];
+  agent_evidence_pairs: TeacherFormAgentEvidencePair[];
+  external_signals: TeacherFormCandidate[];
+  syllabus_versions: TeacherFormCandidate[];
+  teaching_recommendations: TeacherFormCandidate[];
+  dependency?: TeacherFormDependency | null;
+  source_summary: string[];
+  draft: Record<string, unknown>;
+  generated_at: string;
+};
+
 export type TeacherGovernedAsset = {
   id: string;
   course_id: string;
@@ -38,6 +133,66 @@ export type TeacherGovernedAsset = {
   reason?: string | null;
   created_at: string;
   updated_at: string;
+};
+
+export type TeacherAssetPipelineEvent = {
+  stage: string;
+  label: string;
+  state: 'completed' | 'pending' | 'failed';
+  occurred_at?: string | null;
+  source: 'persisted_metadata' | 'persisted_record';
+};
+
+export type TeacherAssetKnowledgeChunk = {
+  chunk_index: number;
+  chapter?: string | null;
+  page_no?: number | null;
+  excerpt: string;
+  knowledge_points: string[];
+  embedding_status: string;
+  quality_state: string;
+};
+
+export type TeacherAssetKnowledgeDetail = {
+  asset: TeacherGovernedAsset;
+  source_type: string;
+  asset_type?: string | null;
+  original_filename?: string | null;
+  mime_type?: string | null;
+  size_bytes?: number | null;
+  page_count?: number | null;
+  chapter_count?: number | null;
+  chunk_count: number;
+  indexed_chunk_count: number;
+  pending_index_chunk_count: number;
+  processing_elapsed_ms?: number | null;
+  processing_mode: string;
+  source_boundary: string;
+  source_url?: string | null;
+  processing_timeline: TeacherAssetPipelineEvent[];
+  knowledge_points: string[];
+  chunks: TeacherAssetKnowledgeChunk[];
+};
+
+export type TeacherQuizCandidatePreview = {
+  course_id: string;
+  source: 'persisted_quality_passed_bank';
+  live_generation_started: false;
+  teaching_intent: string;
+  requested_quantity: number;
+  available_count: number;
+  items: Array<{
+    id: string;
+    canonical_key: string;
+    knowledge_node_id: string;
+    knowledge_node_name: string;
+    question_type: 'single_choice' | 'multi_choice' | 'fill' | 'short_answer' | 'code';
+    difficulty: number;
+    evidence_count: number;
+    quality_state: 'passed';
+  }>;
+  next_step: string;
+  prepared_at: string;
 };
 
 export type TeacherWeaknessSnapshot = {
@@ -54,8 +209,44 @@ export type TeacherWeaknessSnapshot = {
     sample_size: number;
     average_score: number;
     incorrect_rate: number;
+    coverage_rate: number;
+    trend: 'improving' | 'deteriorating' | 'stable' | 'insufficient_history';
+    attention_status: 'needs_attention' | 'improving' | 'stable' | 'insufficient_sample';
+    weakness_score?: number | null;
+    previous_average_score?: number | null;
+    latest_attempt_at?: string | null;
   }>;
+  knowledge_point_metrics: Array<{
+    knowledge_node_id: string;
+    knowledge_node_name: string;
+    sample_size: number;
+    average_score: number;
+    incorrect_rate: number;
+    coverage_rate: number;
+    trend: 'improving' | 'deteriorating' | 'stable' | 'insufficient_history';
+    attention_status: 'needs_attention' | 'improving' | 'stable' | 'insufficient_sample';
+    weakness_score?: number | null;
+    previous_average_score?: number | null;
+    latest_attempt_at?: string | null;
+  }>;
+  enrolled_student_count: number;
+  scored_student_count: number;
+  scored_coverage_rate: number;
+  minimum_sample: number;
+  knowledge_point_minimum_sample: number;
+  window_start?: string | null;
+  window_end?: string | null;
+  latest_attempt_at?: string | null;
   computed_at: string;
+};
+
+export type PendingTeachingAction = {
+  id: string;
+  action_type: 'supplement_material' | 'review_assignment' | 'course_update_candidate' | 'syllabus_candidate' | 'learning_reminder';
+  title: string;
+  draft: string;
+  status: 'pending_review';
+  created_at: string;
 };
 
 export type TeachingRecommendation = {
@@ -67,6 +258,7 @@ export type TeachingRecommendation = {
   version_no: number;
   diff: Record<string, unknown>;
   status: 'pending' | 'adopted' | 'rejected' | 'superseded' | 'withdrawn';
+  pending_teaching_action?: PendingTeachingAction | null;
   created_at: string;
 };
 
@@ -210,10 +402,57 @@ export function fetchTeacherProductionCourses(): Promise<TeacherProductionCourse
   return apiGet<TeacherProductionCourseList>(`${productionPath}/courses`);
 }
 
+export function fetchTeacherProductionPreflight(
+  courseId: string,
+  options: {
+    teachingClassId?: string;
+    minimumScoredStudents: number;
+    knowledgePointMinimumSample: number;
+    windowStart?: string;
+    windowEnd?: string;
+  },
+): Promise<TeacherProductionPreflight> {
+  const search = new URLSearchParams({
+    minimum_scored_students: String(options.minimumScoredStudents),
+    knowledge_point_minimum_sample: String(options.knowledgePointMinimumSample),
+  });
+  if (options.teachingClassId) search.set('teaching_class_id', options.teachingClassId);
+  if (options.windowStart) search.set('window_start', options.windowStart);
+  if (options.windowEnd) search.set('window_end', options.windowEnd);
+  return apiGet<TeacherProductionPreflight>(
+    `${productionPath}/courses/${encodeURIComponent(courseId)}/preflight?${search.toString()}`,
+  );
+}
+
+export function fetchTeacherFormContext(
+  courseId: string,
+  purpose: TeacherFormPurpose,
+): Promise<TeacherFormContext> {
+  return apiGet<TeacherFormContext>(
+    `${productionPath}/courses/${encodeURIComponent(courseId)}/form-contexts/${encodeURIComponent(purpose)}`,
+  );
+}
+
+export function recordTeacherFormContextPrefill(
+  courseId: string,
+  purpose: TeacherFormPurpose,
+): Promise<{ course_id: string; purpose: TeacherFormPurpose; recorded_at: string }> {
+  return apiPost<{ course_id: string; purpose: TeacherFormPurpose; recorded_at: string }>(
+    `${productionPath}/courses/${encodeURIComponent(courseId)}/form-contexts/${encodeURIComponent(purpose)}/prefill`,
+    {},
+  );
+}
+
 export function fetchTeacherCourseAssets(courseId: string, includeDeleted = false): Promise<{ items: TeacherGovernedAsset[] }> {
   const suffix = includeDeleted ? '?include_deleted=true' : '';
   return apiGet<{ items: TeacherGovernedAsset[] }>(
     `${productionPath}/courses/${encodeURIComponent(courseId)}/assets${suffix}`,
+  );
+}
+
+export function fetchTeacherAssetKnowledgeDetail(assetId: string): Promise<TeacherAssetKnowledgeDetail> {
+  return apiGet<TeacherAssetKnowledgeDetail>(
+    `${productionPath}/assets/${encodeURIComponent(assetId)}/knowledge-detail`,
   );
 }
 
@@ -255,6 +494,22 @@ export function reviewTeacherQuizItem(
   );
 }
 
+export function prepareTeacherQuizCandidates(
+  courseId: string,
+  payload: {
+    knowledge_node_ids: string[];
+    question_types: Array<'single_choice' | 'multi_choice' | 'fill' | 'short_answer' | 'code'>;
+    quantity: number;
+    target_difficulty: number;
+    teaching_intent: string;
+  },
+): Promise<TeacherQuizCandidatePreview> {
+  return apiPost<TeacherQuizCandidatePreview>(
+    `${productionPath}/courses/${encodeURIComponent(courseId)}/quiz-candidates/prepare`,
+    payload,
+  );
+}
+
 export function fetchTeacherWeaknessSnapshots(courseId: string): Promise<{ items: TeacherWeaknessSnapshot[] }> {
   return apiGet<{ items: TeacherWeaknessSnapshot[] }>(
     `${productionPath}/courses/${encodeURIComponent(courseId)}/weakness-snapshots`,
@@ -263,7 +518,14 @@ export function fetchTeacherWeaknessSnapshots(courseId: string): Promise<{ items
 
 export function createTeacherWeaknessSnapshot(
   courseId: string,
-  payload: { teaching_class_id?: string; group_id?: string; minimum_sample: number },
+  payload: {
+    teaching_class_id?: string;
+    group_id?: string;
+    window_start?: string;
+    window_end?: string;
+    minimum_sample: number;
+    knowledge_point_minimum_sample: number;
+  },
 ): Promise<TeacherWeaknessSnapshot> {
   return apiPost<TeacherWeaknessSnapshot>(
     `${productionPath}/courses/${encodeURIComponent(courseId)}/weakness-snapshots`,
@@ -282,10 +544,11 @@ export function createTeachingRecommendation(
   payload: {
     source_snapshot_id: string;
     evidence_snapshot_id: string;
-    agent_run_id?: string;
+    agent_run_id: string;
     title: string;
     actions: string[];
     rationale: string;
+    expected_impact: string;
   },
 ): Promise<TeachingRecommendation> {
   return apiPost<TeachingRecommendation>(
@@ -296,7 +559,13 @@ export function createTeachingRecommendation(
 
 export function decideTeachingRecommendation(
   recommendationId: string,
-  payload: { decision: 'adopt' | 'reject' | 'withdraw'; reason: string },
+  payload: {
+    decision: 'adopt' | 'reject' | 'withdraw';
+    reason: string;
+    action_type?: PendingTeachingAction['action_type'];
+    action_title?: string;
+    action_draft?: string;
+  },
 ): Promise<TeachingRecommendation> {
   return apiPost<TeachingRecommendation>(
     `${productionPath}/teaching-recommendations/${encodeURIComponent(recommendationId)}/decision`,

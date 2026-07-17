@@ -67,6 +67,79 @@ teacher this course; teachers may govern only courses for which they have an
 explicit `course_teacher_assignments` record. Run this command when a teacher
 page reports that the current teacher lacks `WEBSEC-101` authorization.
 
+## Controlled WEBSEC-101 showcase course seed
+
+`app.db.seeds.seed_showcase_course` is an explicit, idempotent profile for a
+local development database, competition rehearsal, or an explicitly
+authorised test database. It writes ordinary course, enrollment, quiz,
+assessment, resource, AgentRun/Evidence, and governance records so existing
+APIs and permissions consume them normally. It is not a startup seed, is
+disabled when `APP_ENV` is `production`, `prod`, or `release`, and must never
+be run against production by default.
+
+The `websec-101-showcase-v5` profile includes 32 fictional course aliases and
+one existing demo-course learner. Its fixed teaching material and external
+references remain labelled as `curated-demo` / `external-preview`; they are
+not a claim of live model generation, platform-owned video content, or real
+student records.
+
+Before using it, work from this `backend/` directory, run `uv sync --frozen`,
+and set `DATABASE_URL` through an approved local/test environment mechanism.
+It must point to an explicitly authorised PostgreSQL database whose schema has
+already been reviewed and upgraded to the current Alembic head. Do not put a
+production URL or credentials in shell history, documentation, or Git.
+
+### Windows PowerShell
+
+```powershell
+# Run only after DATABASE_URL targets an authorised local/demo/test database.
+uv sync --frozen
+uv run alembic upgrade head
+
+# Create or reconcile only the controlled profile.
+$env:SECUREHUB_ALLOW_SHOWCASE_SEED='1'
+uv run python -m app.db.seeds.seed_showcase_course seed
+
+# Check manifest counts, quality-gated items, relationship chains, and state coverage.
+uv run python -m app.db.seeds.seed_showcase_course verify
+```
+
+### macOS/Linux shell
+
+```bash
+# Run only after DATABASE_URL targets an authorised local/demo/test database.
+uv sync --frozen
+uv run alembic upgrade head
+
+SECUREHUB_ALLOW_SHOWCASE_SEED=1 uv run python -m app.db.seeds.seed_showcase_course seed
+SECUREHUB_ALLOW_SHOWCASE_SEED=1 uv run python -m app.db.seeds.seed_showcase_course verify
+```
+
+`verify` must report `valid: True` before a rehearsal. It checks the manifest,
+quality-gated items, relationship chains, and coverage states; it does not
+substitute for PostgreSQL migration or browser end-to-end checks.
+
+### Profile-scoped reset
+
+Reset is deliberately separate and must never be run in production. After
+reviewing the target database, it removes only stable IDs owned by this
+profile; the base WEBSEC-101 seed and unrelated workspace data remain.
+
+```powershell
+$env:SECUREHUB_ALLOW_SHOWCASE_SEED='1'
+uv run python -m app.db.seeds.seed_showcase_course reset
+```
+
+```bash
+SECUREHUB_ALLOW_SHOWCASE_SEED=1 uv run python -m app.db.seeds.seed_showcase_course reset
+```
+
+The command path is intentionally cross-platform: the module is launched by
+`uv run python -m ...`, and its bundled lecture is resolved from the project
+root with `pathlib`. Windows is the currently executed environment; macOS and
+Linux are supported command paths that still require `seed` plus `verify` in
+their target environment before they can be called validated there.
+
 ## Local password-policy demo accounts
 
 The normal student presentation account,

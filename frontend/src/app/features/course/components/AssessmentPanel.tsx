@@ -557,7 +557,7 @@ function AssessmentOutcomeDetails({
             <ListChecks className="h-4 w-4 text-brand-blue-700" />
             评估审计
           </p>
-          <p className="mt-1 break-all text-xs text-slate-500">root {audit.rootRunId}</p>
+          <p className="mt-1 text-xs text-slate-500">本次评估已关联可追溯运行记录；内部编号可在受权审计详情中查看。</p>
           {audit.occurredAt && <p className="mt-0.5 text-xs text-slate-500">完成时间 {audit.occurredAt}</p>}
         </div>
         <span className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium ${
@@ -593,12 +593,15 @@ function AssessmentOutcomeDetails({
 
       {(audit.quizArtifactId || typeof audit.answeredCount === 'number') && (
         <p className="text-xs text-slate-500">
-          测验 Artifact：{audit.quizArtifactId ?? '未标注'}
+          {audit.quizArtifactId ? '已关联测验来源' : '未标注测验来源'}
           {typeof audit.answeredCount === 'number' ? ` · 已提交 ${audit.answeredCount} 题` : ''}
         </p>
       )}
 
-      <OutcomeList title="薄弱知识点" values={audit.weakKpIds} emptyText="未标注" />
+      <section>
+        <p className="text-xs font-medium text-slate-700">薄弱知识点</p>
+        <p className="mt-1 text-xs text-slate-600">{audit.weakKpIds.length > 0 ? `已关联 ${audit.weakKpIds.length} 个知识点；可在学习路径与推荐资源中继续查看。` : '未标注'}</p>
+      </section>
 
       <section>
         <p className="text-xs font-medium text-slate-700">能力变化</p>
@@ -631,7 +634,7 @@ function AssessmentOutcomeDetails({
       </section>
 
       {audit.evidenceSnapshotIds.length > 0 && (
-        <p className="text-xs text-slate-500">Evidence Snapshot：{audit.evidenceSnapshotIds.join('、')}</p>
+        <p className="text-xs text-slate-500">已关联 {audit.evidenceSnapshotIds.length} 条 Evidence Snapshot；可在受权来源详情中查看。</p>
       )}
 
       <section className="rounded-md bg-brand-blue-50 px-3 py-2 text-xs leading-5 text-brand-blue-900">
@@ -647,17 +650,6 @@ function AssessmentOutcomeDetails({
           </ul>
         )}
       </section>
-    </section>
-  );
-}
-
-function OutcomeList({ title, values, emptyText }: { title: string; values: string[]; emptyText: string }) {
-  return (
-    <section>
-      <p className="text-xs font-medium text-slate-700">{title}</p>
-      {values.length > 0
-        ? <p className="mt-1 text-xs text-slate-600">{values.join('、')}</p>
-        : <p className="mt-1 text-xs text-slate-500">{emptyText}</p>}
     </section>
   );
 }

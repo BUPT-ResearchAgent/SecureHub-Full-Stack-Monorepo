@@ -18,6 +18,7 @@ import {
 } from '@/app/components/ui/popover';
 import { AgentTracePanel } from '@/app/features/agents/components/AgentTracePanel';
 import { AgentTraceProvider } from '@/app/features/agents/store';
+import { useAuth } from '@/app/features/auth/store';
 import { CourseCatalogLanding } from '@/app/features/course/catalog/CourseCatalogLanding';
 import { CourseSwitcher } from '@/app/features/course/catalog/CourseSwitcher';
 import {
@@ -35,6 +36,11 @@ import {
 import { CourseWorkflowRecovery } from '@/app/features/course/workflow/CourseWorkflowRecovery';
 import { PersonaBuilder } from '@/app/features/course/components/PersonaBuilder';
 import { TutorDialog } from '@/app/features/course/components/TutorDialog';
+import { StudentCourseExperiencePanel } from '@/app/features/course/components/StudentCourseExperiencePanel';
+import { StudentCourseExperienceProvider } from '@/app/features/course/studentExperienceContext';
+import { StudentLearningLoopProvider } from '@/app/features/course/studentLearningLoopContext';
+import { PathReplanAnimation } from '@/app/features/course/path/PathReplanAnimation';
+import { PushTimeline } from '@/app/features/course/path/PushTimeline';
 import {
   CourseProvider,
   DEFAULT_COURSE_TASK_CONTEXT,
@@ -61,19 +67,25 @@ const LazyWebSecurityExam = lazy(() => (
 
 function EntryTab() {
   const { course } = useSelectedCourse();
+  const { user } = useAuth();
   const { activeWorkflowRootId, workflowRoots } = useCourseState();
   if (!course) return null;
   const activeRoot = activeWorkflowRootId ? workflowRoots[activeWorkflowRootId] : undefined;
   return (
     <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_420px]">
       <div className="space-y-4">
+        <StudentCourseExperiencePanel section="entry" />
         <CourseEntryCard course={course} />
-        <PersonaBuilder userId="00000000-0000-0000-0000-000000000001" />
+        {user?.id && user.role === 'student' ? <PersonaBuilder userId={user.id} /> : (
+          <div className="border border-slate-200 bg-white p-4 text-sm text-slate-600">
+            使用学生账户登录后可继续补充自己的学习画像。
+          </div>
+        )}
       </div>
       <AgentTracePanel
         rootRunId={activeRoot?.runId}
         workflow="course_learning"
-        userId="00000000-0000-0000-0000-000000000001"
+        userId={user?.id}
       />
     </div>
   );
@@ -85,13 +97,16 @@ function WebSecurityExamTab() {
   const requestedPaperId = params.get('paperId') ?? undefined;
 
   return (
-    <CourseOptionalTab resetKey="websec-exam-module" label="题库与试卷">
-      <LazyWebSecurityExam
-        initialPaperId={requestedPaperId}
-        onPaperChange={(paperId) => navigate(buildWebSecurityCourseTabUrl('exam', { paperId }))}
-        onOpenResource={(resourceId) => navigate(buildWebSecurityCourseTabUrl('workbench', { resourceId }))}
-      />
-    </CourseOptionalTab>
+    <div className="space-y-4">
+      <StudentCourseExperiencePanel section="assignments" />
+      <CourseOptionalTab resetKey="websec-exam-module" label="题库与试卷">
+        <LazyWebSecurityExam
+          initialPaperId={requestedPaperId}
+          onPaperChange={(paperId) => navigate(buildWebSecurityCourseTabUrl('exam', { paperId }))}
+          onOpenResource={(resourceId) => navigate(buildWebSecurityCourseTabUrl('workbench', { resourceId }))}
+        />
+      </CourseOptionalTab>
+    </div>
   );
 }
 
@@ -107,9 +122,14 @@ const pathTab: TabDef = {
   label: '学习路径',
   description: '查看真实个性化路径，或切换至课程整理的 Web 安全路线图',
   render: () => (
-    <CourseOptionalTab resetKey="websec-path-module" label="学习路径">
-      <LazyLearningPathWorkspace />
-    </CourseOptionalTab>
+    <div className="space-y-4">
+      <StudentCourseExperiencePanel section="path" />
+      <PathReplanAnimation />
+      <PushTimeline />
+      <CourseOptionalTab resetKey="websec-path-module" label="学习路径">
+        <LazyLearningPathWorkspace />
+      </CourseOptionalTab>
+    </div>
   ),
 };
 
@@ -118,9 +138,12 @@ const workbenchTab: TabDef = {
   label: '资源工作台',
   description: '查看已生成资源，或浏览 Web 安全课程资料与公开视频目录',
   render: () => (
-    <CourseOptionalTab resetKey="websec-resource-module" label="资源工作台">
-      <LazyCourseResourceWorkspace />
-    </CourseOptionalTab>
+    <div className="space-y-4">
+      <StudentCourseExperiencePanel section="resources" />
+      <CourseOptionalTab resetKey="websec-resource-module" label="资源工作台">
+        <LazyCourseResourceWorkspace />
+      </CourseOptionalTab>
+    </div>
   ),
 };
 
@@ -128,14 +151,14 @@ const tutorTab: TabDef = {
   key: 'tutor',
   label: '辅导对话',
   description: '多智能体路由的智能答疑（接入 Chat 课程上下文）',
-  render: () => <TutorDialog />,
+  render: () => <div className="space-y-4"><StudentCourseExperiencePanel section="tutor" /><TutorDialog /></div>,
 };
 
 const assessTab: TabDef = {
   key: 'assess',
   label: '效果评估',
   description: '答题反馈、能力雷达更新、画像回流',
-  render: () => <AssessmentPanel />,
+  render: () => <div className="space-y-4"><StudentCourseExperiencePanel section="assessment" /><AssessmentPanel /></div>,
 };
 
 const tabs: TabDef[] = [entryTab, pathTab, workbenchTab, tutorTab, assessTab];
@@ -329,7 +352,6 @@ function CourseStudyInner() {
     course,
     courses,
     catalogStatus,
-    catalogError,
     invalidCourseReference,
     selectCourse,
   } = useSelectedCourse();
@@ -381,6 +403,16 @@ function CourseStudyInner() {
     setParams(next, { replace: true });
   }, [activeView, availableTabOrder, params, rawView, setParams]);
 
+  useEffect(() => {
+    if (!rawTab || isCourseTab(rawTab, availableTabOrder)) return;
+    const next = new URLSearchParams(params);
+    next.set('tab', 'entry');
+    next.delete('paperId');
+    next.delete('resourceId');
+    next.delete('catalog');
+    setParams(next, { replace: true });
+  }, [availableTabOrder, params, rawTab, setParams]);
+
   const setCourseView = (view: CourseView, replace = false) => {
     persistCourseView(view);
     const next = new URLSearchParams(params);
@@ -403,14 +435,22 @@ function CourseStudyInner() {
     : undefined;
 
   if (!course) {
+    const title = invalidCourseReference
+      ? '未找到所请求的课程'
+      : catalogStatus === 'error'
+        ? '课程目录暂时无法读取'
+        : '正在读取课程目录';
+    const description = invalidCourseReference
+      ? '该链接中的课程不在当前账号可访问目录内。系统不会将你静默切换到其他课程。'
+      : catalogStatus === 'error'
+        ? '请检查登录状态或课程服务连接后返回课程目录重试。'
+        : '正在从课程服务加载当前账号可访问的课程。';
     return (
-      <div className="flex min-h-52 items-center justify-center rounded-lg border border-slate-200 bg-white px-5 text-sm text-slate-500">
-        {invalidCourseReference
-          ? `未找到课程「${invalidCourseReference}」。请从课程目录重新选择，系统不会回落到其他课程。`
-          : catalogStatus === 'error'
-          ? `课程目录加载失败：${catalogError?.message ?? '请检查后端课程服务。'}`
-          : '正在加载真实课程目录...'}
-      </div>
+      <section className="flex min-h-52 flex-col items-center justify-center border border-dashed border-slate-300 bg-white px-5 text-center">
+        <h1 className="text-base font-semibold text-slate-900">{title}</h1>
+        <p className="mt-2 max-w-md text-sm leading-6 text-slate-500">{description}</p>
+        {(invalidCourseReference || catalogStatus === 'error') && <button type="button" onClick={() => navigate('/course', { replace: true })} className="mt-4 rounded-lg border border-brand-blue-200 bg-white px-3 py-2 text-sm font-medium text-brand-blue-700 hover:bg-brand-blue-50">返回课程目录</button>}
+      </section>
     );
   }
 
@@ -427,15 +467,23 @@ function CourseStudyInner() {
   };
 
   return (
-    <div
-      tabIndex={0}
-      onKeyDown={activeView === 'structured' ? handleKeyDown : undefined}
-      className="space-y-4 outline-none"
-      aria-label="课程学习页面"
+    <StudentCourseExperienceProvider
+      courseId={isWebSecurityFoundation ? course.id : null}
+      enabled={isWebSecurityFoundation}
     >
+      <StudentLearningLoopProvider
+        courseId={isWebSecurityFoundation ? course.id : null}
+        enabled={isWebSecurityFoundation}
+      >
+      <div
+        tabIndex={0}
+        onKeyDown={activeView === 'structured' ? handleKeyDown : undefined}
+        className="space-y-4 outline-none"
+        aria-label="课程学习页面"
+      >
       <header className="space-y-3 border-b border-slate-200 pb-4">
         {/* 第一行：标题 + 课程切换 + 更多设置 */}
-        <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="flex min-w-0 items-center gap-2">
             <h1 className="truncate text-xl font-semibold leading-tight text-slate-950">
               {course.title}
@@ -446,15 +494,15 @@ function CourseStudyInner() {
               {course.difficulty}
             </span>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex max-w-full flex-wrap items-center justify-end gap-2">
             {course.contentStatus === 'ready' ? <button
               type="button"
               onClick={openBackendStatusLLMTab}
-              title="查看 LLM 健康状态；当前课程 real 工作流使用已签收的 DeepSeek 链路，Spark Gate 延后处理"
-              className="inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[11px] font-medium text-emerald-700 transition-colors hover:bg-emerald-100"
+              title="查看模型与运行状态；外部 Provider 的当前环境验收需以运行详情和测试记录为准"
+              className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[11px] font-medium text-emerald-700 transition-colors hover:bg-emerald-100"
             >
               <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-              DeepSeek 真实链路
+              课程工作流已接入
             </button> : (
               <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-[11px] font-medium text-amber-700">
                 内容预览 / 建设中
@@ -518,18 +566,17 @@ function CourseStudyInner() {
           </p>
         )}
         {activeRoot && (
-          <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-500">
-            <span className="rounded-full border border-slate-200 bg-white px-2 py-1">
-              Root {activeRoot.runId}
-            </span>
-            <span>{activeRoot.workflow}</span>
-            <span>{activeRoot.provider ?? 'provider 待确认'}</span>
-            <span>证据 {activeRoot.evidenceCount}</span>
-            <span>产物 {activeRoot.artifactIds.length}</span>
-            <span className={activeRoot.error ? 'text-rose-600' : 'text-emerald-700'}>
-              {activeRoot.error ? activeRoot.error.message : activeRoot.status}
-            </span>
-          </div>
+          <details className="border-t border-slate-100 pt-3 text-[11px] text-slate-500">
+            <summary className="cursor-pointer font-medium text-slate-700">查看当前运行状态与来源边界</summary>
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <span>{activeRoot.workflow}</span>
+              <span>{activeRoot.provider ?? 'Provider 待确认'}</span>
+              <span>Evidence {activeRoot.evidenceCount} 项</span>
+              <span>产物 {activeRoot.artifactIds.length} 项</span>
+              <span className={activeRoot.error ? 'text-rose-600' : 'text-emerald-700'}>{activeRoot.error ? '本次运行未完成，请在运行详情中查看原因。' : activeRoot.status}</span>
+            </div>
+            <p className="mt-2 leading-5 text-slate-400">运行编号仅在受权的审计详情中显示；本页不把内部标识作为学习操作输入。</p>
+          </details>
         )}
       </header>
 
@@ -552,7 +599,7 @@ function CourseStudyInner() {
             exit={{ opacity: 0, x: -8 }}
             transition={{ duration: 0.3, ease: 'easeOut' }}
           >
-            <div role="tablist" aria-label="课程学习标签" className="mb-4 flex flex-wrap gap-2">
+            <div role="tablist" aria-label="课程学习标签" className="mb-4 flex gap-2 overflow-x-auto pb-1">
               {availableTabOrder.map((key) => {
                 const tab = availableTabs.find((item) => item.key === key);
                 if (!tab) return null;
@@ -565,7 +612,7 @@ function CourseStudyInner() {
                     aria-selected={selected}
                     tabIndex={selected ? 0 : -1}
                     onClick={() => setActiveTab(key)}
-                    className={`rounded-lg border px-3 py-2 text-sm transition-colors ${
+                    className={`shrink-0 rounded-lg border px-3 py-2 text-sm transition-colors ${
                       selected
                         ? 'border-brand-blue-600 bg-brand-blue-50 text-brand-blue-700'
                         : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
@@ -585,7 +632,9 @@ function CourseStudyInner() {
           </motion.div>
         )}
       </AnimatePresence>
-    </div>
+      </div>
+      </StudentLearningLoopProvider>
+    </StudentCourseExperienceProvider>
   );
 }
 
