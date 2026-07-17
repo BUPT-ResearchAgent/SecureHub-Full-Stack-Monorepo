@@ -38,6 +38,8 @@ from app.schemas.teacher_production import (
     GradeDecisionDTO,
     GradeOverrideRequest,
     ObjectiveScoreDTO,
+    QuizCandidateAvailabilityDTO,
+    QuizCandidateFilterRequest,
     QuizCandidatePrepareRequest,
     QuizCandidatePreviewDTO,
     QuizReviewDecisionDTO,
@@ -72,9 +74,12 @@ router = APIRouter()
 
 
 def _raise_domain_error(exc: TeacherProductionError) -> None:
+    detail: dict[str, object] = {"code": exc.code, "message": exc.message}
+    if exc.detail is not None:
+        detail.update(exc.detail)
     raise HTTPException(
         status_code=exc.status_code,
-        detail={"code": exc.code, "message": exc.message},
+        detail=detail,
     ) from exc
 
 
@@ -318,6 +323,25 @@ async def review_course_quiz_item(
         )
         await session.commit()
         return result
+    except TeacherProductionError as exc:
+        await session.rollback()
+        _raise_domain_error(exc)
+
+
+@router.post(
+    "/teacher/production/courses/{course_id}/quiz-candidates/preflight",
+    response_model=QuizCandidateAvailabilityDTO,
+)
+async def preflight_course_quiz_candidates(
+    course_id: UUID,
+    payload: QuizCandidateFilterRequest,
+    session: SessionDep,
+    user: RequiredCurrentUserDep,
+) -> QuizCandidateAvailabilityDTO:
+    try:
+        return await TeacherProductionService(session).preflight_quiz_candidates(
+            actor=user, course_id=course_id, payload=payload
+        )
     except TeacherProductionError as exc:
         await session.rollback()
         _raise_domain_error(exc)

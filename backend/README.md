@@ -77,7 +77,7 @@ APIs and permissions consume them normally. It is not a startup seed, is
 disabled when `APP_ENV` is `production`, `prod`, or `release`, and must never
 be run against production by default.
 
-The `websec-101-showcase-v5` profile includes 32 fictional course aliases and
+The `websec-101-showcase-v7` profile includes 32 fictional course aliases and
 one existing demo-course learner. Its fixed teaching material and external
 references remain labelled as `curated-demo` / `external-preview`; they are
 not a claim of live model generation, platform-owned video content, or real
@@ -118,6 +118,42 @@ SECUREHUB_ALLOW_SHOWCASE_SEED=1 uv run python -m app.db.seeds.seed_showcase_cour
 `verify` must report `valid: True` before a rehearsal. It checks the manifest,
 quality-gated items, relationship chains, and coverage states; it does not
 substitute for PostgreSQL migration or browser end-to-end checks.
+
+### Upgrade an existing v5/v6 showcase database to v7
+
+For an ordinary upgrade of an already authorised local, competition-demo, or
+test PostgreSQL database, run `seed` and then `verify` again from this
+`backend/` directory. **Do not run `reset` for this upgrade.** The seed
+reconciles its controlled profile by stable IDs and does not use a reset to
+remove unrelated workspace data.
+
+```powershell
+$env:SECUREHUB_ALLOW_SHOWCASE_SEED='1'
+uv run python -m app.db.seeds.seed_showcase_course seed
+uv run python -m app.db.seeds.seed_showcase_course verify
+```
+
+```bash
+export SECUREHUB_ALLOW_SHOWCASE_SEED=1
+uv run python -m app.db.seeds.seed_showcase_course seed
+uv run python -m app.db.seeds.seed_showcase_course verify
+```
+
+v7 adds persistent, frozen 36-question comprehensive-assessment items, an
+open submission, personal resources/Evidence, and an `assessment_demo_draft`
+for `demo-student@securehub.local`. The course-page “fill all 36 questions”
+control only pre-fills that editable draft. A learner must still submit it
+explicitly; assessment feedback and the `outcome_evaluator` capability update
+remain subject to the real API, Evidence, Provider, and QualityCheck path.
+No default score or fixed radar chart is used as a substitute.
+
+The executed Windows local controlled-database run returned
+`manifest: websec-101-showcase-v7`, `valid: True`,
+`demo_assessment_questions: 36`, and `demo_assessment_drafts: 1`. This is
+seed/relationship evidence only; it is not Provider, browser E2E, or
+production acceptance. On macOS/Linux, execute the same `seed` and `verify`
+commands in the authorised target environment before recording that platform
+as validated.
 
 ### Profile-scoped reset
 

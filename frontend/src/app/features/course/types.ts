@@ -142,7 +142,11 @@ export type CourseTaskCommand =
   | {
       intent: 'run_assessment';
       context: CourseTaskContext;
-      payload: { answers: Array<Record<string, unknown>>; quizArtifactId?: string };
+      payload: {
+        answers: Array<Record<string, unknown>>;
+        quizArtifactId?: string;
+        assessmentAssignmentId?: string;
+      };
     };
 
 export type CourseWorkflowRoot = {

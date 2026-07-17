@@ -86,6 +86,9 @@ from app.schemas.teacher_production import (
     GradeDecisionDTO,
     GradeOverrideRequest,
     ObjectiveScoreDTO,
+    QuizCandidateAlternativeDTO,
+    QuizCandidateAvailabilityDTO,
+    QuizCandidateFilterRequest,
     QuizCandidateItemDTO,
     QuizCandidatePrepareRequest,
     QuizCandidatePreviewDTO,
@@ -144,11 +147,18 @@ def _as_utc(value: datetime) -> datetime:
 
 
 class TeacherProductionError(RuntimeError):
-    def __init__(self, code: str, message: str, status_code: int = 409) -> None:
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        status_code: int = 409,
+        detail: dict[str, Any] | None = None,
+    ) -> None:
         super().__init__(message)
         self.code = code
         self.message = message
         self.status_code = status_code
+        self.detail = detail
 
 
 class TeacherProductionService:
@@ -1101,6 +1111,33 @@ class TeacherProductionService:
             created_at=decision.created_at,
         )
 
+    async def preflight_quiz_candidates(
+        self,
+        *,
+        actor: User,
+        course_id: UUID,
+        payload: QuizCandidateFilterRequest,
+    ) -> QuizCandidateAvailabilityDTO:
+        """Return current, server-authorized availability before candidate assembly.
+
+        The preflight reads the same durable ``curated + passed`` set used by
+        ``prepare_quiz_candidates``.  It creates no questions and writes no
+        audit event; teachers must explicitly apply any suggested alternative
+        and then invoke the existing audited prepare action.
+        """
+
+        published_items, pool = await self._quiz_candidate_pool(
+            actor=actor,
+            course_id=course_id,
+            payload=payload,
+        )
+        return self._quiz_candidate_availability(
+            course_id=course_id,
+            payload=payload,
+            published_items=published_items,
+            pool=pool,
+        )
+
     async def prepare_quiz_candidates(
         self,
         *,
@@ -1116,41 +1153,22 @@ class TeacherProductionService:
         review and assessment-version flows consume the selected IDs.
         """
 
-        await self._require_teacher_course(actor=actor, course_id=course_id)
-        course_nodes = await self.repo.list_course_knowledge_nodes(course_id=course_id)
-        allowed_node_ids = {node.id for node in course_nodes}
-        requested_node_ids = list(dict.fromkeys(payload.knowledge_node_ids))
-        if any(node_id not in allowed_node_ids for node_id in requested_node_ids):
-            raise TeacherProductionError(
-                "QUIZ_CANDIDATE_SCOPE_DENIED",
-                "候选知识点不属于当前教师课程；请从课程知识点选择器重新选择。",
-                403,
-            )
-
-        try:
-            published = await QuizQualityService(self.session).list_publishable_items(
-                course_id=course_id
-            )
-        except QuizQualityError as exc:
-            raise TeacherProductionError(exc.code, exc.message, exc.status_code) from exc
-        allowed_types = set(payload.question_types)
-        pool = [
-            item
-            for item in published.items
-            if (not requested_node_ids or item.knowledge_node_id in requested_node_ids)
-            and (not allowed_types or item.type in allowed_types)
-        ]
-        pool.sort(
-            key=lambda item: (
-                abs(item.difficulty - payload.target_difficulty),
-                item.difficulty,
-                item.canonical_key,
-            )
+        published_items, pool = await self._quiz_candidate_pool(
+            actor=actor,
+            course_id=course_id,
+            payload=payload,
+        )
+        availability = self._quiz_candidate_availability(
+            course_id=course_id,
+            payload=payload,
+            published_items=published_items,
+            pool=pool,
         )
         if not pool:
             raise TeacherProductionError(
                 "QUIZ_CANDIDATES_UNAVAILABLE",
-                "当前条件没有已发布且质量通过的真实题目；请放宽知识点、题型或难度后重试。",
+                "当前筛选可用 0 道已发布且质量通过的真实题目；请查看可行动的替代条件后再试。",
+                detail={"availability": availability.model_dump(mode="json")},
             )
 
         selected = self._diversify_quiz_candidate_items(pool, payload.quantity)
@@ -1165,7 +1183,9 @@ class TeacherProductionService:
                 "course_id": str(course_id),
                 "source": "persisted_quality_passed_bank",
                 "live_generation_started": False,
-                "knowledge_node_ids": [str(node_id) for node_id in requested_node_ids],
+                "knowledge_node_ids": [
+                    str(node_id) for node_id in dict.fromkeys(payload.knowledge_node_ids)
+                ],
                 "question_types": list(payload.question_types),
                 "target_difficulty": payload.target_difficulty,
                 "requested_quantity": payload.quantity,
@@ -2709,13 +2729,24 @@ class TeacherProductionService:
             }
 
         if purpose == "quiz_generation":
-            node = knowledge_points[0] if knowledge_points else None
+            # Recommend only a combination that the current durable bank can
+            # actually satisfy.  A single knowledge node often has one or two
+            # quality-passed items, so an eight-item review should start from
+            # the course-wide, real availability rather than a hard-coded
+            # first-node + short-answer pairing.
+            difficulty_three_count = sum(item.difficulty == 3 for item in quiz_items)
+            recommended_difficulty = 3 if difficulty_three_count >= 8 else None
+            difficulty_note = "难度 3" if recommended_difficulty is not None else "全部难度"
             return {
-                "knowledge_node_id": str(node.id) if node else None,
-                "question_type": "short_answer",
+                "knowledge_node_id": None,
+                "question_type": None,
                 "quantity": 8,
-                "difficulty": 3,
-                "reason": "建议围绕一个当前课程知识点配置分层审核范围；候选题必须先经过既有质量检查和教师审核，才能进入作业或学生入口。",
+                "difficulty": recommended_difficulty,
+                "reason": (
+                    f"建议先在当前课程的质量通过题库中按{difficulty_note}组织 8 道跨知识点候选；"
+                    "当前可用数量由服务端预检显示。教师可显式改选知识点、题型或难度，"
+                    "候选题仍须经过既有质量检查和教师审核后才能进入作业或学生入口。"
+                ),
             }
 
         if purpose == "course_update":
@@ -3167,6 +3198,246 @@ class TeacherProductionService:
             request_id=None,
             metadata=metadata,
         )
+
+    async def _quiz_candidate_pool(
+        self,
+        *,
+        actor: User,
+        course_id: UUID,
+        payload: QuizCandidateFilterRequest,
+    ) -> tuple[list[Any], list[Any]]:
+        """Load the exact, teacher-authorized durable pool for a filter set."""
+
+        await self._require_teacher_course(actor=actor, course_id=course_id)
+        course_nodes = await self.repo.list_course_knowledge_nodes(course_id=course_id)
+        allowed_node_ids = {node.id for node in course_nodes}
+        requested_node_ids = list(dict.fromkeys(payload.knowledge_node_ids))
+        if any(node_id not in allowed_node_ids for node_id in requested_node_ids):
+            raise TeacherProductionError(
+                "QUIZ_CANDIDATE_SCOPE_DENIED",
+                "候选知识点不属于当前教师课程；请从课程知识点选择器重新选择。",
+                403,
+            )
+
+        try:
+            published = await QuizQualityService(self.session).list_publishable_items(
+                course_id=course_id
+            )
+        except QuizQualityError as exc:
+            raise TeacherProductionError(exc.code, exc.message, exc.status_code) from exc
+
+        pool = self._filter_quiz_candidate_items(
+            published.items,
+            knowledge_node_ids=requested_node_ids,
+            question_types=list(dict.fromkeys(payload.question_types)),
+            target_difficulty=payload.target_difficulty,
+        )
+        return list(published.items), self._sort_quiz_candidate_items(
+            pool,
+            target_difficulty=payload.target_difficulty,
+        )
+
+    def _quiz_candidate_availability(
+        self,
+        *,
+        course_id: UUID,
+        payload: QuizCandidateFilterRequest,
+        published_items: Iterable[Any],
+        pool: Iterable[Any],
+    ) -> QuizCandidateAvailabilityDTO:
+        available_items = list(pool)
+        available_count = len(available_items)
+        can_fulfill = available_count >= payload.quantity
+        if available_count == 0:
+            message = (
+                "当前筛选可用 0 道已发布且质量通过的真实题目。"
+                "请显式应用一个服务端计算的替代条件，或自行调整后再生成。"
+            )
+        elif can_fulfill:
+            message = (
+                f"当前筛选可用 {available_count} 道已发布且质量通过的真实题目，"
+                f"可满足目标 {payload.quantity} 道。"
+            )
+        else:
+            message = (
+                f"当前筛选可用 {available_count} 道已发布且质量通过的真实题目，"
+                f"距离目标 {payload.quantity} 道还差 {payload.quantity - available_count} 道。"
+            )
+        return QuizCandidateAvailabilityDTO(
+            course_id=course_id,
+            source="persisted_quality_passed_bank",
+            requested_quantity=payload.quantity,
+            knowledge_node_ids=list(dict.fromkeys(payload.knowledge_node_ids)),
+            question_types=list(dict.fromkeys(payload.question_types)),
+            target_difficulty=payload.target_difficulty,
+            available_count=available_count,
+            can_fulfill_requested_quantity=can_fulfill,
+            message=message,
+            alternatives=self._quiz_candidate_alternatives(
+                published_items=published_items,
+                payload=payload,
+            ),
+            calculated_at=datetime.now(UTC),
+        )
+
+    @staticmethod
+    def _filter_quiz_candidate_items(
+        items: Iterable[Any],
+        *,
+        knowledge_node_ids: Iterable[UUID],
+        question_types: Iterable[str],
+        target_difficulty: int | None,
+    ) -> list[Any]:
+        requested_node_ids = set(knowledge_node_ids)
+        allowed_types = set(question_types)
+        return [
+            item
+            for item in items
+            if (not requested_node_ids or item.knowledge_node_id in requested_node_ids)
+            and (not allowed_types or item.type in allowed_types)
+            and (target_difficulty is None or item.difficulty == target_difficulty)
+        ]
+
+    @staticmethod
+    def _sort_quiz_candidate_items(
+        items: Iterable[Any], *, target_difficulty: int | None
+    ) -> list[Any]:
+        # A selected difficulty is a strict filter.  With "all difficulties",
+        # retain a deterministic, evidence-backed ordering for the diversity pass.
+        return sorted(
+            items,
+            key=lambda item: (
+                item.difficulty if target_difficulty is None else 0,
+                item.canonical_key,
+            ),
+        )
+
+    @classmethod
+    def _quiz_candidate_alternatives(
+        cls,
+        *,
+        published_items: Iterable[Any],
+        payload: QuizCandidateFilterRequest,
+    ) -> list[QuizCandidateAlternativeDTO]:
+        """Suggest only actual, explicitly selectable filter alternatives.
+
+        Alternatives are derived from the current publishable rows, never from
+        seed-only assumptions.  They intentionally preserve some of the
+        teacher's choice where possible, but the UI must not apply them without
+        an explicit teacher action.
+        """
+
+        nodes = list(dict.fromkeys(payload.knowledge_node_ids))
+        question_types = list(dict.fromkeys(payload.question_types))
+        current_key = (tuple(nodes), tuple(question_types), payload.target_difficulty)
+        variations: list[tuple[int, str, str, list[UUID], list[str], int | None]] = []
+        if nodes:
+            variations.append(
+                (
+                    1,
+                    "保留当前题型与难度，扩展至全课程知识点",
+                    "当前知识点没有足够可用题目；仅扩展课程知识点范围。",
+                    [],
+                    question_types,
+                    payload.target_difficulty,
+                )
+            )
+        if question_types:
+            variations.append(
+                (
+                    1,
+                    "保留当前知识点与难度，放宽题型",
+                    "当前题型在所选知识点和难度下不可用；改为课程中真实可用的题型。",
+                    nodes,
+                    [],
+                    payload.target_difficulty,
+                )
+            )
+        if payload.target_difficulty is not None:
+            variations.append(
+                (
+                    1,
+                    "保留当前知识点与题型，放宽难度",
+                    "保留知识点和题型，只取消难度限制。",
+                    nodes,
+                    question_types,
+                    None,
+                )
+            )
+        if nodes and (question_types or payload.target_difficulty is not None):
+            variations.append(
+                (
+                    2,
+                    "保留当前知识点，放宽题型和难度",
+                    "保留知识点范围，使用该节点在真实题库中的全部可用题型和难度。",
+                    nodes,
+                    [],
+                    None,
+                )
+            )
+        if payload.target_difficulty is not None:
+            variations.append(
+                (
+                    2,
+                    "保留当前难度，使用全课程知识点和题型",
+                    "保持当前难度，扩展至当前课程中所有质量通过题目。",
+                    [],
+                    [],
+                    payload.target_difficulty,
+                )
+            )
+        variations.append(
+            (
+                3,
+                "使用全课程的全部质量通过题",
+                "使用当前教师有权读取的课程题库，不保留知识点、题型或难度限制。",
+                [],
+                [],
+                None,
+            )
+        )
+
+        seen: set[tuple[tuple[UUID, ...], tuple[str, ...], int | None]] = {current_key}
+        alternatives: list[tuple[int, QuizCandidateAlternativeDTO]] = []
+        items = list(published_items)
+        for change_cost, label, reason, candidate_nodes, candidate_types, candidate_difficulty in variations:
+            key = (tuple(candidate_nodes), tuple(candidate_types), candidate_difficulty)
+            if key in seen:
+                continue
+            seen.add(key)
+            available_count = len(
+                cls._filter_quiz_candidate_items(
+                    items,
+                    knowledge_node_ids=candidate_nodes,
+                    question_types=candidate_types,
+                    target_difficulty=candidate_difficulty,
+                )
+            )
+            if available_count == 0:
+                continue
+            alternatives.append(
+                (
+                    change_cost,
+                    QuizCandidateAlternativeDTO(
+                        label=label,
+                        reason=reason,
+                        knowledge_node_ids=candidate_nodes,
+                        question_types=candidate_types,
+                        target_difficulty=candidate_difficulty,
+                        available_count=available_count,
+                        can_fulfill_requested_quantity=available_count >= payload.quantity,
+                    ),
+                )
+            )
+        alternatives.sort(
+            key=lambda row: (
+                not row[1].can_fulfill_requested_quantity,
+                row[0],
+                -row[1].available_count,
+                row[1].label,
+            )
+        )
+        return [alternative for _, alternative in alternatives[:4]]
 
     @staticmethod
     def _diversify_quiz_candidate_items(items: Iterable[Any], quantity: int) -> list[Any]:

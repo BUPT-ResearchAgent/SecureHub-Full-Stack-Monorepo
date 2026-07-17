@@ -10,10 +10,14 @@ from sqlalchemy import func, select
 from app.db.models.identity.user import User
 from app.db.models.learning.quiz_item import QuizItem
 from app.db.models.learning.quiz_quality import QuizQualityReport
-from app.db.seeds._constants import COURSE_WEBSEC_ID
+from app.db.seeds._constants import COURSE_WEBSEC_ID, DEMO_USER_ID
 from app.db.seeds.seed_course_websec import run as seed_course_websec
 from app.db.seeds.seed_demo_user import run as seed_demo_user
-from app.db.seeds.seed_education_domain import DEMO_COURSE_TEACHER_ID, run as seed_education_domain
+from app.db.seeds.seed_education_domain import (
+    DEMO_COURSE_TEACHER_ID,
+    DEMO_HYBRID_TEACHER_ID,
+    run as seed_education_domain,
+)
 from app.services.learning.quiz_quality_service import QuizQualityError, QuizQualityService
 
 
@@ -61,6 +65,32 @@ async def test_gap13_websec_quiz_quality_is_reproducible_scoped_and_publishable(
     teacher_bank = await service.list_teacher_bank(actor=teacher)
     assert teacher_bank.coverage["all_knowledge_points_covered"] is True
     assert len(teacher_bank.items) == 21
+
+    hybrid_teacher = await sqlite_session.get(User, DEMO_HYBRID_TEACHER_ID)
+    assert hybrid_teacher is not None
+    hybrid_bank = await service.list_teacher_bank(actor=hybrid_teacher)
+    assert len(hybrid_bank.items) == 21
+    assert all(item.quality and item.quality.result == "passed" for item in hybrid_bank.items)
+
+    outsider = User(
+        id=uuid4(),
+        email="outside-websec-course-teacher@example.test",
+        display_name="未授权课程教师",
+        hashed_password=None,
+        is_active=True,
+        role="course_teacher",
+    )
+    sqlite_session.add(outsider)
+    await sqlite_session.flush()
+    with pytest.raises(QuizQualityError) as scope_denied:
+        await service.list_teacher_bank(actor=outsider)
+    assert scope_denied.value.code == "COURSE_SCOPE_DENIED"
+
+    student = await sqlite_session.get(User, DEMO_USER_ID)
+    assert student is not None
+    with pytest.raises(QuizQualityError) as role_denied:
+        await service.list_teacher_bank(actor=student)
+    assert role_denied.value.code == "TEACHER_ROLE_REQUIRED"
 
     invalid = QuizItem(
         id=uuid4(),

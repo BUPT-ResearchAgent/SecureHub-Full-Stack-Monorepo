@@ -10,6 +10,7 @@ queue; RuntimeWorker claims the root through PostgreSQL.
 from __future__ import annotations
 
 import json
+from collections import defaultdict
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from typing import Any
@@ -19,12 +20,25 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import get_settings
+from app.db.models.education.education_domain import CourseEnrollment, StudentGroup, StudentGroupMember
 from app.db.models.knowledge.knowledge_node import KnowledgeNode
+from app.db.models.learning.quiz_item import QuizItem
+from app.db.models.learning.quiz_quality import QuizItemEvidence
+from app.db.models.resource.generated_resource import GeneratedResource
+from app.db.models.teaching.teacher_production import (
+    Assessment,
+    AssessmentAssignment,
+    AssessmentItem,
+    AssessmentSubmission,
+    AssessmentVersion,
+)
 from app.db.seeds._constants import resolve_course_product
 from app.llm.model_catalog import ModelSourceError, resolve_model_source
 from app.db.models.workflow_runtime import WorkflowApproval, WorkflowProviderCall, WorkflowRun, WorkflowStepAttempt
 from app.repositories.identity.provider_credentials import ProviderCredentialRepository
 from app.runtime.contracts import EventEnvelope, ExecutionMode, RunStatus, RuntimeSemanticVersion
+from app.runtime.guardrails.input_filter import review_input
+from app.runtime.guardrails.prompt_injection_check import detect_prompt_injection
 from app.runtime.persistence.approval_store import ApprovalNotFoundError, ApprovalStore
 from app.runtime.persistence.checkpoint_store import CheckpointStore
 from app.runtime.persistence.event_store import EventStore
@@ -39,6 +53,7 @@ from app.runtime.versioning.checkpoint_migrations import (
     build_runtime_checkpoint_migrations,
 )
 from app.runtime.workflow_registry import WorkflowRegistry
+from app.services.learning.quiz_quality_service import QuizQualityError, QuizQualityService
 from app.schemas.agent_control import (
     WorkflowNodeResponse,
     WorkflowRunCancelResponse,
@@ -151,6 +166,40 @@ class WorkflowApplicationService:
                 workflow_name=definition.name,
                 validated_input=validated_input,
             )
+            if definition.name == "tutor_routing_v3":
+                validated_input["persona_summary"] = await self._tutor_persona_summary(session, request.user_id)
+            if definition.name == "assessment_update_v2":
+                artifact = await self._validate_assessment_quiz_artifact(
+                    session,
+                    user_id=request.user_id,
+                    course_id=validated_input.get("course_id"),
+                    quiz_artifact_id=validated_input.get("quiz_artifact_id"),
+                    mode=request.mode,
+                )
+                if request.mode == ExecutionMode.REAL:
+                    prepared_answers, prepared_context = await self._prepare_published_assessment_answers(
+                        session,
+                        user_id=request.user_id,
+                        course_id=validated_input.get("course_id"),
+                        artifact=artifact,
+                        raw_answers=validated_input.get("answers"),
+                        context=validated_input.get("context"),
+                    )
+                    # The root retains a server-derived prompt projection.
+                    # Complete answers are retained only while they fit the
+                    # bounded transport budget; the immutable published
+                    # submission remains the authorization source and is
+                    # never copied from the browser straight into a prompt.
+                    validated_input["answers"] = prepared_answers
+                    validated_input["context"] = prepared_context
+                capability_dimensions, persona_dimension_keys = await self._assessment_feedback_constraints(
+                    session, request.user_id
+                )
+                # These are server-owned constraints, not caller-controlled DTO
+                # fields. They make the mutation target explicit to the two
+                # generative Skills before the final atomic action validates it.
+                validated_input["capability_dimensions"] = capability_dimensions
+                validated_input["persona_dimension_keys"] = persona_dimension_keys
             provider, model = await self._provider_selection(session, request)
             credential_id = None
             if request.mode == ExecutionMode.REAL and provider in {"deepseek", "xfyun"}:
@@ -161,24 +210,6 @@ class WorkflowApplicationService:
                     UUID(str(request.user_id)), provider
                 )
                 credential_id = active_credential.id if active_credential is not None else None
-            if definition.name == "tutor_routing_v3":
-                validated_input["persona_summary"] = await self._tutor_persona_summary(session, request.user_id)
-            if definition.name == "assessment_update_v2":
-                await self._validate_assessment_quiz_artifact(
-                    session,
-                    user_id=request.user_id,
-                    course_id=validated_input.get("course_id"),
-                    quiz_artifact_id=validated_input.get("quiz_artifact_id"),
-                    mode=request.mode,
-                )
-                capability_dimensions, persona_dimension_keys = await self._assessment_feedback_constraints(
-                    session, request.user_id
-                )
-                # These are server-owned constraints, not caller-controlled DTO
-                # fields. They make the mutation target explicit to the two
-                # generative Skills before the final atomic action validates it.
-                validated_input["capability_dimensions"] = capability_dimensions
-                validated_input["persona_dimension_keys"] = persona_dimension_keys
             if definition.name == "fund_recommendation_v1":
                 # A generic workflow start must not provide a second, caller-
                 # controlled profile snapshot. Rehydrate it from the same
@@ -807,6 +838,525 @@ class WorkflowApplicationService:
         ) if profile is not None else []
         return capability_dimensions, persona_dimension_keys
 
+    @classmethod
+    async def _prepare_published_assessment_answers(
+        cls,
+        session: AsyncSession,
+        *,
+        user_id: str,
+        course_id: Any,
+        artifact: GeneratedResource | None,
+        raw_answers: Any,
+        context: Any,
+    ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        """Bind a real assessment root to one published frozen submission.
+
+        Browser input may identify a quiz item and contain a learner answer,
+        but it must never supply question text, options, grading context, or
+        a trusted assessment version.  The full answer set is safety-checked
+        here, matched exactly to the durable submission, then reduced to a
+        bounded prompt projection.  That avoids copying a 36-question page
+        into both ``query`` and ``answers`` while preserving the global
+        SkillExecutor guardrail for every value that originated with a learner.
+        """
+
+        if artifact is None:
+            raise WorkflowApplicationError(
+                "INVALID_ASSESSMENT_ARTIFACT",
+                "当前测验资源缺少可验证的持久化来源。",
+                status_code=422,
+            )
+        try:
+            parsed_user_id = UUID(str(user_id))
+            parsed_course_id = UUID(str(course_id))
+        except (TypeError, ValueError) as exc:
+            raise WorkflowApplicationError(
+                "ASSESSMENT_SCOPE_DENIED",
+                "当前课程或学习者身份无效，不能更新能力画像。",
+                status_code=422,
+            ) from exc
+
+        raw_context = dict(context) if isinstance(context, dict) else {}
+        try:
+            assignment_id = UUID(str(raw_context.get("assessment_assignment_id")))
+        except (TypeError, ValueError) as exc:
+            raise WorkflowApplicationError(
+                "ASSESSMENT_SUBMISSION_REQUIRED",
+                "请先提交当前已发布评估，再更新能力画像。",
+                status_code=422,
+            ) from exc
+
+        submitted_answers = cls._normalise_assessment_answers(raw_answers, source="request")
+        cls._assert_assessment_answers_safe(submitted_answers)
+
+        assignment = await session.get(AssessmentAssignment, assignment_id)
+        if assignment is None or assignment.status != "active":
+            raise WorkflowApplicationError(
+                "ASSESSMENT_SCOPE_DENIED",
+                "当前评估已关闭、撤回或不存在，不能用于能力画像更新。",
+                status_code=422,
+            )
+        version = await session.get(AssessmentVersion, assignment.assessment_version_id)
+        assessment = await session.get(Assessment, version.assessment_id) if version is not None else None
+        if (
+            version is None
+            or assessment is None
+            or version.state != "published"
+            or assessment.status != "published"
+            or assessment.course_id != parsed_course_id
+        ):
+            raise WorkflowApplicationError(
+                "ASSESSMENT_VERSION_UNAVAILABLE",
+                "当前评估版本不是该课程可用的已发布冻结版本。",
+                status_code=422,
+            )
+
+        artifact_content = artifact.content if isinstance(artifact.content, dict) else {}
+        try:
+            artifact_version_id = UUID(str(artifact_content.get("assessment_version_id")))
+        except (TypeError, ValueError) as exc:
+            raise WorkflowApplicationError(
+                "INVALID_ASSESSMENT_ARTIFACT",
+                "测验资源未关联当前评估的冻结版本。",
+                status_code=422,
+            ) from exc
+        if artifact_version_id != version.id:
+            raise WorkflowApplicationError(
+                "INVALID_ASSESSMENT_ARTIFACT",
+                "测验资源与当前已发布评估版本不一致。",
+                status_code=422,
+            )
+
+        enrollment = await session.scalar(
+            select(CourseEnrollment).where(
+                CourseEnrollment.course_id == parsed_course_id,
+                CourseEnrollment.student_id == parsed_user_id,
+                CourseEnrollment.status == "enrolled",
+            )
+        )
+        if enrollment is None or not await cls._assessment_assignment_allows_learner(
+            session,
+            assignment=assignment,
+            learner_id=parsed_user_id,
+            teaching_class_id=enrollment.teaching_class_id,
+        ):
+            raise WorkflowApplicationError(
+                "ASSESSMENT_SCOPE_DENIED",
+                "当前学习者不在该已发布评估的授权范围内。",
+                status_code=403,
+            )
+
+        submission = await session.scalar(
+            select(AssessmentSubmission).where(
+                AssessmentSubmission.assignment_id == assignment.id,
+                AssessmentSubmission.student_id == parsed_user_id,
+            )
+        )
+        if submission is None or submission.status not in {"submitted", "late"}:
+            raise WorkflowApplicationError(
+                "ASSESSMENT_SUBMISSION_REQUIRED",
+                "请先完成并提交当前已发布评估，再更新能力画像。",
+                status_code=422,
+            )
+        persisted_answers = cls._normalise_assessment_answer_mapping(
+            submission.answers,
+            source="persisted submission",
+        )
+        if not cls._assessment_answers_match(submitted_answers, persisted_answers):
+            raise WorkflowApplicationError(
+                "ASSESSMENT_SUBMISSION_MISMATCH",
+                "本次作答与已提交的冻结评估记录不一致；请刷新后从真实提交记录继续。",
+                status_code=422,
+            )
+
+        item_rows = list(
+            (
+                await session.execute(
+                    select(AssessmentItem, QuizItem, KnowledgeNode)
+                    .join(QuizItem, QuizItem.id == AssessmentItem.quiz_item_id)
+                    .join(KnowledgeNode, KnowledgeNode.id == QuizItem.kp_id)
+                    .where(AssessmentItem.assessment_version_id == version.id)
+                    .order_by(AssessmentItem.position)
+                )
+            ).all()
+        )
+        frozen_item_ids = {str(item.quiz_item_id) for item, _, _ in item_rows}
+        if not item_rows or set(persisted_answers) != frozen_item_ids:
+            raise WorkflowApplicationError(
+                "ASSESSMENT_SUBMISSION_MISMATCH",
+                "已提交答案不完整或不属于当前冻结评估版本。",
+                status_code=422,
+            )
+
+        try:
+            publishable = await QuizQualityService(session).list_publishable_items(
+                course_id=parsed_course_id
+            )
+        except QuizQualityError as exc:
+            raise WorkflowApplicationError(
+                "ASSESSMENT_QUESTION_UNAVAILABLE",
+                "当前评估题目尚未通过课程质量校验。",
+                status_code=422,
+            ) from exc
+        publishable_ids = {str(item.id) for item in publishable.items}
+        evidence_item_ids = {
+            str(value)
+            for value in (
+                await session.scalars(
+                    select(QuizItemEvidence.quiz_item_id).where(
+                        QuizItemEvidence.quiz_item_id.in_([item.quiz_item_id for item, _, _ in item_rows])
+                    )
+                )
+            ).all()
+        }
+        if not frozen_item_ids <= publishable_ids or not frozen_item_ids <= evidence_item_ids:
+            raise WorkflowApplicationError(
+                "ASSESSMENT_QUESTION_UNAVAILABLE",
+                "当前评估题目缺少质量通过状态或 Evidence 关联。",
+                status_code=422,
+            )
+
+        prompt_answers, summary = cls._assessment_prompt_projection(
+            item_rows=item_rows,
+            persisted_answers=persisted_answers,
+        )
+        # Keep the summary on a real answer reference, rather than adding a
+        # synthetic "answer" that would inflate the audit's answered count.
+        # The projection retains complete answers when they fit the Skill
+        # guardrail budget.  If a learner response is unusually long it is
+        # explicitly marked as a bounded excerpt, while the frozen objective
+        # scoring facts remain intact and authoritative.
+        prompt_answers = cls._bounded_assessment_prompt_answers(
+            prompt_answers,
+            summary=summary,
+        )
+        canonical_context = {
+            key: value
+            for key, value in raw_context.items()
+            if key not in {
+                "assessment_assignment_id",
+                "assessment_version_id",
+                "assessment_submission_id",
+                "assessment_source",
+            }
+        }
+        canonical_context.update(
+            {
+                "assessment_assignment_id": str(assignment.id),
+                "assessment_version_id": str(version.id),
+                "assessment_submission_id": str(submission.id),
+                "assessment_source": "server_verified_published_submission",
+            }
+        )
+        return prompt_answers, canonical_context
+
+    @staticmethod
+    async def _assessment_assignment_allows_learner(
+        session: AsyncSession,
+        *,
+        assignment: AssessmentAssignment,
+        learner_id: UUID,
+        teaching_class_id: UUID | None,
+    ) -> bool:
+        if assignment.target_type == "student":
+            return assignment.student_id == learner_id
+        if assignment.target_type == "class":
+            return assignment.teaching_class_id is not None and assignment.teaching_class_id == teaching_class_id
+        if assignment.target_type != "group" or assignment.group_id is None:
+            return False
+        member = await session.scalar(
+            select(StudentGroupMember.id)
+            .join(StudentGroup, StudentGroup.id == StudentGroupMember.group_id)
+            .where(
+                StudentGroupMember.group_id == assignment.group_id,
+                StudentGroupMember.student_id == learner_id,
+                StudentGroupMember.status == "active",
+                StudentGroup.status == "active",
+                StudentGroup.teaching_class_id == teaching_class_id,
+            )
+        )
+        return member is not None
+
+    @staticmethod
+    def _normalise_assessment_answers(value: Any, *, source: str) -> dict[str, str | list[str]]:
+        if not isinstance(value, list) or not value:
+            raise WorkflowApplicationError(
+                "ASSESSMENT_ANSWERS_INVALID",
+                "请提交至少一道当前冻结评估中的真实题目答案。",
+                status_code=422,
+            )
+        answers: dict[str, str | list[str]] = {}
+        for raw in value:
+            if not isinstance(raw, dict) or set(raw) - {"quiz_item_id", "answer"}:
+                raise WorkflowApplicationError(
+                    "ASSESSMENT_ANSWERS_INVALID",
+                    "评估请求只能提交题目引用和学习者作答，不能传入题干、选项或评分上下文。",
+                    status_code=422,
+                )
+            try:
+                quiz_item_id = str(UUID(str(raw.get("quiz_item_id"))))
+            except (TypeError, ValueError) as exc:
+                raise WorkflowApplicationError(
+                    "ASSESSMENT_ANSWERS_INVALID",
+                    "每道作答都必须引用当前评估中的真实题目。",
+                    status_code=422,
+                ) from exc
+            if quiz_item_id in answers:
+                raise WorkflowApplicationError(
+                    "ASSESSMENT_ANSWERS_INVALID",
+                    "同一道评估题目不能重复提交。",
+                    status_code=422,
+                )
+            answers[quiz_item_id] = WorkflowApplicationService._normalise_assessment_answer_value(
+                raw.get("answer"),
+                source=source,
+            )
+        return answers
+
+    @staticmethod
+    def _normalise_assessment_answer_mapping(value: Any, *, source: str) -> dict[str, str | list[str]]:
+        if not isinstance(value, dict) or not value:
+            raise WorkflowApplicationError(
+                "ASSESSMENT_SUBMISSION_MISMATCH",
+                f"{source} 缺少可验证的学习者作答。",
+                status_code=422,
+            )
+        answers: dict[str, str | list[str]] = {}
+        for raw_id, raw_answer in value.items():
+            try:
+                quiz_item_id = str(UUID(str(raw_id)))
+            except (TypeError, ValueError) as exc:
+                raise WorkflowApplicationError(
+                    "ASSESSMENT_SUBMISSION_MISMATCH",
+                    f"{source} 包含无效题目引用。",
+                    status_code=422,
+                ) from exc
+            answers[quiz_item_id] = WorkflowApplicationService._normalise_assessment_answer_value(
+                raw_answer,
+                source=source,
+            )
+        return answers
+
+    @staticmethod
+    def _normalise_assessment_answer_value(value: Any, *, source: str) -> str | list[str]:
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        if (
+            isinstance(value, list)
+            and 0 < len(value) <= 8
+            and all(isinstance(item, str) and item.strip() for item in value)
+        ):
+            return [item.strip() for item in value]
+        raise WorkflowApplicationError(
+            "ASSESSMENT_ANSWERS_INVALID",
+            f"{source} 中的作答必须是非空文本或有限个文本选项。",
+            status_code=422,
+        )
+
+    @staticmethod
+    def _assert_assessment_answers_safe(answers: dict[str, str | list[str]]) -> None:
+        text = json.dumps(
+            [{"quiz_item_id": item_id, "answer": answer} for item_id, answer in answers.items()],
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        review = review_input(text)
+        if not review.allowed:
+            raise WorkflowApplicationError(
+                "ASSESSMENT_INPUT_GUARDRAIL",
+                "作答内容过长，未进入评估工作流；请缩短作答后重新提交。",
+                status_code=422,
+            )
+        if detect_prompt_injection(review.normalized_text).detected:
+            raise WorkflowApplicationError(
+                "ASSESSMENT_INPUT_GUARDRAIL",
+                "作答内容未通过输入安全检查；请删除指令性文本后重新提交。",
+                status_code=422,
+            )
+
+    @staticmethod
+    def _assessment_answers_match(
+        requested: dict[str, str | list[str]],
+        persisted: dict[str, str | list[str]],
+    ) -> bool:
+        if set(requested) != set(persisted):
+            return False
+        return all(
+            WorkflowApplicationService._assessment_answer_values_match(
+                requested[item_id],
+                persisted[item_id],
+            )
+            for item_id in requested
+        )
+
+    @staticmethod
+    def _assessment_answer_values_match(expected: str | list[str], supplied: str | list[str]) -> bool:
+        def normalized(value: str | list[str]) -> list[str]:
+            values = value if isinstance(value, list) else value.split(";")
+            return sorted(
+                "".join(item.strip().lower().split())
+                for item in values
+                if item.strip()
+            )
+
+        return normalized(expected) == normalized(supplied)
+
+    @staticmethod
+    def _assessment_prompt_projection(
+        *,
+        item_rows: list[tuple[AssessmentItem, QuizItem, KnowledgeNode]],
+        persisted_answers: dict[str, str | list[str]],
+    ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        """Create a bounded prompt view from the server-owned frozen version."""
+
+        answers: list[dict[str, Any]] = []
+        topics: dict[str, dict[str, int]] = defaultdict(
+            lambda: {"objective_matched": 0, "objective_review": 0, "subjective_submitted": 0}
+        )
+        objective_matched = 0
+        objective_review = 0
+        subjective_submitted = 0
+        objective_earned_points = 0.0
+        objective_total_points = 0.0
+        total_assessment_points = 0.0
+        for item, quiz_item, node in item_rows:
+            item_id = str(item.quiz_item_id)
+            learner_answer = persisted_answers[item_id]
+            try:
+                points = max(0.0, float(item.points))
+            except (TypeError, ValueError):
+                points = 0.0
+            total_assessment_points += points
+            answers.append(
+                {
+                    "quiz_item_id": item_id,
+                    # The root has already verified this answer against the
+                    # immutable student submission. Do not shorten a normal
+                    # answer here: the former four-character projection made
+                    # valid Chinese answers look incomplete to RunAssessment.
+                    "answer": learner_answer,
+                }
+            )
+            topic_name = str(node.name).strip()[:24] or "未命名知识点"
+            topic = topics[topic_name]
+            if item.grading_mode == "objective":
+                objective_total_points += points
+                snapshot = item.question_snapshot if isinstance(item.question_snapshot, dict) else {}
+                expected = str(snapshot.get("answer") or quiz_item.answer or "").strip()
+                if not expected:
+                    raise WorkflowApplicationError(
+                        "ASSESSMENT_VERSION_UNAVAILABLE",
+                        "当前冻结评估题目缺少可验证答案。",
+                        status_code=422,
+                    )
+                if WorkflowApplicationService._assessment_answer_values_match(expected, learner_answer):
+                    objective_matched += 1
+                    objective_earned_points += points
+                    topic["objective_matched"] = int(topic["objective_matched"]) + 1
+                else:
+                    objective_review += 1
+                    topic["objective_review"] = int(topic["objective_review"]) + 1
+            else:
+                subjective_submitted += 1
+                topic["subjective_submitted"] = int(topic["subjective_submitted"]) + 1
+        if not answers:
+            raise WorkflowApplicationError(
+                "ASSESSMENT_SUBMISSION_MISMATCH",
+                "当前冻结评估没有可用于能力画像的题目。",
+                status_code=422,
+            )
+        # Only topics needing subjective review or a corrective action go into
+        # the prompt. The aggregate still reflects the whole frozen version,
+        # while avoiding a second copy of a 36-question page in the query.
+        topic_rows = [
+            [
+                name,
+                int(stats["objective_matched"]),
+                int(stats["objective_review"]),
+                int(stats["subjective_submitted"]),
+            ]
+            for name, stats in sorted(topics.items())
+            if stats["objective_review"] or stats["subjective_submitted"]
+        ]
+        objective_floor_score = (
+            objective_earned_points / total_assessment_points
+            if total_assessment_points > 0
+            else 0.0
+        )
+        return answers, {
+            "source": "server_verified_published_submission",
+            "objective": [objective_matched, objective_review],
+            "subjective_submitted": subjective_submitted,
+            "topic_schema": "[knowledge_point,objective_matched,objective_review,subjective_submitted]",
+            "topics": topic_rows,
+            # This is a server-side deterministic result from the frozen
+            # assessment version and durable submission. It is a floor over
+            # the complete paper, not a frontend demo score and not an AI
+            # estimate of subjective answers.
+            "scoring": {
+                "source": "server_verified_frozen_objective_items",
+                "objective_earned_points": round(objective_earned_points, 6),
+                "objective_total_points": round(objective_total_points, 6),
+                "total_assessment_points": round(total_assessment_points, 6),
+                "objective_floor_score": round(objective_floor_score, 6),
+            },
+        }
+
+    @staticmethod
+    def _bounded_assessment_prompt_answers(
+        answers: list[dict[str, Any]],
+        *,
+        summary: dict[str, Any],
+        max_serialized_chars: int = 5_200,
+    ) -> list[dict[str, Any]]:
+        """Preserve full verified answers until a safe prompt budget requires excerpts.
+
+        ``SkillExecutor`` independently applies its unchanged 8,000-character
+        input guardrail. This helper leaves enough room for the typed workflow
+        fields and avoids repeating a valid answer as a misleading four-
+        character fragment. The scoring summary is not derived from excerpts.
+        """
+
+        def candidate(limit: int | None) -> list[dict[str, Any]]:
+            projected = [
+                {
+                    "quiz_item_id": str(item["quiz_item_id"]),
+                    "answer": (
+                        item["answer"]
+                        if limit is None
+                        else WorkflowApplicationService._assessment_answer_excerpt(
+                            item["answer"],
+                            limit=limit,
+                        )
+                    ),
+                }
+                for item in answers
+            ]
+            if projected:
+                projected[0]["assessment_summary"] = {
+                    **summary,
+                    "answer_transport": {
+                        "mode": "full" if limit is None else "bounded_excerpt",
+                        "excerpt_limit": limit,
+                    },
+                }
+            return projected
+
+        latest = candidate(None)
+        if len(json.dumps(latest, ensure_ascii=False, separators=(",", ":"))) <= max_serialized_chars:
+            return latest
+        for limit in (240, 160, 96, 64, 48, 32, 24, 16, 12, 8, 4):
+            latest = candidate(limit)
+            if len(json.dumps(latest, ensure_ascii=False, separators=(",", ":"))) <= max_serialized_chars:
+                return latest
+        return latest
+
+    @staticmethod
+    def _assessment_answer_excerpt(value: str | list[str], *, limit: int = 32) -> str | list[str]:
+        if isinstance(value, str):
+            return value[:limit]
+        return [item[:limit] for item in value[:8]]
+
     @staticmethod
     async def _validate_assessment_quiz_artifact(
         session: AsyncSession,
@@ -815,7 +1365,7 @@ class WorkflowApplicationService:
         course_id: Any,
         quiz_artifact_id: Any,
         mode: ExecutionMode,
-    ) -> None:
+    ) -> GeneratedResource | None:
         """Require a real assessment to cite an active, owned quiz Artifact.
 
         The generated-resource row is the existing durable artifact truth. It
@@ -824,9 +1374,7 @@ class WorkflowApplicationService:
         Fixture roots deliberately remain isolated for PresenterMode.
         """
         if mode == ExecutionMode.FIXTURE:
-            return
-
-        from app.db.models.resource.generated_resource import GeneratedResource
+            return None
 
         try:
             parsed_user_id = UUID(str(user_id))
@@ -853,6 +1401,7 @@ class WorkflowApplicationService:
                 "the quiz artifact is unavailable for this learner and course",
                 status_code=422,
             )
+        return artifact
 
     @staticmethod
     def _initial_budget(

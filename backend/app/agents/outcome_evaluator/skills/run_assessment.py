@@ -42,6 +42,13 @@ score from 0.0 to 1.0, concise learner-facing feedback, a small signed
 capability_delta keyed by capability dimension, any weak knowledge-point IDs,
 and a next_recommendation. Do not put these fields inside an extra assessment
 object. The evidence linkage is owned by the server.
+When the input contains a ``server_verified_published_submission``
+``assessment_summary``, its ``scoring.objective_floor_score`` was computed by
+the server from the frozen assessment version and the durable learner
+submission. It is a lower bound for the complete paper: never return a score
+below it or describe the submission as incomplete solely because an answer was
+bounded for prompt transport. Use linked Evidence only to assess the remaining
+subjective content; do not invent subjective credit or a weakness.
 When evidence is insufficient for a claimed weakness, keep the feedback to
 what the submitted assessment actually supports instead of inventing a claim.
 

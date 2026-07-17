@@ -12,12 +12,18 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
-import { Activity, CheckCircle2, ListChecks, Route, Sparkles } from 'lucide-react';
+import { Activity, CheckCircle2, ClipboardPenLine, ListChecks, Route, Sparkles } from 'lucide-react';
 import { toast } from 'sonner';
 import { Card } from '@/app/components/PageShell';
 import { ErrorState } from '@/app/components/StateView';
 import { CapabilityRadarCard } from '@/app/features/profile/components/CapabilityRadarCard';
 import { useSelectedCourse } from '@/app/features/course/catalog/useSelectedCourse';
+import {
+  fetchStudentAssessment,
+  submitStudentAssessment,
+  type StudentAssessmentRead,
+} from '@/app/features/course/studentExperience';
+import { useStudentCourseExperience } from '@/app/features/course/studentExperienceContext';
 import { getMockQuizItemsForCourse } from '@/lib/mock/courses.mock';
 import { isMockMode } from '@/lib/mock';
 import { normalizePersonaDimension } from '@/lib/persona-dimension-map';
@@ -70,6 +76,7 @@ const EMPTY_QUIZ_RESOURCE = {
   content: '',
   evidenceRefs: [],
 };
+const QUESTIONS_PER_PAGE = 6;
 
 function hasAnswer(value: AssessmentAnswer | undefined): boolean {
   return Array.isArray(value) ? value.length > 0 : Boolean(value?.trim());
@@ -94,6 +101,7 @@ export function AssessmentPanel() {
   const { assessment, taskContext, resources, workflowRoots } = useCourseState();
   const dispatch = useCourseDispatch();
   const { course } = useSelectedCourse();
+  const { experience, reload: reloadStudentExperience } = useStudentCourseExperience();
   const presenterMode = isMockMode();
   const isPreview = course?.contentStatus === 'preview';
   const isWebsec = course?.code === 'WEBSEC-101';
@@ -109,6 +117,14 @@ export function AssessmentPanel() {
   const [curatedQuestions, setCuratedQuestions] = useState<AssessmentQuestion[]>([]);
   const [curatedQuizLoading, setCuratedQuizLoading] = useState(false);
   const [curatedQuizError, setCuratedQuizError] = useState('');
+  const demoDraft = !presenterMode && !isPreview && isWebsec
+    ? experience?.assessment_demo_draft ?? null
+    : null;
+  const [demoAssignment, setDemoAssignment] = useState<StudentAssessmentRead | null>(null);
+  const [demoAssignmentLoading, setDemoAssignmentLoading] = useState(false);
+  const [demoAssignmentError, setDemoAssignmentError] = useState('');
+  const [demoAssignmentSubmitted, setDemoAssignmentSubmitted] = useState(false);
+  const [demoDraftNotice, setDemoDraftNotice] = useState('');
   useEffect(() => {
     if (presenterMode || !isWebsec || !course) {
       setCuratedQuestions([]);
@@ -133,6 +149,69 @@ export function AssessmentPanel() {
       disposed = true;
     };
   }, [course, isWebsec, presenterMode]);
+  useEffect(() => {
+    if (!demoDraft) {
+      setDemoAssignment(null);
+      setDemoAssignmentLoading(false);
+      setDemoAssignmentError('');
+      setDemoAssignmentSubmitted(false);
+      setDemoDraftNotice('');
+      return;
+    }
+    let disposed = false;
+    setDemoAssignment(null);
+    setDemoAssignmentLoading(true);
+    setDemoAssignmentError('');
+    setDemoAssignmentSubmitted(false);
+    setDemoDraftNotice('');
+    void fetchStudentAssessment(demoDraft.assignment_id)
+      .then((assignment) => {
+        if (!disposed) setDemoAssignment(assignment);
+      })
+      .catch((cause: unknown) => {
+        if (!disposed) {
+          setDemoAssignmentError(
+            cause instanceof Error ? cause.message : '无法读取受控演示作答关联的已发布作业。',
+          );
+        }
+      })
+      .finally(() => {
+        if (!disposed) setDemoAssignmentLoading(false);
+      });
+    return () => {
+      disposed = true;
+    };
+  }, [demoDraft?.assignment_id]);
+  const demoAssignmentQuestions = useMemo<AssessmentQuestion[]>(
+    () => (demoAssignment?.items ?? []).map((item) => ({
+      id: item.quiz_item_id,
+      type: item.question_type === 'multi_choice'
+        ? 'multiple'
+        : item.question_type === 'short_answer' || item.question_type === 'fill' || item.question_type === 'code'
+          ? 'short'
+          : 'single',
+      prompt: item.question,
+      options: item.options,
+    })),
+    [demoAssignment?.items],
+  );
+  const demoSubmissionAlreadyPersisted = demoAssignment?.submission_status === 'submitted'
+    || demoAssignment?.submission_status === 'late';
+  const usableDemoDraft = useMemo(() => {
+    if (
+      !demoDraft
+      || !demoAssignment
+      || !['open', 'submitted', 'late'].includes(demoAssignment.submission_status)
+      || !demoAssignmentQuestions.length
+    ) {
+      return null;
+    }
+    const questionIds = new Set(demoAssignmentQuestions.map((question) => question.id));
+    return Object.keys(demoDraft.answers).every((id) => questionIds.has(id))
+      && questionIds.size === Object.keys(demoDraft.answers).length
+      ? demoDraft
+      : null;
+  }, [demoAssignment, demoAssignmentQuestions, demoDraft]);
   const questions = useMemo<AssessmentQuestion[]>(
     () => {
       if ((presenterMode || isPreview) && course) {
@@ -144,10 +223,13 @@ export function AssessmentPanel() {
           options: item.options,
         }));
       }
+      if (usableDemoDraft) return demoAssignmentQuestions;
       return isWebsec ? curatedQuestions : realQuestions;
     },
-    [course?.id, course?.previewContentKey, curatedQuestions, isPreview, isWebsec, presenterMode, realQuestions],
+    [course?.id, course?.previewContentKey, curatedQuestions, demoAssignmentQuestions, isPreview, isWebsec, presenterMode, realQuestions, usableDemoDraft],
   );
+  const assessmentArtifactId = usableDemoDraft?.quiz_resource_id ?? quizResource?.id ?? null;
+  const demoAnswersLocked = Boolean(usableDemoDraft) && (demoAssignmentSubmitted || demoSubmissionAlreadyPersisted);
   const [answers, setAnswers] = useState<Record<string, AssessmentAnswer>>({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -157,6 +239,7 @@ export function AssessmentPanel() {
   const [assessmentAudit, setAssessmentAudit] = useState<AssessmentAuditProjection | null>(null);
   const [submittedAnswers, setSubmittedAnswers] = useState<SubmittedAnswer[]>([]);
   const [courseNextRecommendation, setCourseNextRecommendation] = useState('');
+  const [questionPage, setQuestionPage] = useState(0);
   const latestAssessmentRoot = useMemo(
     () => Object.values(workflowRoots)
       .filter((root) => root.intent === 'run_assessment' && root.status === 'succeeded')
@@ -172,7 +255,24 @@ export function AssessmentPanel() {
     setAssessmentAudit(null);
     setSubmittedAnswers([]);
     setCourseNextRecommendation('');
+    setDemoAssignmentSubmitted(false);
+    setDemoDraftNotice('');
+    setQuestionPage(0);
   }, [course?.id]);
+
+  const questionPageCount = Math.max(1, Math.ceil(questions.length / QUESTIONS_PER_PAGE));
+  const visibleQuestions = useMemo(
+    () => questions.slice(questionPage * QUESTIONS_PER_PAGE, (questionPage + 1) * QUESTIONS_PER_PAGE),
+    [questionPage, questions],
+  );
+  const answeredQuestionCount = useMemo(
+    () => questions.filter((question) => hasAnswer(answers[question.id])).length,
+    [answers, questions],
+  );
+
+  useEffect(() => {
+    setQuestionPage((current) => Math.min(current, questionPageCount - 1));
+  }, [questionPageCount]);
 
   // The durable terminal output is the only source used to restore the full
   // audit after a refresh; the persisted client store merely retains the root.
@@ -190,6 +290,7 @@ export function AssessmentPanel() {
         setSubmittedAnswers(audit.submittedAnswers);
         setCourseNextRecommendation(audit.nextRecommendation ?? '');
         dispatch({ type: 'setAssessment', assessment: report });
+        reloadStudentExperience();
       })
       .catch(() => {
         // The already-persisted result remains visible if its audit fetch is temporarily unavailable.
@@ -197,15 +298,19 @@ export function AssessmentPanel() {
     return () => {
       disposed = true;
     };
-  }, [assessmentAudit?.rootRunId, dispatch, latestAssessmentRoot]);
+  }, [assessmentAudit?.rootRunId, dispatch, latestAssessmentRoot, reloadStudentExperience]);
 
-  const selectedCapabilities = useMemo<CapabilityDTO[]>(
-    () => {
-      const audited = auditedCapabilities(assessmentAudit?.capabilityChanges ?? []);
-      return audited.length > 0 ? audited : assessment?.updatedCapabilities ?? [];
-    },
-    [assessment?.updatedCapabilities, assessmentAudit?.capabilityChanges],
-  );
+  const selectedCapabilities = useMemo<CapabilityDTO[]>(() => {
+    const persisted = experience?.capabilities ?? [];
+    const audited = auditedCapabilities(assessmentAudit?.capabilityChanges ?? []);
+    const workflowCapabilities = assessment?.updatedCapabilities ?? [];
+    const updates = audited.length > 0 ? audited : workflowCapabilities;
+    if (!persisted.length) return updates;
+    if (!updates.length) return persisted;
+    const merged = new Map(persisted.map((capability) => [capability.dimension, capability]));
+    updates.forEach((capability) => merged.set(capability.dimension, capability));
+    return [...merged.values()];
+  }, [assessment?.updatedCapabilities, assessmentAudit?.capabilityChanges, experience?.capabilities]);
 
   // 提交完拿到 score 后，把 0 → score 做 1.2s 的缓动（同步喂给圆环 SVG）。
   useEffect(() => {
@@ -229,10 +334,33 @@ export function AssessmentPanel() {
     setEvents((current) => [...current, event]);
   };
 
+  const fillDemoDraft = () => {
+    if (!usableDemoDraft) return;
+    setAnswers(
+      Object.fromEntries(
+        Object.entries(usableDemoDraft.answers).map(([id, answer]) => [
+          id,
+          Array.isArray(answer) ? [...answer] : answer,
+        ]),
+      ),
+    );
+    setQuestionPage(0);
+    setError('');
+    setDemoDraftNotice(
+      demoSubmissionAlreadyPersisted
+        ? `已载入 ${Object.keys(usableDemoDraft.answers).length} 道已持久化的受控演示作答；不会覆盖真实作业，提交后只会重试能力画像工作流。`
+        : `已填入 ${Object.keys(usableDemoDraft.answers).length} 道可编辑的受控演示作答；尚未提交、评分或更新能力画像。`,
+    );
+  };
+
   const submit = async () => {
     if (loading) return;
     if (isPreview) {
       setError('这是只读预置题目预览；课程内容尚未就绪，不能提交评估或更新学习进度。');
+      return;
+    }
+    if (!assessmentArtifactId) {
+      setError('当前账户没有可提交的个人测验工件。请先完成已发布作业，或在资源工作台获取受权的测验资源。');
       return;
     }
     setLoading(true);
@@ -248,23 +376,42 @@ export function AssessmentPanel() {
         prompt: question.prompt,
         answer: answers[question.id]!,
         kpId: question.kpId,
-      }));
+    }));
     setSubmittedAnswers(submitted);
+
+    if (usableDemoDraft && !demoAssignmentSubmitted && !demoSubmissionAlreadyPersisted) {
+      try {
+        const assignmentSubmission = await submitStudentAssessment(
+          usableDemoDraft.assignment_id,
+          Object.fromEntries(
+            submitted.map((question) => [question.id, question.answer]),
+          ),
+        );
+        setDemoAssignmentSubmitted(true);
+        setDemoDraftNotice(
+          assignmentSubmission.status === 'late'
+            ? '受控演示作答已按迟交状态写入真实作业；现在继续执行评估工作流。'
+            : '受控演示作答已写入真实作业；现在继续执行评估工作流。',
+        );
+      } catch (cause) {
+        setLoading(false);
+        setError(cause instanceof Error ? `作业提交失败：${cause.message}` : '作业提交失败，未启动能力画像更新。');
+        return;
+      }
+    }
+    if (usableDemoDraft && demoSubmissionAlreadyPersisted) {
+      setDemoAssignmentSubmitted(true);
+      setDemoDraftNotice('已引用此前真实提交的冻结作答；现在重新执行 Evidence、QualityCheck 与能力画像工作流。');
+    }
 
     startCourseTask({
       intent: 'run_assessment',
       context: taskContext,
       payload: {
         answers: submitted
-          .map((question) => ({
-            quiz_item_id: question.id,
-            answer: question.answer,
-            kp_id: question.kpId ?? taskContext.kpId,
-            question: question.prompt,
-            options: questions.find((candidate) => candidate.id === question.id)?.options ?? [],
-            question_type: questions.find((candidate) => candidate.id === question.id)?.type ?? 'single',
-          })),
-        quizArtifactId: isWebsec ? `websec-quiz-bank:${course?.id ?? taskContext.courseId}` : quizArtifact.resource.id,
+          .map((question) => ({ quiz_item_id: question.id, answer: question.answer })),
+        quizArtifactId: assessmentArtifactId,
+        assessmentAssignmentId: usableDemoDraft?.assignment_id,
       },
     }, createCourseTaskLifecycle('run_assessment', dispatch, {
       onProgress(progress) {
@@ -287,6 +434,7 @@ export function AssessmentPanel() {
           if (audited.length > 0) report.updatedCapabilities = audited;
           setAssessmentAudit(audit);
           dispatch({ type: 'setAssessment', assessment: report });
+          reloadStudentExperience();
           if (!presenterMode) {
             void recordCourseProgress(taskContext.courseId, {
               knowledge_point_id: taskContext.kpId,
@@ -335,7 +483,11 @@ export function AssessmentPanel() {
 
   const hasSubmitted = Boolean(assessment);
   const score = Math.round((assessment?.score ?? 0) * 100);
-  const canSubmit = !isPreview && !loading && questions.length > 0 && questions.every((question) => hasAnswer(answers[question.id]));
+  const canSubmit = !isPreview
+    && !loading
+    && Boolean(assessmentArtifactId)
+    && questions.length > 0
+    && questions.every((question) => hasAnswer(answers[question.id]));
 
   return (
     <>
@@ -352,7 +504,9 @@ export function AssessmentPanel() {
               <div>
                 {curatedQuizLoading && '正在读取通过质量校验的 WEBSEC-101 题库…'}
                 {curatedQuizError && `题库读取失败：${curatedQuizError}`}
-                {!curatedQuizLoading && !curatedQuizError && `当前评估使用 ${questions.length} 道已精选、已通过质量校验的持久化题目。`}
+                {!curatedQuizLoading && !curatedQuizError && (usableDemoDraft
+                  ? `当前评估读取“${usableDemoDraft.assignment_title}”的 ${questions.length} 道已发布冻结题目，并引用当前学生的持久化测验工件。`
+                  : `当前评估使用 ${questions.length} 道已精选、已通过质量校验的持久化题目。`)}
               </div>
             ) : !quizResource && (
               <div className="flex flex-wrap items-center justify-between gap-2">
@@ -371,10 +525,80 @@ export function AssessmentPanel() {
             {!isWebsec && quizResource && !quizArtifact.isLoading && !quizArtifact.error && !realQuestions.length && '测验资源内容无法解析，请在资源工作台重新生成练习题。'}
             </div>
           )}
-          {questions.map((question, index) => (
+          {demoDraft && (
+            <section className="rounded-lg border border-brand-blue-200 bg-brand-blue-50/40 p-3" aria-label="受控演示作答">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <p className="flex items-center gap-1.5 text-sm font-semibold text-brand-blue-950">
+                    <ClipboardPenLine className="h-4 w-4 text-brand-blue-700" />
+                    受控演示作答
+                  </p>
+                  <p className="mt-1 text-xs leading-5 text-brand-blue-900">
+                    {demoSubmissionAlreadyPersisted
+                      ? '当前 demo 学生已有真实冻结作答。可载入后重试评估工作流，不会覆盖作业、预填分数或伪造成功状态。'
+                      : '仅会把当前 demo 学生的 36 道持久化冻结题目作答写入可编辑草稿；不会预填分数、能力画像或成功状态。'}
+                  </p>
+                </div>
+                {usableDemoDraft && (
+                  <button
+                    type="button"
+                    onClick={fillDemoDraft}
+                    disabled={loading}
+                    className="inline-flex items-center gap-1.5 rounded-md border border-brand-blue-300 bg-white px-3 py-2 text-sm font-medium text-brand-blue-700 hover:bg-brand-blue-50 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    <ClipboardPenLine className="h-4 w-4" />
+                    {demoSubmissionAlreadyPersisted ? '载入已提交的' : '一键填充'} {Object.keys(usableDemoDraft.answers).length} 道题
+                  </button>
+                )}
+              </div>
+              {demoAssignmentLoading && <p className="mt-3 text-xs text-brand-blue-800">正在核对当前学生的已发布作业与冻结题目…</p>}
+              {demoAssignmentError && <p className="mt-3 border border-rose-200 bg-rose-50 px-2.5 py-2 text-xs leading-5 text-rose-800">{demoAssignmentError}</p>}
+              {!demoAssignmentLoading && !demoAssignmentError && !usableDemoDraft && (
+                <p className="mt-3 border border-amber-200 bg-amber-50 px-2.5 py-2 text-xs leading-5 text-amber-900">
+                  当前关联作业不可恢复、已完成能力画像更新或题目版本不匹配，因此不会填入默认答案。请刷新课程记录或使用新的已发布作业。
+                </p>
+              )}
+              {demoDraftNotice && <p className="mt-3 text-xs leading-5 text-brand-blue-900">{demoDraftNotice}</p>}
+              <p className="mt-2 text-[11px] leading-5 text-slate-600">{demoDraft.source_boundary}</p>
+            </section>
+          )}
+          {questions.length > 0 && (
+            <section className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5" aria-label="评估题目进度">
+              <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-600">
+                <span>已完成 {answeredQuestionCount}/{questions.length} 题</span>
+                <span>第 {questionPage + 1}/{questionPageCount} 页，每页 {QUESTIONS_PER_PAGE} 题</span>
+              </div>
+              <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-200" aria-hidden>
+                <div
+                  className="h-full rounded-full bg-brand-blue-600 transition-[width] duration-300"
+                  style={{ width: `${(answeredQuestionCount / questions.length) * 100}%` }}
+                />
+              </div>
+              {questionPageCount > 1 && (
+                <div className="mt-3 flex flex-wrap gap-1.5" aria-label="评估题目分页">
+                  {Array.from({ length: questionPageCount }, (_, page) => (
+                    <button
+                      key={page}
+                      type="button"
+                      onClick={() => setQuestionPage(page)}
+                      aria-current={page === questionPage ? 'page' : undefined}
+                      className={`min-w-8 rounded-md border px-2 py-1 text-xs font-medium ${
+                        page === questionPage
+                          ? 'border-brand-blue-600 bg-brand-blue-600 text-white'
+                          : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-100'
+                      }`}
+                    >
+                      {page + 1}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </section>
+          )}
+          {visibleQuestions.map((question, index) => (
             <div key={question.id} className="rounded-lg border border-slate-100 p-4">
               <p className="text-sm font-semibold text-slate-900">
-                {index + 1}. {question.prompt}
+                {questionPage * QUESTIONS_PER_PAGE + index + 1}. {question.prompt}
               </p>
               {question.type !== 'short' && <div className="mt-3 grid gap-2">
                 {question.options.map((option) => {
@@ -394,7 +618,7 @@ export function AssessmentPanel() {
                         type={question.type === 'multiple' ? 'checkbox' : 'radio'}
                         name={question.id}
                         checked={picked}
-                        disabled={isPreview}
+                        disabled={isPreview || demoAnswersLocked}
                         onChange={(event) => setAnswers((current) => {
                           if (question.type !== 'multiple') return { ...current, [question.id]: option };
                           const existing = current[question.id];
@@ -415,7 +639,7 @@ export function AssessmentPanel() {
               {question.type === 'short' && (
                 <textarea
                   value={typeof answers[question.id] === 'string' ? answers[question.id] : ''}
-                  disabled={isPreview}
+                  disabled={isPreview || demoAnswersLocked}
                   onChange={(event) => setAnswers((current) => ({ ...current, [question.id]: event.target.value }))}
                   className="mt-3 min-h-[96px] w-full rounded-md border border-slate-200 px-3 py-2 text-sm outline-none focus:border-brand-blue-500"
                   placeholder="请输入你的判断理由"
@@ -463,11 +687,11 @@ export function AssessmentPanel() {
       </Card>
 
       <div className="space-y-4">
-        <Card title="评估反馈" subtitle="分数与建议会写回画像">
+        <Card title="评估反馈" subtitle="仅展示成功 assessment_update_v2 的耐久反馈与能力回写">
           <div className="flex flex-col items-center gap-2 rounded-lg bg-slate-50 p-4">
             <ScoreRing score={hasSubmitted ? animatedScore : 0} />
             <p className="text-sm text-slate-500">
-              {hasSubmitted ? '当前评估得分' : '提交评估后查看得分'}
+              {hasSubmitted ? '当前耐久评估得分' : '提交后待耐久工作流成功再查看反馈'}
             </p>
             {hasSubmitted && score >= 80 && (
               <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] text-emerald-700">

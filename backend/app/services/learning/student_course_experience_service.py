@@ -50,6 +50,7 @@ from app.schemas.student_course_experience import (
     StudentCourseAssessmentDTO,
     StudentCourseAssignmentDTO,
     StudentCourseCapabilityDTO,
+    StudentCourseDemoAssessmentDraftDTO,
     StudentCourseEvidenceDTO,
     StudentCourseExperienceDTO,
     StudentCourseKnowledgeMetricDTO,
@@ -146,6 +147,11 @@ class StudentCourseExperienceService:
         )
         updates = await self._updates(actor.id, course_id)
         tutor_exchanges = await self._tutor_exchanges(actor.id)
+        assessment_demo_draft = await self._assessment_demo_draft(
+            user_id=actor.id,
+            course_id=course_id,
+            assignments=assignments,
+        )
         assessment = await self._assessment(actor.id, course_id)
 
         completed_count = sum(task.status == "done" for task in tasks)
@@ -193,6 +199,7 @@ class StudentCourseExperienceService:
             assignments=assignments,
             updates=updates,
             tutor_exchanges=tutor_exchanges,
+            assessment_demo_draft=assessment_demo_draft,
             assessment=assessment,
         )
 
@@ -453,9 +460,151 @@ class StudentCourseExperienceService:
                     ),
                     evidence=[] if evidence_status == "insufficient" else evidence_by_index.get(index, []),
                     recorded_at=event.occurred_at,
+                    quick_reply_available=(
+                        result.get("source_kind") == "curated-demo"
+                        and result.get("quick_reply_available") is True
+                    ),
                 )
             )
         return exchanges
+
+    async def _assessment_demo_draft(
+        self,
+        *,
+        user_id: UUID,
+        course_id: UUID,
+        assignments: list[StudentCourseAssignmentDTO],
+    ) -> StudentCourseDemoAssessmentDraftDTO | None:
+        """Read one explicitly seeded, current-student assessment draft.
+
+        The event is not a generic answer-key channel: it is accepted only
+        for the controlled showcase profile, a current assignment already in
+        this student's projection, and an owned active quiz resource that the
+        normal assessment workflow will validate again before it can run. A
+        submitted controlled answer set remains recoverable for review and a
+        deliberately audited re-evaluation; it is never reopened as a new
+        blank submission or used to overwrite the learner's durable result.
+        """
+
+        event = await self.session.scalar(
+            select(LearningEvent)
+            .where(
+                LearningEvent.user_id == user_id,
+                LearningEvent.event_type == "assessment_demo_draft",
+            )
+            .order_by(LearningEvent.occurred_at.desc())
+            .limit(1)
+        )
+        if event is None:
+            return None
+        result = dict(event.result or {})
+        if (
+            result.get("seed_profile") != "showcase_course"
+            or result.get("source_kind") != "curated-demo"
+            or result.get("assessment_profile") != "websec_comprehensive_36"
+        ):
+            return None
+
+        assignment_ids = {
+            assignment.id
+            for assignment in assignments
+            if assignment.assignment_status == "active"
+            and assignment.learner_status in {"not_started", "submitted", "late"}
+        }
+        parsed_assignment = _uuid_values([result.get("assignment_id")])
+        if len(parsed_assignment) != 1 or parsed_assignment[0] not in assignment_ids:
+            return None
+        assignment_id = parsed_assignment[0]
+        assignment = await self.session.get(AssessmentAssignment, assignment_id)
+        if assignment is None:
+            return None
+        items = list(
+            (
+                await self.session.execute(
+                    select(AssessmentItem)
+                    .where(AssessmentItem.assessment_version_id == assignment.assessment_version_id)
+                    .order_by(AssessmentItem.position)
+                )
+            ).scalars()
+        )
+        expected_ids = {str(item.quiz_item_id) for item in items}
+        if len(items) != 36 or len(expected_ids) != 36:
+            return None
+        raw_answers = result.get("answers")
+        if not expected_ids or not isinstance(raw_answers, dict):
+            return None
+        answers: dict[str, str | list[str]] = {}
+        for raw_key, raw_value in raw_answers.items():
+            question_ids = _uuid_values([raw_key])
+            if len(question_ids) != 1:
+                return None
+            key = str(question_ids[0])
+            if key not in expected_ids:
+                return None
+            if isinstance(raw_value, str) and raw_value.strip():
+                answers[key] = raw_value.strip()
+                continue
+            if (
+                isinstance(raw_value, list)
+                and raw_value
+                and all(isinstance(value, str) and value.strip() for value in raw_value)
+            ):
+                answers[key] = [value.strip() for value in raw_value]
+                continue
+            return None
+        if set(answers) != expected_ids:
+            return None
+
+        submission = await self.session.scalar(
+            select(AssessmentSubmission).where(
+                AssessmentSubmission.assignment_id == assignment_id,
+                AssessmentSubmission.student_id == user_id,
+            )
+        )
+        if submission is None:
+            return None
+        if submission.status == "open":
+            # An open controlled submission must remain genuinely empty until
+            # the learner explicitly submits the editable draft.
+            if submission.answers:
+                return None
+        elif submission.status in {"submitted", "late"}:
+            # Once submitted, only expose the recovery action when the
+            # persisted answer set is exactly the controlled draft.  This
+            # avoids presenting seed answers for a learner-edited submission
+            # that the real workflow would correctly reject as mismatched.
+            if not _assessment_answer_maps_match(submission.answers, answers):
+                return None
+        else:
+            return None
+
+        resource_ids = _uuid_values([result.get("quiz_resource_id")])
+        if len(resource_ids) != 1:
+            return None
+        resource = await self.session.get(GeneratedResource, resource_ids[0])
+        if (
+            resource is None
+            or resource.user_id != user_id
+            or resource.course_id != course_id
+            or resource.resource_type != "quiz"
+            or resource.status != "active"
+            or not resource.evidence_chunk_ids
+        ):
+            return None
+        assignment_dto = next(
+            item for item in assignments if item.id == assignment_id
+        )
+        return StudentCourseDemoAssessmentDraftDTO(
+            assignment_id=assignment_id,
+            assignment_title=assignment_dto.title,
+            quiz_resource_id=resource.id,
+            answers=answers,
+            source_kind="curated-demo",
+            source_boundary=str(
+                result.get("source_boundary")
+                or "受控预置演示作答仅填入可编辑草稿；分数、能力和路径只会在真实提交与工作流完成后更新。"
+            ),
+        )
 
     async def _tutor_evidence(
         self, results: list[dict[str, Any]]
@@ -616,6 +765,41 @@ def _learner_assignment_status(
     if grade.status == "teacher_reviewed":
         return "teacher_review", None, "教师复核中，当前不显示未发布成绩。"
     return "grading", None, "系统评分或教师复核中，当前不显示未发布成绩。"
+
+
+def _assessment_answer_maps_match(
+    persisted: object,
+    expected: dict[str, str | list[str]],
+) -> bool:
+    """Compare a durable submission with the controlled draft without grading it.
+
+    This only establishes whether it is truthful to offer the demo learner a
+    recovery view of the same frozen answers.  It deliberately does not treat
+    a matching answer set as a score, QualityCheck result, or capability
+    update.
+    """
+
+    if not isinstance(persisted, dict) or set(map(str, persisted)) != set(expected):
+        return False
+
+    def signature(value: object) -> tuple[str, ...] | None:
+        if isinstance(value, list):
+            values = value
+        elif isinstance(value, str):
+            values = value.split(";")
+        else:
+            return None
+        normalized = sorted(
+            "".join(str(item).strip().lower().split())
+            for item in values
+            if str(item).strip()
+        )
+        return tuple(normalized) if normalized else None
+
+    return all(
+        signature(persisted.get(item_id)) == signature(answer)
+        for item_id, answer in expected.items()
+    )
 
 
 def _knowledge_metric(

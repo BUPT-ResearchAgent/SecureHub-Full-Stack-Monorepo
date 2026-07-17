@@ -8,7 +8,6 @@ return the durable root ID.  RuntimeEngine performs all execution.
 
 from __future__ import annotations
 
-import json
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -108,10 +107,22 @@ def _route_input(root: dict[str, Any], _state: dict[str, Any]) -> dict[str, Any]
 
 def _assessment_input(root: dict[str, Any], _state: dict[str, Any]) -> dict[str, Any]:
     answers = root.get("answers", [])
-    answer_context = json.dumps(answers, ensure_ascii=False, default=str)[:4_000]
     return {
         **_basic_input(root, _state),
-        "query": f"Assess the learner's submitted course answers: {answer_context}",
+        # ``answers`` is already part of the typed Skill input. Repeating the
+        # whole list inside ``query`` used to consume the global guardrail
+        # budget twice and forced a lossy four-character transport projection.
+        # For a server-verified published submission, the embedded summary
+        # contains immutable objective scoring facts; answer excerpts must not
+        # by themselves be interpreted as an incomplete submission.
+        "query": (
+            "Assess the learner's server-verified published course submission. "
+            "Use assessment_summary.scoring.objective_floor_score as the "
+            "minimum score justified by frozen objective items. Answers may be "
+            "bounded only for prompt transport; do not call them incomplete "
+            "solely because of an excerpt. Evaluate any remaining subjective "
+            "content with the linked Evidence."
+        ),
         "answers": answers,
     }
 

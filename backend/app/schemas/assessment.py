@@ -20,6 +20,7 @@ class AssessmentRunRequest(BaseModel):
     course_id: UUID
     answers: list[dict[str, object]] = Field(default_factory=list)
     quiz_artifact_id: str | None = None
+    assessment_assignment_id: UUID | None = None
     mode: Literal["fixture", "real"] = "real"
     provider: str | None = None
     model: str | None = None

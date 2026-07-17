@@ -98,6 +98,26 @@ class StudentCourseTutorExchangeDTO(BaseModel):
     source_boundary: str
     evidence: list[StudentCourseEvidenceDTO] = Field(default_factory=list)
     recorded_at: datetime
+    # Only an explicit, current-student controlled record may be replayed as
+    # a quick answer. New questions continue through the normal tutor flow.
+    quick_reply_available: bool = False
+
+
+class StudentCourseDemoAssessmentDraftDTO(BaseModel):
+    """A current-student-only controlled draft for one open assessment.
+
+    This is intentionally absent unless a persisted, seeded event references
+    the student's own active assignment and an owned active quiz artifact.
+    The response contains editable draft answers only; it never projects a
+    score, grade, capability mutation, or successful workflow outcome.
+    """
+
+    assignment_id: UUID
+    assignment_title: str
+    quiz_resource_id: UUID
+    answers: dict[str, str | list[str]] = Field(default_factory=dict)
+    source_kind: Literal["curated-demo"]
+    source_boundary: str
 
 
 class StudentCourseKnowledgeMetricDTO(BaseModel):
@@ -131,4 +151,5 @@ class StudentCourseExperienceDTO(BaseModel):
     assignments: list[StudentCourseAssignmentDTO] = Field(default_factory=list)
     updates: list[StudentCourseUpdateDTO] = Field(default_factory=list)
     tutor_exchanges: list[StudentCourseTutorExchangeDTO] = Field(default_factory=list)
+    assessment_demo_draft: StudentCourseDemoAssessmentDraftDTO | None = None
     assessment: StudentCourseAssessmentDTO

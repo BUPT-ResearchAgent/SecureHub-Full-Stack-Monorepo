@@ -23,7 +23,6 @@ import {
 } from '@/app/components/ui/dropdown-menu';
 import { RoleSwitcher } from './RoleSwitcher';
 import { ROLE_META, isTeacherRole, type TeacherRole } from './roles';
-import { MOCK_TEACHERS } from '@/lib/mock/teacher.mock';
 import { useActiveRole } from './store';
 import { canAccessTeacherPath, getTeacherNav, type TeacherNavItem } from './nav';
 
@@ -55,13 +54,15 @@ function TeacherFrame() {
     return <Navigate to="/workspace" replace />;
   }
 
-  const teacher = MOCK_TEACHERS[role];
   const meta = ROLE_META[role];
   const navItems = getTeacherNav(role);
   const hasModuleAccess = canAccessTeacherPath(role, location.pathname);
   const MetaIcon = meta.icon;
 
-  const displayName = teacher?.name ?? user?.display_name ?? '老师';
+  // The signed-in user is the only authority for the displayed teacher
+  // identity.  Do not substitute a decorative mock profile here: it can make
+  // a course-scope error look like the wrong account is signed in.
+  const displayName = user?.display_name ?? '老师';
 
   const handleLogout = async () => {
     await logout();
@@ -167,7 +168,7 @@ function TeacherFrame() {
                 <DropdownMenuTrigger asChild>
                 <button className="flex max-w-[220px] items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-slate-100">
                     <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-slate-100 text-base">
-                      {teacher?.avatar ?? '🧑‍🏫'}
+                      <UserCircle className="h-5 w-5 text-slate-600" aria-hidden />
                     </div>
                     <div className="hidden flex-col items-start leading-tight sm:flex">
                       <span className="truncate text-sm text-slate-800">{displayName}</span>
@@ -183,8 +184,8 @@ function TeacherFrame() {
                   <DropdownMenuLabel>
                     <div className="space-y-1">
                       <p className="truncate text-sm font-medium text-slate-900">{displayName}</p>
-                      <p className="truncate text-xs font-normal text-slate-500">{teacher?.title}</p>
-                      <p className="truncate text-[11px] font-normal text-slate-400">{teacher?.department}</p>
+                      <p className="truncate text-xs font-normal text-slate-500">{meta.label} · 服务端会话身份</p>
+                      <p className="truncate text-[11px] font-normal text-slate-400">{user?.email ?? '当前登录会话'}</p>
                     </div>
                   </DropdownMenuLabel>
                   <DropdownMenuSeparator />

@@ -476,7 +476,44 @@ class WorkflowActionService:
         assessment = dict((state.get("run_assessment") or {}).get("output") or {})
         capability = dict((state.get("update_capability") or {}).get("output") or {})
         persona = dict((state.get("update_persona") or {}).get("output") or {})
+        score_contract = self._assessment_score_contract(root_input)
+        model_score = self._unit_score(assessment.get("score"))
+        objective_floor_score = (
+            score_contract["objective_floor_score"]
+            if score_contract is not None
+            else None
+        )
+        score_reconciled = (
+            model_score is not None
+            and objective_floor_score is not None
+            and model_score < objective_floor_score
+        )
+        if score_reconciled:
+            # The objective floor is derived from the real frozen version and
+            # durable submission before a model sees any prompt projection.
+            # Do not persist a lower model score merely because a bounded
+            # answer transport was mistaken for an incomplete response.
+            assessment = dict(assessment)
+            assessment["score"] = objective_floor_score
+            assessment["feedback"] = (
+                "已按当前已发布冻结题目与持久化提交核验客观部分："
+                f"{score_contract['objective_earned_points']:g}/"
+                f"{score_contract['objective_total_points']:g} 分；"
+                f"完整试卷当前可核验得分下限为 {objective_floor_score:.0%}。"
+                "主观题仍以本次 Evidence 关联的评估反馈为准。"
+            )
+            assessment["next_recommendation"] = (
+                "继续查看本次评估关联的课程 Evidence 与主观题反馈；"
+                "后续路径将以已核验的客观题结果重新排序。"
+            )
         proposed_delta = capability.get("capability_delta") or capability.get("delta") or assessment.get("capability_delta")
+        if score_reconciled:
+            # A negative model delta cannot be allowed to contradict a
+            # server-verified lower-bound score. The durable capability write
+            # below therefore reconciles Web security to that bound and
+            # records the source in the audit rather than inventing a demo
+            # delta in the browser.
+            proposed_delta = {"web_security": 0.0}
         if not isinstance(proposed_delta, dict) or not proposed_delta:
             raise ValueError("accepted assessment did not produce a capability delta")
         persona_patch = persona.get("dimensions") or persona.get("updated_dimensions") or {}
@@ -518,7 +555,16 @@ class WorkflowActionService:
                 if row is None:
                     continue
                 before_score = float(row.score)
-                row.score = max(0.0, min(1.0, before_score + delta))
+                applied_delta = delta
+                applied_sources = source_dimensions
+                if score_reconciled and dimension == "web_security":
+                    # The floor covers the entire assessment denominator, so
+                    # moving an older lower capability up to it is
+                    # conservative. A higher existing capability remains
+                    # unchanged pending a non-conflicting full evaluation.
+                    applied_delta = max(0.0, objective_floor_score - before_score)
+                    applied_sources = ["server_verified_objective_floor"]
+                row.score = max(0.0, min(1.0, before_score + applied_delta))
                 row.evidence_count = int(row.evidence_count) + len(evidence_snapshot_ids)
                 changes.append(
                     {
@@ -528,7 +574,7 @@ class WorkflowActionService:
                         "delta": float(row.score) - before_score,
                         "confidence": float(row.confidence),
                         "evidence_count": int(row.evidence_count),
-                        "source_dimensions": source_dimensions,
+                        "source_dimensions": applied_sources,
                     }
                 )
             if not changes:
@@ -565,11 +611,27 @@ class WorkflowActionService:
                 raise ValueError("accepted assessment did not produce a persona change")
             await self.session.flush()
 
+        scoring_audit = (
+            {
+                **score_contract,
+                "model_score": model_score,
+                "effective_score": self._unit_score(assessment.get("score")),
+                "reconciled": score_reconciled,
+                "model_feedback": str(
+                    dict((state.get("run_assessment") or {}).get("output") or {}).get("feedback")
+                    or ""
+                )[:1_200],
+            }
+            if score_contract is not None
+            else None
+        )
         assessment_payload = {
             key: assessment[key]
             for key in ("score", "overall_score", "feedback", "capability_delta", "weak_kp_ids", "next_recommendation")
             if key in assessment
         }
+        if scoring_audit is not None:
+            assessment_payload["scoring"] = scoring_audit
         assessment_payload["updated_capabilities"] = [
             {
                 "dimension": item["dimension"],
@@ -603,6 +665,7 @@ class WorkflowActionService:
                     "answered_count": len(root_input.get("answers") or []),
                     "submitted_answers": self._assessment_answers_for_audit(root_input.get("answers")),
                 },
+                "scoring": scoring_audit,
                 "evidence_snapshot_ids": evidence_snapshot_ids,
                 "capability_changes": changes,
                 "persona": {
@@ -618,6 +681,72 @@ class WorkflowActionService:
                 },
             },
         }
+
+    @staticmethod
+    def _assessment_score_contract(root_input: dict[str, Any]) -> dict[str, float | str] | None:
+        """Read only a server-verified objective scoring floor from root input.
+
+        The regular API replaces browser answers with this projection only
+        after it has matched a published frozen submission. The final action
+        still verifies the canonical context and arithmetic so an arbitrary
+        generic workflow payload cannot use this path to claim a score.
+        """
+
+        context = root_input.get("context")
+        if (
+            not isinstance(context, dict)
+            or context.get("assessment_source") != "server_verified_published_submission"
+        ):
+            return None
+        answers = root_input.get("answers")
+        if not isinstance(answers, list):
+            return None
+        summary: dict[str, Any] | None = None
+        for answer in answers:
+            if isinstance(answer, dict) and isinstance(answer.get("assessment_summary"), dict):
+                summary = dict(answer["assessment_summary"])
+                break
+        if summary is None or summary.get("source") != "server_verified_published_submission":
+            return None
+        scoring = summary.get("scoring")
+        if (
+            not isinstance(scoring, dict)
+            or scoring.get("source") != "server_verified_frozen_objective_items"
+        ):
+            return None
+        try:
+            earned = float(scoring["objective_earned_points"])
+            objective_total = float(scoring["objective_total_points"])
+            total = float(scoring["total_assessment_points"])
+            floor = float(scoring["objective_floor_score"])
+        except (KeyError, TypeError, ValueError):
+            return None
+        if (
+            earned < 0.0
+            or objective_total < 0.0
+            or total <= 0.0
+            or earned > objective_total
+            or objective_total > total
+            or floor < 0.0
+            or floor > 1.0
+            or abs(floor - earned / total) > 0.000_001
+        ):
+            return None
+        return {
+            "source": "server_verified_frozen_objective_items",
+            "objective_earned_points": earned,
+            "objective_total_points": objective_total,
+            "total_assessment_points": total,
+            "objective_floor_score": floor,
+        }
+
+    @staticmethod
+    def _unit_score(value: Any) -> float | None:
+        try:
+            score = float(value)
+        except (TypeError, ValueError):
+            return None
+        return score if 0.0 <= score <= 1.0 else None
 
     @staticmethod
     def _normalise_assessment_capability_deltas(
