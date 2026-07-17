@@ -268,7 +268,17 @@ def _safe_child_path(root: Path, relative: str) -> Path:
 
 
 def _sha256_file(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    """Hash frozen JSON assets with LF as their platform-independent newline.
+
+    The immutable manifest values are generated from Git's LF-normalized
+    assets.  Windows checkouts may present the same UTF-8 JSON/JSONL content
+    with CRLF, which must not turn a valid frozen asset into a false
+    reproducibility failure.  This function is only used for controlled
+    benchmark manifest and data paths.
+    """
+
+    canonical_bytes = path.read_bytes().replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+    return hashlib.sha256(canonical_bytes).hexdigest()
 
 
 def _fingerprint(value: Any) -> str:

@@ -10,4 +10,4 @@
 uv run python benchmarks/run_benchmarks.py --all
 ```
 
-输出包含混淆矩阵、分组计数和仅由 case key 组成的失败样本。运行器会先校验 manifest 与 data 的 SHA-256；哈希不匹配即拒绝运行。
+输出包含混淆矩阵、分组计数和仅由 case key 组成的失败样本。运行器会先校验 manifest 与 data 的 SHA-256；哈希不匹配即拒绝运行。哈希以 UTF-8 内容的 LF 规范换行计算，因此 Git 在 Windows 上的 CRLF 检出不会造成误报；受控资产也通过 `.gitattributes` 固定为 LF。

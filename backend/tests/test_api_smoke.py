@@ -4,10 +4,13 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator, Iterator
 from types import SimpleNamespace
 
+import pytest
 from fastapi.testclient import TestClient
 
+from app.db.session import get_session
 from app.llm.provider import HealthStatus
 from app.main import app
 
@@ -16,14 +19,35 @@ COURSE_ID = "00000000-0000-0000-0000-000000000101"
 KP_ID = "00000000-0000-0000-0000-000000000201"
 
 
-def test_health():
-    client = TestClient(app)
+@pytest.fixture
+def client() -> Iterator[TestClient]:
+    """Exercise HTTP contracts without creating the production audit session."""
+
+    async def isolated_get_session() -> AsyncIterator[None]:
+        yield None
+
+    had_previous_override = get_session in app.dependency_overrides
+    previous_override = app.dependency_overrides.get(get_session)
+    app.dependency_overrides[get_session] = isolated_get_session
+    test_client: TestClient | None = None
+    try:
+        test_client = TestClient(app)
+        yield test_client
+    finally:
+        if test_client is not None:
+            test_client.close()
+        if had_previous_override:
+            app.dependency_overrides[get_session] = previous_override
+        else:
+            app.dependency_overrides.pop(get_session, None)
+
+
+def test_health(client: TestClient) -> None:
     response = client.get("/api/v1/health")
     assert response.status_code == 200
 
 
-def test_agents_manifest():
-    client = TestClient(app)
+def test_agents_manifest(client: TestClient) -> None:
     response = client.get("/api/v1/agents")
     assert response.status_code == 200
     body = response.json()
@@ -42,8 +66,7 @@ def test_agents_manifest():
     }
 
 
-def test_rag_search_returns_explicit_fixture_mode():
-    client = TestClient(app)
+def test_rag_search_returns_explicit_fixture_mode(client: TestClient) -> None:
     payload = {"domain": "course_websec", "query": "SQL injection", "top_k": 3, "mode": "fixture"}
     response = client.post(
         "/api/v1/rag/search",
@@ -60,7 +83,10 @@ def test_rag_search_returns_explicit_fixture_mode():
     assert repeated.json() == body
 
 
-def test_real_rag_search_fails_closed_without_evidence(monkeypatch):
+def test_real_rag_search_fails_closed_without_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+    client: TestClient,
+) -> None:
     import importlib
 
     rag_service = importlib.import_module("app.rag.search")
@@ -69,7 +95,7 @@ def test_real_rag_search_fails_closed_without_evidence(monkeypatch):
         return []
 
     monkeypatch.setattr(rag_service, "retrieve", empty_retrieve)
-    response = TestClient(app).post(
+    response = client.post(
         "/api/v1/rag/search",
         json={"domain": "course_websec", "query": "SQL injection", "top_k": 3, "mode": "real"},
     )
@@ -77,7 +103,10 @@ def test_real_rag_search_fails_closed_without_evidence(monkeypatch):
     assert response.json()["detail"]["code"] == "RAG_UNAVAILABLE"
 
 
-def test_real_rag_search_sanitises_embedding_dependency_failure(monkeypatch):
+def test_real_rag_search_sanitises_embedding_dependency_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    client: TestClient,
+) -> None:
     import importlib
 
     from app.llm.embeddings.errors import EmbeddingConfigurationError
@@ -88,7 +117,7 @@ def test_real_rag_search_sanitises_embedding_dependency_failure(monkeypatch):
         raise EmbeddingConfigurationError("DASHSCOPE_API_KEY is not set")
 
     monkeypatch.setattr(rag_service, "retrieve", unavailable_retrieve)
-    response = TestClient(app).post(
+    response = client.post(
         "/api/v1/rag/search",
         json={"domain": "course_websec", "query": "SQL injection", "top_k": 3, "mode": "real"},
     )
@@ -99,7 +128,10 @@ def test_real_rag_search_sanitises_embedding_dependency_failure(monkeypatch):
     }
 
 
-def test_courses_list_uses_catalog_projection(monkeypatch):
+def test_courses_list_uses_catalog_projection(
+    monkeypatch: pytest.MonkeyPatch,
+    client: TestClient,
+) -> None:
     from app.api.v1.endpoints import courses as courses_endpoint
     from app.db.seeds._constants import COURSE_PRODUCTS
     from app.schemas.course_product import CourseCatalogItemDTO
@@ -125,14 +157,16 @@ def test_courses_list_uses_catalog_projection(monkeypatch):
             ]
 
     monkeypatch.setattr(courses_endpoint, "_course_catalog_service", lambda _session: CatalogService())
-    client = TestClient(app)
     response = client.get("/api/v1/courses")
     assert response.status_code == 200
     body = response.json()
     assert [course["code"] for course in body] == ["WEBSEC-101", "CRYPTO-101", "NET-SEC-201", "SDL-201"]
 
 
-def test_llm_health_endpoint_uses_health_service(monkeypatch):
+def test_llm_health_endpoint_uses_health_service(
+    monkeypatch: pytest.MonkeyPatch,
+    client: TestClient,
+) -> None:
     from app.api.v1.endpoints import llm as llm_endpoint
 
     async def available_health() -> HealthStatus:
@@ -157,7 +191,6 @@ def test_llm_health_endpoint_uses_health_service(monkeypatch):
         ),
     )
 
-    client = TestClient(app)
     response = client.get("/api/v1/llm/health")
     assert response.status_code == 200
     assert response.json() == {
@@ -171,7 +204,10 @@ def test_llm_health_endpoint_uses_health_service(monkeypatch):
     }
 
 
-def test_llm_health_endpoint_does_not_probe_when_real_execution_is_disabled(monkeypatch):
+def test_llm_health_endpoint_does_not_probe_when_real_execution_is_disabled(
+    monkeypatch: pytest.MonkeyPatch,
+    client: TestClient,
+) -> None:
     from app.api.v1.endpoints import llm as llm_endpoint
 
     async def unexpected_probe() -> HealthStatus:
@@ -189,7 +225,7 @@ def test_llm_health_endpoint_does_not_probe_when_real_execution_is_disabled(monk
         ),
     )
 
-    response = TestClient(app).get("/api/v1/llm/health")
+    response = client.get("/api/v1/llm/health")
     assert response.status_code == 200
     assert response.json() == {
         "provider": "xfyun",
@@ -202,7 +238,10 @@ def test_llm_health_endpoint_does_not_probe_when_real_execution_is_disabled(monk
     }
 
 
-def test_llm_health_endpoint_sanitizes_provider_error(monkeypatch):
+def test_llm_health_endpoint_sanitizes_provider_error(
+    monkeypatch: pytest.MonkeyPatch,
+    client: TestClient,
+) -> None:
     from app.api.v1.endpoints import llm as llm_endpoint
 
     async def unavailable_health() -> HealthStatus:
@@ -227,6 +266,6 @@ def test_llm_health_endpoint_sanitizes_provider_error(monkeypatch):
         ),
     )
 
-    response = TestClient(app).get("/api/v1/llm/health")
+    response = client.get("/api/v1/llm/health")
     assert response.status_code == 200
     assert response.json()["last_error"] == "provider health check failed"

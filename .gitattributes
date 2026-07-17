@@ -1,0 +1,3 @@
+# Benchmark assets are content-addressed with canonical LF line endings.
+backend/benchmarks/data/*.jsonl text eol=lf
+backend/benchmarks/manifests/*.json text eol=lf

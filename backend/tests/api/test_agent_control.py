@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator, Iterator
 from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
@@ -9,6 +10,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.api.v1.endpoints import agent_control
+from app.db.session import get_session
 from app.db.seeds._constants import DEMO_USER_ID
 from app.main import app
 from app.runtime.contracts import EventEnvelope, EventType
@@ -145,10 +147,29 @@ def service(monkeypatch: pytest.MonkeyPatch) -> RecordingWorkflowService:
 
 
 @pytest.fixture
-def client() -> TestClient:
-    # Lifespan is intentionally not entered: this suite exercises the HTTP
-    # contract around the application service, not a Worker process.
-    return TestClient(app)
+def client() -> Iterator[TestClient]:
+    """Use the app's isolated HTTP-test path for every request in this module.
+
+    The workflow service is already replaced by ``RecordingWorkflowService``.
+    Overriding the request session therefore prevents API-risk middleware from
+    opening its independent production session, while preserving the separate
+    middleware integration coverage that exercises durable audit persistence.
+    """
+
+    async def isolated_get_session() -> AsyncIterator[None]:
+        yield None
+
+    had_previous_override = get_session in app.dependency_overrides
+    previous_override = app.dependency_overrides.get(get_session)
+    app.dependency_overrides[get_session] = isolated_get_session
+    try:
+        with TestClient(app) as test_client:
+            yield test_client
+    finally:
+        if had_previous_override:
+            app.dependency_overrides[get_session] = previous_override
+        else:
+            app.dependency_overrides.pop(get_session, None)
 
 
 def _start_fixture_run(client: TestClient, *, idempotency_key: str | None = None) -> dict[str, object]:
@@ -170,8 +191,7 @@ def _start_fixture_run(client: TestClient, *, idempotency_key: str | None = None
     return response.json()
 
 
-def test_manifest_exposes_exactly_nine_agents_and_frozen_catalog() -> None:
-    client = TestClient(app)
+def test_manifest_exposes_exactly_nine_agents_and_frozen_catalog(client: TestClient) -> None:
     response = client.get("/api/v1/agents/manifest")
 
     assert response.status_code == 200, response.text

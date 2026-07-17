@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator, Iterator
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import UUID, uuid4
@@ -10,6 +11,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.api.v1.endpoints import assessment, courses, profile, tutor
+from app.db.session import get_session
 from app.db.seeds._constants import COURSE_CRYPTO_ID, COURSE_WEBSEC_ID, DEMO_USER_ID, node_id
 from app.main import app
 from app.runtime.contracts import EventEnvelope, EventType
@@ -127,10 +129,23 @@ def service(monkeypatch: pytest.MonkeyPatch) -> RecordingWorkflowService:
 
 
 @pytest.fixture
-def client() -> TestClient:
-    # Avoid lifespan startup: this suite exercises HTTP adapters, not Worker
-    # execution. The service double is the only product-path collaborator.
-    return TestClient(app)
+def client() -> Iterator[TestClient]:
+    """Route isolated HTTP adapter tests around the production audit session."""
+
+    async def isolated_get_session() -> AsyncIterator[None]:
+        yield None
+
+    had_previous_override = get_session in app.dependency_overrides
+    previous_override = app.dependency_overrides.get(get_session)
+    app.dependency_overrides[get_session] = isolated_get_session
+    try:
+        with TestClient(app) as test_client:
+            yield test_client
+    finally:
+        if had_previous_override:
+            app.dependency_overrides[get_session] = previous_override
+        else:
+            app.dependency_overrides.pop(get_session, None)
 
 
 @pytest.mark.parametrize(
