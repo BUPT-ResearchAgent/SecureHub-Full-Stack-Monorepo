@@ -57,7 +57,7 @@ function KpiRow({ items }: { items: KpiCard[] }) {
             </span>
           </div>
           <div className="mt-1.5 text-xl font-semibold text-slate-900">{kpi.value}</div>
-          {kpi.trend && <p className="mt-0.5 text-[11px] text-slate-400">{kpi.trend}</p>}
+          {kpi.trend && <p className="mt-0.5 text-[11px] text-slate-600">{kpi.trend}</p>}
         </div>
       ))}
     </div>
@@ -162,7 +162,7 @@ function CourseTeacherDashboard() {
       <div className="grid gap-4 xl:grid-cols-[1.5fr_1fr]">
         <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
           <div className="flex items-center justify-between gap-3">
-            <div><h2 className="text-sm font-semibold text-slate-800">真实 KPI 口径</h2><p className="text-xs text-slate-400">每个数字均由后端持久化关系实时计算。</p></div>
+            <div><h2 className="text-sm font-semibold text-slate-800">真实 KPI 口径</h2><p className="text-xs text-slate-600">每个数字均由后端持久化关系实时计算。</p></div>
             <button type="button" onClick={() => void refresh()} className="rounded-lg border border-slate-200 px-2.5 py-1 text-xs text-slate-700">刷新</button>
           </div>
           <ul className="mt-3 space-y-2 text-xs text-slate-600">
@@ -178,7 +178,7 @@ function CourseTeacherDashboard() {
             <button type="button" onClick={() => navigate('/teacher/assignments')} className="rounded-lg border border-slate-200 px-2.5 py-1 text-xs text-slate-700 hover:bg-slate-50">真实作业</button>
             <button type="button" onClick={() => navigate('/teacher/syllabus')} className="rounded-lg border border-slate-200 px-2.5 py-1 text-xs text-slate-700 hover:bg-slate-50">教学大纲</button>
           </div>
-          <p className="mt-4 text-[11px] text-slate-400">最近计算：{new Date(dashboard.calculated_at).toLocaleString()}</p>
+          <p className="mt-4 text-[11px] text-slate-600">最近计算：{new Date(dashboard.calculated_at).toLocaleString()}</p>
         </section>
       </div>
       {error && <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">最近刷新失败：{error}</p>}

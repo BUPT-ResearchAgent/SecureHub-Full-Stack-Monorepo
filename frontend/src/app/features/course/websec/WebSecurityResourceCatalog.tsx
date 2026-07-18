@@ -782,7 +782,7 @@ function ResourceDetail({
               <SourcePill source={resource.source} />
               <span className="border border-slate-300 bg-white px-2 py-1 text-[10px] font-semibold text-slate-600">{reviewStatusLabel[resource.reviewStatus]}</span>
             </div>
-            <h3 className="mt-3 text-lg font-black leading-7 text-slate-950 sm:text-xl">{resource.title}</h3>
+            <h2 className="mt-3 text-lg font-black leading-7 text-slate-950 sm:text-xl">{resource.title}</h2>
             <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-700">{resource.summary}</p>
           </div>
           <span className="inline-flex shrink-0 items-center gap-1.5 border-2 border-slate-900 bg-[#ffef69] px-3 py-2 text-xs font-bold text-slate-900">

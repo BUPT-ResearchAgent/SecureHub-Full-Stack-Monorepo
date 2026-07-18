@@ -546,7 +546,7 @@ function TodayXpCard() {
         <div className="h-2 overflow-hidden rounded-full bg-slate-100">
           <div className="h-full rounded-full bg-amber-500" style={{ width: `${progress}%` }} />
         </div>
-        <p className="text-[11px] text-slate-400">距离下一级还差 {remaining} XP</p>
+        <p className="text-[11px] text-slate-600">距离下一级还差 {remaining} XP</p>
       </div>
     </motion.section>
   );
@@ -688,7 +688,7 @@ function TodayCourseCard({
             <p className="mt-1 truncate text-sm text-slate-500">
               当前知识点：<span className="text-slate-700">{snapshot.currentKnowledgePoint}</span> · {course.tags.join(' / ')}
             </p>
-            <p className={`mt-1 text-xs ${status === 'error' ? 'text-red-600' : 'text-slate-400'}`}>
+            <p className={`mt-1 text-xs ${status === 'error' ? 'text-red-600' : 'text-slate-600'}`}>
               {statusMessage}
             </p>
           </div>
@@ -827,7 +827,7 @@ function RecentResourcesCard({ onOpen }: { onOpen: () => void }) {
                     <span className={`rounded-md px-1.5 py-0.5 text-[10px] font-medium ${resourceTone[resource.resource_type]}`}>
                       {resourceLabels[resource.resource_type]}
                     </span>
-                    <span className="text-[11px] text-slate-400">
+                    <span className="text-[11px] text-slate-600">
                       <Clock className="mr-0.5 inline h-3 w-3" />
                       {formatCreatedAt(resource.created_at)}
                     </span>
@@ -1078,7 +1078,7 @@ function DataFreshnessCard() {
           契约对比：{STATUS_TONE.real.emoji} {auditCounts.real}{' '}
           / {STATUS_TONE['partial-real'].emoji} {auditCounts.partial} / {STATUS_TONE.planned.emoji} {auditCounts.planned}
         </p>
-        <div className="flex items-center justify-between text-[11px] text-slate-400">
+        <div className="flex items-center justify-between text-[11px] text-slate-600">
           <span>
             <History className="mr-1 inline h-3 w-3" />
             {new Date(now).toLocaleTimeString('zh-CN', { hour12: false })}

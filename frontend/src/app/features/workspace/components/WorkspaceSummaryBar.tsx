@@ -49,7 +49,7 @@ export function WorkspaceSummaryBar({ dashboard }: { dashboard: WorkspaceDashboa
             <div className="min-w-0">
               <p className="text-xs text-slate-500">{item.label}</p>
               <p className="mt-1 text-2xl font-semibold text-slate-900">{item.value}</p>
-              <p className="mt-1 text-xs text-slate-400">{item.sub}</p>
+              <p className="mt-1 text-xs text-slate-600">{item.sub}</p>
             </div>
             <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-brand-blue-50 text-brand-blue-600">
               <item.icon className="h-4 w-4" />
@@ -67,7 +67,7 @@ export function WorkspaceSummaryBar({ dashboard }: { dashboard: WorkspaceDashboa
                 {autosaveLabels[dashboard.autosaveStatus]}
               </Tag>
             </div>
-            <p className="mt-2 truncate text-xs text-slate-400">
+            <p className="mt-2 truncate text-xs text-slate-600">
               {dashboard.savedAt ? `上次 ${formatDateTime(dashboard.savedAt)}` : '等待首次保存'}
             </p>
           </div>

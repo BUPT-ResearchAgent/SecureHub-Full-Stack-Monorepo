@@ -255,7 +255,7 @@ export function TeacherMaterialsReal() {
           {courses.length === 0 && <option value="">暂无课程归属</option>}
           {courses.map((course) => <option key={course.id} value={course.id}>{course.code} · {course.title}</option>)}
         </select>
-        <span className="ml-auto text-xs text-slate-400">{assets.length} 个持久化治理记录（含软删除）</span>
+        <span className="ml-auto text-xs text-slate-600">{assets.length} 个持久化治理记录（含软删除）</span>
       </div>
 
       <section id="teacher-material-binding" className="mt-4 rounded-2xl border border-brand-blue-100 bg-brand-blue-50/40 p-4">
@@ -263,10 +263,10 @@ export function TeacherMaterialsReal() {
         <p className="mt-1 text-xs leading-5 text-brand-blue-800">文件上传/入库由统一知识资产层负责；这里从当前课程可读资料中选择。当前演示环境展示的是已持久化的预置讲义处理结果，不会把页面操作称为刚刚完成的 PDF 解析。</p>
         <TeacherFormAssistPanel purpose="asset_binding" context={assetAssist.context} loading={assetAssist.loading} applying={assetAssist.applying} error={assetAssist.error} onApply={() => void applyAssetPrefill()} />
         <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-4">
-          <select value={bindForm.materialId} onChange={(event) => setBindForm((current) => ({ ...current, materialId: event.target.value }))} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs"><option value="">选择已入库资料</option>{assetAssist.context?.material_candidates.map((item) => <option key={item.id} value={item.id}>{item.label} · {item.state}</option>)}</select>
+          <select aria-label="选择已入库资料" value={bindForm.materialId} onChange={(event) => setBindForm((current) => ({ ...current, materialId: event.target.value }))} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs"><option value="">选择已入库资料</option>{assetAssist.context?.material_candidates.map((item) => <option key={item.id} value={item.id}>{item.label} · {item.state}</option>)}</select>
           <input value={bindForm.purpose} onChange={(event) => setBindForm((current) => ({ ...current, purpose: event.target.value }))} placeholder="用途" className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs" />
           <input value={bindForm.reason} onChange={(event) => setBindForm((current) => ({ ...current, reason: event.target.value }))} placeholder="绑定理由（可选）" className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs" />
-          <select value={correctionMaterialId} onChange={(event) => setCorrectionMaterialId(event.target.value)} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs"><option value="">选择更正时使用的资料</option>{assetAssist.context?.material_candidates.map((item) => <option key={item.id} value={item.id}>{item.label} · {item.state}</option>)}</select>
+          <select aria-label="选择更正时使用的资料" value={correctionMaterialId} onChange={(event) => setCorrectionMaterialId(event.target.value)} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs"><option value="">选择更正时使用的资料</option>{assetAssist.context?.material_candidates.map((item) => <option key={item.id} value={item.id}>{item.label} · {item.state}</option>)}</select>
         </div>
         <button type="button" disabled={binding || !courseId} onClick={() => void bind()} className="mt-3 inline-flex items-center gap-1.5 rounded-lg bg-brand-blue-600 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50"><FilePlus2 className="h-3.5 w-3.5" />{binding ? '正在绑定…' : '绑定真实资产'}</button>
       </section>

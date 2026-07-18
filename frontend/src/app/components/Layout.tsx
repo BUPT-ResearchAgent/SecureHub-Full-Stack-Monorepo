@@ -269,8 +269,10 @@ function LayoutFrame() {
             </button>
           )}
           <button
+            type="button"
+            aria-label={collapsed ? '展开主导航' : '收起主导航'}
             onClick={() => setCollapsed(!collapsed)}
-            className="col-start-3 p-1.5 hover:bg-slate-100 rounded-lg transition-colors text-slate-400 justify-self-end"
+            className="col-start-3 p-1.5 hover:bg-slate-100 rounded-lg transition-colors text-slate-600 justify-self-end"
           >
             <Menu className="w-4 h-4" />
           </button>
@@ -302,7 +304,7 @@ function LayoutFrame() {
                         aria-label={`${isOpen ? '收起' : '展开'}${item.label}子菜单`}
                         aria-expanded={isOpen}
                         onClick={() => toggle(item.path)}
-                        className="mr-1 rounded p-1.5 text-slate-400 transition-colors hover:bg-white/70 hover:text-slate-700"
+                        className="mr-1 rounded p-1.5 text-slate-600 transition-colors hover:bg-white/70 hover:text-slate-700"
                       >
                         {isOpen ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
                       </button>
@@ -320,7 +322,7 @@ function LayoutFrame() {
                           return (
                             <Fragment key={child.key}>
                               {child.group && child.group !== item.children[index - 1]?.group && (
-                                <li className="px-2 pb-1 pt-2 text-[10px] font-medium tracking-wide text-slate-400">
+                                <li className="px-2 pb-1 pt-2 text-[10px] font-medium tracking-wide text-slate-600">
                                   {child.group}
                                 </li>
                               )}
@@ -330,7 +332,7 @@ function LayoutFrame() {
                                   className={`block px-2 py-1.5 rounded-md text-sm transition-colors ${
                                     childActive
                                       ? 'bg-[#003399]/10 text-[#003399]'
-                                      : 'text-slate-400 hover:text-slate-700 hover:bg-slate-100'
+                                      : 'text-slate-600 hover:text-slate-700 hover:bg-slate-100'
                                   }`}
                                 >
                                   {child.label}
@@ -364,7 +366,7 @@ function LayoutFrame() {
               <Database className="w-4 h-4" />
               <span>证据链</span>
             </button>
-            <button className="relative p-2 hover:bg-slate-100 rounded-lg">
+            <button type="button" aria-label="通知" className="relative p-2 hover:bg-slate-100 rounded-lg">
               <Bell className="w-4 h-4 text-slate-600" />
               <span className="absolute top-1.5 right-1.5 w-1.5 h-1.5 bg-red-500 rounded-full" />
             </button>

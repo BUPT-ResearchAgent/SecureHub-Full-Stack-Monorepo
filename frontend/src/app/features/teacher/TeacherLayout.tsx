@@ -95,7 +95,7 @@ function TeacherFrame() {
                 </div>
                 <div className="flex flex-col items-start">
                   <span className="font-semibold text-slate-800 text-sm truncate leading-tight">教师工作台</span>
-                  <span className="text-[10px] text-slate-400 leading-tight">{meta.label}</span>
+                  <span className="text-[10px] text-slate-600 leading-tight">{meta.label}</span>
                 </div>
               </button>
             ) : (
@@ -106,8 +106,10 @@ function TeacherFrame() {
               </button>
             )}
             <button
+              type="button"
+              aria-label={collapsed ? '展开教师导航' : '收起教师导航'}
               onClick={() => setCollapsed(!collapsed)}
-              className="col-start-3 p-1.5 hover:bg-slate-100 rounded-lg transition-colors text-slate-400 justify-self-end"
+              className="col-start-3 p-1.5 hover:bg-slate-100 rounded-lg transition-colors text-slate-600 justify-self-end"
             >
               <Menu className="w-4 h-4" />
             </button>
@@ -160,7 +162,7 @@ function TeacherFrame() {
             </div>
             <div className="flex shrink-0 items-center gap-1.5 sm:gap-2">
               <div className="hidden sm:block"><RoleSwitcher /></div>
-              <button className="relative p-2 hover:bg-slate-100 rounded-lg">
+              <button type="button" aria-label="教师通知" className="relative p-2 hover:bg-slate-100 rounded-lg">
                 <Bell className="w-4 h-4 text-slate-600" />
                 <span className="absolute top-1.5 right-1.5 w-1.5 h-1.5 bg-red-500 rounded-full" />
               </button>
@@ -185,7 +187,7 @@ function TeacherFrame() {
                     <div className="space-y-1">
                       <p className="truncate text-sm font-medium text-slate-900">{displayName}</p>
                       <p className="truncate text-xs font-normal text-slate-500">{meta.label} · 服务端会话身份</p>
-                      <p className="truncate text-[11px] font-normal text-slate-400">{user?.email ?? '当前登录会话'}</p>
+                      <p className="truncate text-[11px] font-normal text-slate-600">{user?.email ?? '当前登录会话'}</p>
                     </div>
                   </DropdownMenuLabel>
                   <DropdownMenuSeparator />

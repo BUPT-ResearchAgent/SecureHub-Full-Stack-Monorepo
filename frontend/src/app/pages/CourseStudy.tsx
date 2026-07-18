@@ -522,7 +522,7 @@ function CourseStudyInner() {
               </PopoverTrigger>
               <PopoverContent align="end" className="w-72 space-y-3 p-3 text-xs">
                 <div className="space-y-1.5">
-                  <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-600">
                     学习模式
                   </p>
                   <CourseViewSwitch value={activeView} onChange={(view) => setCourseView(view)} />
@@ -575,7 +575,7 @@ function CourseStudyInner() {
               <span>产物 {activeRoot.artifactIds.length} 项</span>
               <span className={activeRoot.error ? 'text-rose-600' : 'text-emerald-700'}>{activeRoot.error ? '本次运行未完成，请在运行详情中查看原因。' : activeRoot.status}</span>
             </div>
-            <p className="mt-2 leading-5 text-slate-400">运行编号仅在受权的审计详情中显示；本页不把内部标识作为学习操作输入。</p>
+            <p className="mt-2 leading-5 text-slate-600">运行编号仅在受权的审计详情中显示；本页不把内部标识作为学习操作输入。</p>
           </details>
         )}
       </header>

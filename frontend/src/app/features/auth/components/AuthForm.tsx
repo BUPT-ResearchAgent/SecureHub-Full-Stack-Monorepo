@@ -236,7 +236,7 @@ export function AuthForm({ mode }: { mode: AuthFormMode }) {
         <section className="rounded-xl border border-brand-blue-100 bg-brand-blue-50/40 p-3.5">
           <div className="mb-3">
             <h2 className="text-sm font-semibold text-slate-900">选择演示身份</h2>
-            <p className="mt-0.5 text-xs leading-5 text-slate-500">
+            <p className="mt-0.5 text-xs leading-5 text-slate-600">
               选择后自动填入对应账号，登录后进入该身份的演示工作台。
             </p>
           </div>
@@ -399,7 +399,7 @@ export function AuthForm({ mode }: { mode: AuthFormMode }) {
             />
             记住登录
           </label>
-          {!isRegister && <span className="text-xs text-slate-400">演示账号密码已自动填入</span>}
+          {!isRegister && <span className="text-xs text-slate-600">演示账号密码已自动填入</span>}
         </div>
 
         <button

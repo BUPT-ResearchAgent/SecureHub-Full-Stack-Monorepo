@@ -61,7 +61,7 @@ export function CourseSwitcher({
           <BookOpen className={`h-4 w-4 ${courseCoverAccent[course.coverTone]}`} />
         </span>
         <span className="flex min-w-0 flex-col">
-          <span className="truncate text-[11px] uppercase tracking-wide text-slate-400">当前课程</span>
+          <span className="truncate text-[11px] uppercase tracking-wide text-slate-600">当前课程</span>
           <span className="flex items-center gap-2">
             <span className="truncate text-sm font-semibold text-slate-900">{course.title}</span>
             <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ${course.contentStatus === 'preview' ? 'bg-amber-50 text-amber-700' : 'bg-emerald-50 text-emerald-700'}`}>

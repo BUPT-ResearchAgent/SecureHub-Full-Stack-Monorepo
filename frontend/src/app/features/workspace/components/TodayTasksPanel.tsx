@@ -72,13 +72,14 @@ export function TodayTasksPanel({
                   <div className="flex min-w-0 gap-3">
                     <input
                       type="checkbox"
+                      aria-label={`${task.completed ? '标记未完成' : '标记完成'}：${task.title}`}
                       checked={task.completed}
                       onChange={() => toggleTask(task)}
                       className="mt-1 h-4 w-4 shrink-0 rounded border-slate-300 text-brand-blue-600"
                     />
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
-                        <p className={`text-sm font-medium ${task.completed ? 'text-slate-400 line-through' : 'text-slate-900'}`}>
+                        <p className={`text-sm font-medium ${task.completed ? 'text-slate-600 line-through' : 'text-slate-900'}`}>
                           {task.title}
                         </p>
                         <Tag tone={toneForPriority(task.priority)}>{priorityLabels[task.priority]}</Tag>

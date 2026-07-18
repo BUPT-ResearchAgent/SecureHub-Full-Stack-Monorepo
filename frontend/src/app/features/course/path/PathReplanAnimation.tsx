@@ -44,10 +44,10 @@ export function PathReplanAnimation() {
     <section className="border border-slate-200 bg-white p-4" aria-label="真实路径重规划">
       <header className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h3 className="flex items-center gap-1.5 text-sm font-semibold text-slate-900">
+          <h2 className="flex items-center gap-1.5 text-sm font-semibold text-slate-900">
             <Sparkles className="h-4 w-4 text-brand-blue-600" />
             路径重规划
-          </h3>
+          </h2>
           <p className="mt-1 text-xs leading-5 text-slate-600">候选只读取当前账户已持久化的测评或学习事件。采纳与回退都会创建新版本，历史路径不会被覆盖。</p>
         </div>
         <button
