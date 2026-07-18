@@ -28,6 +28,11 @@ class Settings(BaseSettings):
     )
     DEBUG: bool = True
     DATABASE_URL: str = "postgresql+asyncpg://securehub:securehub@localhost:5432/securehub"
+    DATABASE_POOL_SIZE: int = Field(default=3, ge=1, le=50)
+    DATABASE_MAX_OVERFLOW: int = Field(default=7, ge=0, le=100)
+    DATABASE_POOL_TIMEOUT_SECONDS: float = Field(default=10.0, ge=1.0, le=120.0)
+    API_RISK_AUDIT_POOL_SIZE: int = Field(default=20, ge=2, le=50)
+    API_RISK_AUDIT_MAX_CONCURRENCY: int = Field(default=10, ge=1, le=16)
     REDIS_URL: str = "redis://localhost:6379/0"
     STORAGE_PROVIDER: str = "local"
     STORAGE_LOCAL_ROOT: Path = Path("./data/storage")

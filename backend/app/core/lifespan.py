@@ -7,7 +7,7 @@ from fastapi import FastAPI
 
 from app.runtime.capability_manifest import register_agents
 from app.core.config import get_settings
-from app.db.session import get_sessionmaker
+from app.db.session import dispose_engines, get_sessionmaker
 from app.runtime.skill_catalog import (
     assert_persisted_catalog_integrity,
     build_production_skill_catalog,
@@ -34,5 +34,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     try:
         yield
     finally:
-        if supervisor is not None:
-            await supervisor.stop()
+        try:
+            if supervisor is not None:
+                await supervisor.stop()
+        finally:
+            await dispose_engines()

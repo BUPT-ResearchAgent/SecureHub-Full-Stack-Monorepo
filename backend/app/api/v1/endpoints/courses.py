@@ -22,6 +22,7 @@ from app.api.v1.endpoints.workflow_adapter import (
 )
 from app.db.seeds._constants import COURSE_PRODUCT_BY_ID, CourseProductDefinition, resolve_course_product
 from app.deps import CurrentUserDep, RequiredCurrentUserDep, SessionDep
+from app.core.singleflight import run_request_singleflight
 from app.schemas.agent_control import WorkflowRunStartResponse
 from app.schemas.course import CoursePlanRequest, CoursePlanResponse
 from app.schemas.course_product import (
@@ -206,10 +207,20 @@ def _raise_student_course_experience_error(exc: StudentCourseExperienceError) ->
 async def list_courses(
     session: SessionDep,
     current_user_id: CurrentUserDep,
+    request: Request = None,  # type: ignore[assignment]
 ) -> list[CourseSummary]:
     try:
-        catalog = await _course_catalog_service(session).list_catalog(user_id=current_user_id)
-        return [_summary_from_catalog(item) for item in catalog]
+        async def load() -> list[CourseSummary]:
+            catalog = await _course_catalog_service(session).list_catalog(user_id=current_user_id)
+            return [_summary_from_catalog(item) for item in catalog]
+
+        if request is None:
+            return await load()
+        return await run_request_singleflight(
+            request,
+            ("course-list", current_user_id),
+            load,
+        )
     except (CourseProductNotFoundError, CourseProgressValidationError, CourseContentNotReadyError) as exc:
         _raise_course_product_error(exc)
 
@@ -260,11 +271,23 @@ async def get_course_path(
     course_id: str,
     session: SessionDep,
     current_user_id: CurrentUserDep,
+    request: Request = None,  # type: ignore[assignment]
 ) -> CoursePathDTO:
     try:
-        return await _course_catalog_service(session).get_path(
-            course_id=_contract_course_id(course_id),
-            user_id=current_user_id,
+        canonical_course_id = _contract_course_id(course_id)
+
+        async def load() -> CoursePathDTO:
+            return await _course_catalog_service(session).get_path(
+                course_id=canonical_course_id,
+                user_id=current_user_id,
+            )
+
+        if request is None:
+            return await load()
+        return await run_request_singleflight(
+            request,
+            ("course-path", current_user_id, canonical_course_id),
+            load,
         )
     except (CourseProductNotFoundError, CourseProgressValidationError, CourseContentNotReadyError) as exc:
         _raise_course_product_error(exc)
@@ -293,15 +316,25 @@ async def get_student_course_experience(
     course_id: str,
     session: SessionDep,
     user: RequiredCurrentUserDep,
+    request: Request = None,  # type: ignore[assignment]
 ) -> StudentCourseExperienceDTO:
     """Return only the authenticated student's durable WEBSEC-101 projection."""
 
     canonical_course_id = _contract_course_id(course_id)
     _ready_course_product(canonical_course_id)
     try:
-        return await StudentCourseExperienceService(session).get_experience(
-            actor=user,
-            course_id=canonical_course_id,
+        async def load() -> StudentCourseExperienceDTO:
+            return await StudentCourseExperienceService(session).get_experience(
+                actor=user,
+                course_id=canonical_course_id,
+            )
+
+        if request is None:
+            return await load()
+        return await run_request_singleflight(
+            request,
+            ("student-course-experience", user.id, canonical_course_id),
+            load,
         )
     except StudentCourseExperienceError as exc:
         _raise_student_course_experience_error(exc)

@@ -6,7 +6,7 @@ from uuid import uuid4
 
 import pytest
 from fastapi import HTTPException
-from sqlalchemy import func, select
+from sqlalchemy import event, func, select
 
 from app.api.v1.endpoints.courses import get_student_course_experience
 from app.api.v1.endpoints.teaching import (
@@ -28,6 +28,7 @@ from app.db.seeds.seed_showcase_course import (
     verify,
 )
 from app.schemas.teacher_production import SubmitAssessmentRequest
+from app.services.learning.student_course_experience_service import StudentCourseExperienceService
 
 
 @pytest.mark.anyio
@@ -112,6 +113,34 @@ async def test_student_experience_uses_current_student_records_and_quality_resou
     )
     assert accelerated.assessment.scored_attempt_count == own_attempt_count
     assert accelerated.assessment.metrics
+
+
+@pytest.mark.anyio
+async def test_student_experience_uses_a_bounded_select_budget(sqlite_session) -> None:
+    await run(sqlite_session)
+    demo_student = await sqlite_session.get(User, DEMO_USER_ID)
+    assert demo_student is not None
+
+    select_count = 0
+
+    def count_selects(_connection, _cursor, statement, _parameters, _context, _executemany) -> None:
+        nonlocal select_count
+        if statement.lstrip().upper().startswith("SELECT"):
+            select_count += 1
+
+    engine = sqlite_session.sync_session.bind
+    assert engine is not None
+    event.listen(engine, "before_cursor_execute", count_selects)
+    try:
+        experience = await StudentCourseExperienceService(sqlite_session).get_experience(
+            actor=demo_student,
+            course_id=COURSE_WEBSEC_ID,
+        )
+    finally:
+        event.remove(engine, "before_cursor_execute", count_selects)
+
+    assert experience.data_status == "ready"
+    assert select_count <= 20
 
 
 @pytest.mark.anyio

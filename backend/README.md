@@ -85,6 +85,18 @@ student records.
 
 Before using it, work from this `backend/` directory, run `uv sync --frozen`,
 and set `DATABASE_URL` through an approved local/test environment mechanism.
+For the single-process local stack, the default PostgreSQL pool is explicitly
+bounded by `DATABASE_POOL_SIZE=3`, `DATABASE_MAX_OVERFLOW=7`, and
+`DATABASE_POOL_TIMEOUT_SECONDS=10`. Deployments with multiple workers must
+budget these per-process limits against the server's connection ceiling.
+`API_RISK_AUDIT_POOL_SIZE=20` reserves a separate, non-overflowing pool for
+redacted API-risk persistence. `API_RISK_AUDIT_MAX_CONCURRENCY=10` caps both
+admission and completion writes: every versioned request is still durably
+observed before its handler runs, while outcome enrichment starts only after
+the response dependency scope has released its domain session. The default
+single-process connection ceiling is therefore 30; deployments with multiple
+workers must budget the sum of both pools per worker and remeasure before
+changing either cap.
 It must point to an explicitly authorised PostgreSQL database whose schema has
 already been reviewed and upgraded to the current Alembic head. Do not put a
 production URL or credentials in shell history, documentation, or Git.

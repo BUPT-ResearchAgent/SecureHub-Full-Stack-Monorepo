@@ -18,6 +18,7 @@ import hmac
 from typing import Any
 from uuid import UUID
 
+from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.security import hash_password, verify_password
@@ -498,7 +499,10 @@ class SecurityGovernanceService:
         return self._rule_dto(rule)
 
     async def observe_redacted_request(
-        self, observation: RedactedRequestObservation
+        self,
+        observation: RedactedRequestObservation,
+        *,
+        active_rules: list[ApiRiskRule] | tuple[ApiRiskRule, ...] | None = None,
     ) -> RiskDecision:
         """Persist a redacted event, calculate active rules, and return the strongest outcome."""
 
@@ -522,7 +526,8 @@ class SecurityGovernanceService:
         primary_explanation: dict[str, Any] = {"matched_rules": 0}
         precedence = {"allow": 0, "throttle": 1, "block": 2}
 
-        for rule in await self.repository.get_active_risk_rules():
+        rules = active_rules if active_rules is not None else await self.repository.get_active_risk_rules()
+        for rule in rules:
             predicate = dict(rule.predicate or {})
             if not self._rule_matches_request(rule, observation):
                 continue
@@ -584,10 +589,16 @@ class SecurityGovernanceService:
         )
 
     async def complete_request_audit(self, *, audit_id: UUID, outcome_status: int) -> None:
-        audit = await self.repository.session.get(ApiRequestAuditEvent, audit_id)
-        if audit is not None:
-            audit.outcome_status = max(0, min(int(outcome_status), 599))
-            await self.repository.session.flush()
+        await self.repository.session.execute(
+            update(ApiRequestAuditEvent)
+            .where(ApiRequestAuditEvent.id == audit_id)
+            .values(outcome_status=max(0, min(int(outcome_status), 599)))
+        )
+
+    async def active_request_rules(self) -> list[ApiRiskRule]:
+        """Return the current immutable rule revisions used by request admission."""
+
+        return await self.repository.get_active_risk_rules()
 
     async def list_api_risk_events(self, *, actor: User) -> list[ApiRiskEventDTO]:
         await self._require_security_admin(actor)
