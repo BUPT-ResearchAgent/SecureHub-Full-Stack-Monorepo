@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 from uuid import UUID
 
@@ -24,6 +25,10 @@ from app.llm.embeddings.errors import EmbeddingError
 from app.llm.embeddings.service import EmbeddingService
 
 logger = logging.getLogger(__name__)
+
+_MIN_CANDIDATE_POOL = 128
+_CANDIDATE_MULTIPLIER = 16
+_MAX_CANDIDATE_POOL = 2048
 
 
 class EvidenceHit(BaseModel):
@@ -77,13 +82,18 @@ async def retrieve(
 
         sessionmaker = get_sessionmaker()
         async with sessionmaker() as session:
+            candidate_limit = min(
+                max(top_k * _CANDIDATE_MULTIPLIER, _MIN_CANDIDATE_POOL),
+                _MAX_CANDIDATE_POOL,
+            )
             stmt = (
                 select(Chunk)
                 .where(Chunk.domain == domain)
                 .where(Chunk.embedding_status == "ready")
                 .where(Chunk.embedding.is_not(None))
                 .where(Chunk.metadata_["embedding_profile"].as_string() == settings.EMBEDDING_PROFILE)
-                .limit(top_k * 4)
+                .order_by(Chunk.id.asc())
+                .limit(candidate_limit)
             )
             result = await session.execute(stmt)
             rows = result.scalars().all()
@@ -91,11 +101,11 @@ async def retrieve(
                 return []
 
             hits: list[EvidenceHit] = []
-            q_lower = (query or "").lower()
+            query_terms = _tokenise(query)
             for chunk in rows:
                 keyword_score = 0.0
                 low = (chunk.chunk_text or "").lower()
-                for token in [t for t in q_lower.split() if t]:
+                for token in query_terms:
                     if token in low:
                         keyword_score += 0.1
                 vec_score = 0.0
@@ -158,6 +168,19 @@ async def retrieve(
     except Exception as exc:  # pragma: no cover
         logger.warning("retriever: unexpected error: %s", exc)
         return []
+
+
+def _tokenise(query: str) -> list[str]:
+    """Extract stable ASCII terms and CJK phrases/bigrams for keyword fusion."""
+    lowered = (query or "").lower()
+    ascii_terms = re.findall(r"[a-z0-9_+-]{2,}", lowered)
+    cjk_terms = re.findall(r"[\u4e00-\u9fff]{2,}", lowered)
+    expanded: list[str] = []
+    for term in cjk_terms:
+        expanded.append(term)
+        if len(term) > 2:
+            expanded.extend(term[index : index + 2] for index in range(len(term) - 1))
+    return list(dict.fromkeys(ascii_terms + expanded))
 
 
 def _cosine(a: list[float], b: list[float]) -> float:

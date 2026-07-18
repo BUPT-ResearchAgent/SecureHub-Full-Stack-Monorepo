@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -33,6 +33,13 @@ class _QueryService:
 
     async def aclose(self) -> None:
         self.closed = True
+
+
+def test_retriever_tokenises_ascii_and_contiguous_chinese() -> None:
+    terms = retriever._tokenise("CSRF Token 与参数化查询防御")
+
+    assert {"csrf", "token", "参数", "数化", "查询", "防御"} <= set(terms)
+    assert len(terms) == len(set(terms))
 
 
 @pytest.mark.anyio
@@ -86,6 +93,61 @@ async def test_retriever_filters_ready_current_profile(monkeypatch, sqlite_sessi
     hits = await retriever.retrieve("SQL injection", top_k=5)
 
     assert [str(hit.chunk_id) for hit in hits] == [str(ready_current.id)]
+
+
+@pytest.mark.anyio
+async def test_retriever_keeps_keyword_hit_beyond_legacy_candidate_window(
+    monkeypatch, sqlite_session
+) -> None:
+    target_profile = "qwen-openai-compatible:text-embedding-v4:1024:dense:v1"
+    document_id = UUID("00000000-0000-0000-0000-000000000100")
+    document = Document(
+        id=document_id,
+        domain="course_websec",
+        source_type="manual",
+        title="参数化查询",
+        url="https://example.test/parameterized-query",
+        raw_text="parameterized query defense",
+        metadata_={"source_url": "https://example.test/parameterized-query"},
+        trust_score=0.8,
+        status="ready",
+    )
+    distractors = [
+        Chunk(
+            id=UUID(f"00000000-0000-0000-0000-{index:012d}"),
+            document_id=document_id,
+            domain="course_websec",
+            chunk_text=f"unrelated evidence {index}",
+            chunk_index=index,
+            embedding=[0.001] * 1024,
+            embedding_status="ready",
+            metadata_={"embedding_profile": target_profile},
+        )
+        for index in range(1, 9)
+    ]
+    keyword_hit = Chunk(
+        id=UUID("ffffffff-ffff-ffff-ffff-ffffffffffff"),
+        document_id=document_id,
+        domain="course_websec",
+        chunk_text="参数化查询通过绑定参数而不是拼接输入来防御 SQL 注入。",
+        chunk_index=9,
+        embedding=[0.001] * 1024,
+        embedding_status="ready",
+        metadata_={
+            "embedding_profile": target_profile,
+            "url": "https://example.test/parameterized-query",
+        },
+    )
+    sqlite_session.add_all([document, *distractors, keyword_hit])
+    await sqlite_session.commit()
+
+    monkeypatch.setattr(retriever, "EmbeddingService", lambda: _QueryService())
+    monkeypatch.setattr(db_session, "get_sessionmaker", lambda: lambda: sqlite_session)
+
+    hits = await retriever.retrieve("参数化查询的作用", top_k=1)
+
+    assert len(distractors) > 1 * 4
+    assert [str(hit.chunk_id) for hit in hits] == [str(keyword_hit.id)]
 
 
 @pytest.mark.anyio
