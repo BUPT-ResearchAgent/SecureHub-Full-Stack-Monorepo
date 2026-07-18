@@ -61,6 +61,7 @@ async def retrieve(
     """
     try:
         from app.db.models.chunk import Chunk
+        from app.db.models.knowledge.document import Document
         from app.db.session import get_sessionmaker
     except Exception as exc:  # pragma: no cover - 仅当数据库层缺失时触发
         logger.warning("retriever: db layer unavailable, returning empty hits: %s", exc)
@@ -87,7 +88,8 @@ async def retrieve(
                 _MAX_CANDIDATE_POOL,
             )
             stmt = (
-                select(Chunk)
+                select(Chunk, Document)
+                .join(Document, Document.id == Chunk.document_id)
                 .where(Chunk.domain == domain)
                 .where(Chunk.embedding_status == "ready")
                 .where(Chunk.embedding.is_not(None))
@@ -96,13 +98,13 @@ async def retrieve(
                 .limit(candidate_limit)
             )
             result = await session.execute(stmt)
-            rows = result.scalars().all()
+            rows = result.all()
             if not rows:
                 return []
 
             hits: list[EvidenceHit] = []
             query_terms = _tokenise(query)
-            for chunk in rows:
+            for chunk, document in rows:
                 keyword_score = 0.0
                 low = (chunk.chunk_text or "").lower()
                 for token in query_terms:
@@ -125,7 +127,14 @@ async def retrieve(
                 combined = 0.6 * vec_score + 0.4 * min(keyword_score, 1.0)
                 if combined <= 0:
                     continue
-                metadata = chunk.metadata_ if hasattr(chunk, "metadata_") else {}
+                metadata = dict(document.metadata_ or {})
+                metadata.update(chunk.metadata_ or {})
+                if not metadata.get("source_url") and document.url:
+                    metadata["source_url"] = document.url
+                if not metadata.get("asset_type"):
+                    metadata["asset_type"] = document.source_type
+                if metadata.get("reliability") is None:
+                    metadata["reliability"] = document.trust_score
                 # Imported PDFs may remain in the unified knowledge tables for
                 # later domains, while only course-eligible evidence may serve
                 # the Web Security Basics product path.
@@ -150,10 +159,15 @@ async def retrieve(
                         document_id=str(chunk.document_id) if chunk.document_id else None,
                         domain=chunk.domain,
                         chunk_text=chunk.chunk_text or "",
-                        source=(metadata or {}).get("source") or (metadata or {}).get("url"),
-                        reliability=float((metadata or {}).get("reliability", 0.6)),
+                        source=(
+                            metadata.get("source")
+                            or metadata.get("source_url")
+                            or metadata.get("url")
+                            or document.url
+                        ),
+                        reliability=float(metadata.get("reliability", 0.6)),
                         score=combined,
-                        metadata=metadata or {},
+                        metadata=metadata,
                     )
                 )
             hits.sort(key=lambda h: h.score, reverse=True)

@@ -151,6 +151,61 @@ async def test_retriever_keeps_keyword_hit_beyond_legacy_candidate_window(
 
 
 @pytest.mark.anyio
+async def test_retriever_merges_document_provenance_before_chunk_overrides(
+    monkeypatch, sqlite_session
+) -> None:
+    target_profile = "qwen-openai-compatible:text-embedding-v4:1024:dense:v1"
+    document_id = uuid4()
+    document = Document(
+        id=document_id,
+        domain="course_websec",
+        source_type="manual_import",
+        title="Document provenance",
+        url="https://example.test/document-provenance",
+        raw_text="parameterized query defense",
+        metadata_={
+            "platform": "document-platform",
+            "rights_note": "document rights",
+            "collection_mode": "manual",
+        },
+        trust_score=0.85,
+        status="ready",
+    )
+    chunk = Chunk(
+        document_id=document_id,
+        domain="course_websec",
+        chunk_text="SQL injection parameterized query defense",
+        chunk_index=0,
+        embedding=[0.001] * 1024,
+        embedding_status="ready",
+        metadata_={
+            "embedding_profile": target_profile,
+            "platform": "chunk-platform",
+        },
+    )
+    sqlite_session.add_all([document, chunk])
+    await sqlite_session.commit()
+
+    monkeypatch.setattr(retriever, "EmbeddingService", lambda: _QueryService())
+    monkeypatch.setattr(db_session, "get_sessionmaker", lambda: lambda: sqlite_session)
+
+    hits = await retriever.retrieve("SQL injection", top_k=1)
+
+    assert len(hits) == 1
+    assert hits[0].metadata == {
+        "platform": "chunk-platform",
+        "rights_note": "document rights",
+        "collection_mode": "manual",
+        "embedding_profile": target_profile,
+        "source_url": "https://example.test/document-provenance",
+        "asset_type": "manual_import",
+        "reliability": 0.85,
+    }
+    assert hits[0].source == "https://example.test/document-provenance"
+    assert hits[0].reliability == 0.85
+
+
+@pytest.mark.anyio
 async def test_retriever_closes_embedding_service(monkeypatch, sqlite_session) -> None:
     service = _QueryService()
     monkeypatch.setattr(retriever, "EmbeddingService", lambda: service)
