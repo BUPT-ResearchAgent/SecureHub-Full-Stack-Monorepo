@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import json
-from uuid import uuid4
+from types import SimpleNamespace
+from uuid import UUID, uuid4
 
 import pytest
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.agents.task_orchestrator.skills.generate_learning_path import (
@@ -15,9 +17,12 @@ from app.agents.task_orchestrator.skills.generate_learning_path import (
 )
 from app.db.models.identity.user import User
 from app.db.models.identity.user_profile import UserProfile
+from app.db.models.knowledge.course import Course
+from app.db.models.learning.learning_task import LearningTask
 from app.db.models.workflow_runtime import WorkflowRun
 from app.db.seeds._constants import COURSE_WEBSEC_ID
 from app.runtime.context_builder import ContextBuilder
+from app.runtime.actions import WorkflowActionService
 from app.runtime.harness.fixtures import fixture_llm_output
 from app.runtime.workflows.product_workflows import CoursePlanInput, _path_input
 from app.schemas.agent_control import WorkflowRunStartRequest
@@ -103,6 +108,88 @@ def test_course_plan_snapshot_normalises_fixture_persona_target_direction() -> N
 
     assert snapshot.target_direction == "web_defense"
     assert snapshot.rationale_codes() == ("web_defense_goal",)
+
+
+@pytest.mark.anyio
+async def test_fixture_weak_point_pairs_change_durable_task_title_without_leaking_profile_text(sqlite_session) -> None:
+    """P05-04 regression: weak-point treatment must survive task materialisation."""
+    user = User(id=uuid4(), email="paired-profile@example.test", display_name="Paired Profile Learner")
+    course = Course(id=uuid4(), code="PAIRED-PROFILE-101", title="Paired profile test course")
+    sqlite_session.add_all([user, course])
+    await sqlite_session.commit()
+
+    common_dimensions = {
+        "base_knowledge": "synthetic-foundation",
+        "target_direction": "synthetic-web-defense",
+        "preferred_modality": ["doc"],
+        "untrusted_note": "must never become durable task content",
+    }
+    control = CoursePlanProfileSnapshot.from_dimensions(
+        {**common_dimensions, "weak_points": ["synthetic-general-gap"]}
+    )
+    treatment = CoursePlanProfileSnapshot.from_dimensions(
+        {**common_dimensions, "weak_points": ["synthetic-assessment-weak-kp"]}
+    )
+    unrelated_layout = CoursePlanProfileSnapshot.from_dimensions(
+        {
+            **common_dimensions,
+            "weak_points": ["synthetic-general-gap"],
+            "unrelated_layout_preference": "synthetic-compact",
+        }
+    )
+    assert unrelated_layout == control
+
+    action_service = WorkflowActionService(sqlite_session, storage_service=SimpleNamespace())
+
+    async def persist(snapshot: CoursePlanProfileSnapshot) -> tuple[dict[str, object], list[LearningTask]]:
+        plan = _fixture_plan(snapshot).model_dump(mode="json")
+        result = await action_service.persist_learning_path(
+            {
+                "user_id": str(user.id),
+                "course_id": str(course.id),
+                "query": "Generate a bounded paired-profile path",
+                "profile_snapshot": snapshot.compact_payload(),
+            },
+            {"generate_path": {"output": plan}},
+            SimpleNamespace(),
+        )
+        await sqlite_session.commit()
+        tasks = list(
+            (
+                await sqlite_session.execute(
+                    select(LearningTask)
+                    .where(LearningTask.path_id == UUID(str(result["learning_path_id"])))
+                    .order_by(LearningTask.order_index)
+                )
+            ).scalars()
+        )
+        return result, tasks
+
+    control_result, control_tasks = await persist(control)
+    treatment_result, treatment_tasks = await persist(treatment)
+
+    assert control_result["task_count"] == len(control_tasks) == 3
+    assert treatment_result["task_count"] == len(treatment_tasks) == 3
+    assert control_tasks[0].title == "Reinforce request-to-query boundaries: general secure-development review"
+    assert treatment_tasks[0].title == "Reinforce request-to-query boundaries: assessment-feedback review"
+    assert control_tasks[0].title != treatment_tasks[0].title
+    assert [
+        (task.order_index, task.task_type, task.kp_id, task.status) for task in control_tasks
+    ] == [
+        (task.order_index, task.task_type, task.kp_id, task.status) for task in treatment_tasks
+    ]
+    persisted = json.dumps(
+        {
+            "control": [task.title for task in control_tasks] + [task.metadata_ for task in control_tasks],
+            "treatment": [task.title for task in treatment_tasks] + [task.metadata_ for task in treatment_tasks],
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+    )
+    assert "synthetic-general-gap" not in persisted
+    assert "synthetic-assessment-weak-kp" not in persisted
+    assert "must never become durable task content" not in persisted
+    assert _fixture_plan(unrelated_layout).model_dump(mode="json") == _fixture_plan(control).model_dump(mode="json")
 
 
 @pytest.mark.anyio

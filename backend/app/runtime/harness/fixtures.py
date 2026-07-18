@@ -534,6 +534,19 @@ _FIXTURE_WEAK_POINT_DESCRIPTIONS: dict[str, str] = {
     "authentication": "Use the existing SQLi sequence to reinforce identity and session-boundary checks.",
 }
 
+# Keep the paired weak-point treatment visible in the durable LearningTask
+# projection.  These fixed labels are derived solely from the bounded enum;
+# learner-supplied profile text must never become a task title.
+_FIXTURE_WEAK_POINT_TITLE_SUFFIXES: dict[str, str] = {
+    "general_gap": "general secure-development review",
+    "assessment_gap": "assessment-feedback review",
+    "sql_injection": "parameterized-query boundary review",
+    "ssrf": "request-boundary comparison review",
+    "deserialization": "trusted-data boundary review",
+    "xss": "output-encoding boundary review",
+    "authentication": "identity and session-boundary review",
+}
+
 
 def default_llm_output(skill_name: str) -> dict[str, Any]:
     """Return a deep-ish copy of the canned LLM output for a skill, or a generic stub."""
@@ -614,6 +627,8 @@ def fixture_llm_output(skill_name: str, *, prompt: str = "") -> dict[str, Any]:
         metadata["fixture_weak_point_focus"] = focus
         path_nodes[0]["metadata"] = metadata
         path_nodes[0]["description"] = _FIXTURE_WEAK_POINT_DESCRIPTIONS[focus]
+        base_title = str(path_nodes[0].get("title") or "Review secure-development boundaries").strip()
+        path_nodes[0]["title"] = f"{base_title}: {_FIXTURE_WEAK_POINT_TITLE_SUFFIXES[focus]}"
 
     output["nodes"] = path_nodes
     output["personalization_rationale"] = list(codes)
