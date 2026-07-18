@@ -1755,3 +1755,9 @@ forbidden: LLM 自由生成内容
 - 默认不新增敏感属性；仅经有效同意的 RFC 非敏感 `cohort` / `teaching_class` 最小分组可参与聚合。无同意、缺分组、数据缺失和样本不足均安全拒绝，样本不足不展示结论。
 - 公平信号只产生聚合指标、告警、人工复核和申诉记录，绝不自动回写个人成绩、权限、排序或处分。
 - `backend/benchmarks/` 的 content relevance、API misuse、公平三个冻结数据集均是脱敏非用户评测资产；manifest/data hash、公式、阈值、运行配置和失败 case key 可复现，不调用 Provider。
+
+## GAP-13 迁移一致性修复（2026-07-18）
+
+- 迁移 `20260715_1085` 历史上遗漏了 `TimestampMixin` 在 `fairness_metric_runs`、`fairness_reviews` 和 `benchmark_runs` 上的 `created_at` / `updated_at` 列；历史迁移保持不可变。
+- 新增 `20260718_1120` additive migration 补齐六列，使用 `server_default=now()`，不重置或覆盖既有数据库。
+- 当前本地 T08 复测迁移 head 为 `20260718_1120`；公平性结果只支持固定四名合成参与者的 E1/E2 契约与标签交换不变性，不支持真实 Provider、总体公平或因果公平结论。

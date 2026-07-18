@@ -425,6 +425,10 @@ _DEFAULT_LLM_OUTPUTS: dict[str, dict[str, Any]] = {
         "lab": {
             "title": "DVWA SQLi 三难度通关",
             "objective": "掌握手工注入与防御代码的对照实践。",
+            "prerequisites": [
+                "SQL query fundamentals",
+                "Authorised isolated-lab safety rules",
+            ],
             "environment": ["docker", "DVWA:latest", "burpsuite-community"],
             "steps": [
                 "启动 DVWA 容器，登录后将 security level 设为 Low。",
@@ -552,7 +556,48 @@ def default_llm_output(skill_name: str) -> dict[str, Any]:
     """Return a deep-ish copy of the canned LLM output for a skill, or a generic stub."""
     template = _DEFAULT_LLM_OUTPUTS.get(skill_name)
     if template is not None:
-        return deepcopy(template)
+        output = deepcopy(template)
+        # Keep deterministic fixtures aligned with the canonical Skill
+        # schemas.  Older showcase payloads used compatibility keys (for
+        # example ``items`` or a nested ``lab`` object); leaving those keys
+        # unmapped makes the strict Pydantic boundary silently persist an
+        # empty typed artifact even though the fixture contains material.
+        if skill_name == "GenerateMindmap" and not output.get("markmap_markdown"):
+            output["markmap_markdown"] = str(output.get("markmap") or "")
+        elif skill_name == "GenerateVideoStoryboard":
+            shots = output.get("shots") if isinstance(output.get("shots"), list) else []
+            output.setdefault(
+                "mermaid",
+                "graph TD\n  SQLi[SQL injection] --> DEFENSE[parameterized query defense]",
+            )
+            output.setdefault(
+                "tts_segments",
+                [
+                    str(item.get("tts_text") or item.get("narration") or "")
+                    for item in shots
+                    if isinstance(item, dict) and str(item.get("tts_text") or item.get("narration") or "").strip()
+                ],
+            )
+        elif skill_name == "GenerateQuiz" and not output.get("quiz_items"):
+            output["quiz_items"] = list(output.get("items") or [])
+        elif skill_name == "GenerateHandsOnLab":
+            lab = output.get("lab") if isinstance(output.get("lab"), dict) else {}
+            output.setdefault("prerequisites", list(lab.get("prerequisites") or []))
+            output.setdefault("setup", list(lab.get("environment") or lab.get("setup") or []))
+            raw_steps = lab.get("steps") if isinstance(lab.get("steps"), list) else []
+            output.setdefault(
+                "steps",
+                [
+                    {"instruction": str(item).strip()}
+                    for item in raw_steps
+                    if str(item).strip()
+                ],
+            )
+            output.setdefault("acceptance_criteria", list(lab.get("acceptance") or []))
+            output.setdefault("hints", ["Use the isolated local lab and record the defensive explanation."])
+        elif skill_name == "RecommendReadings" and not output.get("readings"):
+            output["readings"] = list(output.get("items") or [])
+        return output
     return {
         "content": f"[fixture] no canned output for skill {skill_name}, returning generic stub.",
         "quality_score": 0.6,

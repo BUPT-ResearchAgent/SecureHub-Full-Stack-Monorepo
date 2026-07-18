@@ -2353,3 +2353,9 @@ forbidden: LLM 自由生成内容
 - `20260715_1085` 的公平/基准表仅引用既有 `users`、已发布 T3 成绩和治理审计；禁止复制用户、课程、画像、知识资产或新增 Agent。
 - 默认不收集敏感属性，只允许明确同意且尚有效的非敏感 `cohort` / `teaching_class` 最小分组。无同意、缺数据、缺分组或 `INSUFFICIENT_SAMPLE` 必须拒绝或隐藏群体结论。
 - 公平告警只能进入人工 review/appeal；不得自动惩罚、降权、处分、改分或暴露敏感属性。三个 benchmark manifest 是脱敏非用户效果评测资产，哈希失配必须拒绝运行。
+
+## GAP-13 迁移一致性修复（2026-07-18）
+
+- 迁移 `20260715_1085` 历史上遗漏了 `TimestampMixin` 在 `fairness_metric_runs`、`fairness_reviews` 和 `benchmark_runs` 上的 `created_at` / `updated_at` 列；历史迁移保持不可变。
+- 新增 `20260718_1120` additive migration 补齐六列，使用 `server_default=now()`，不重置或覆盖既有数据库。
+- 当前本地 T08 复测迁移 head 为 `20260718_1120`；公平性结果只支持固定四名合成参与者的 E1/E2 契约与标签交换不变性，不支持真实 Provider、总体公平或因果公平结论。
