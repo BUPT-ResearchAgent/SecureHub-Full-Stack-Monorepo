@@ -231,6 +231,11 @@ class StudentCourseExperienceService:
                 LearningPath.user_id == user_id,
                 LearningPath.course_id == course_id,
                 LearningPath.status == "active",
+                # A path row without a durable task cannot drive a student
+                # learning surface. Keep it auditable, but fall back to the
+                # latest usable active path instead of reporting a false
+                # empty-path state when an incomplete root exists.
+                LearningPath.id.in_(select(LearningTask.path_id)),
             )
             .order_by(LearningPath.updated_at.desc())
             .limit(1)
@@ -359,31 +364,39 @@ class StudentCourseExperienceService:
                     AssessmentAssignment.group_id == group_id,
                 )
             )
+        question_count = (
+            select(func.count(AssessmentItem.id))
+            .where(AssessmentItem.assessment_version_id == AssessmentVersion.id)
+            .correlate(AssessmentVersion)
+            .scalar_subquery()
+        )
         rows = (await self.session.execute(
-            select(AssessmentAssignment, AssessmentVersion, Assessment)
+            select(
+                AssessmentAssignment,
+                AssessmentVersion,
+                Assessment,
+                question_count.label("question_count"),
+                AssessmentSubmission,
+                AssessmentGradeDecision,
+            )
             .join(AssessmentVersion, AssessmentVersion.id == AssessmentAssignment.assessment_version_id)
             .join(Assessment, Assessment.id == AssessmentVersion.assessment_id)
+            .outerjoin(
+                AssessmentSubmission,
+                and_(
+                    AssessmentSubmission.assignment_id == AssessmentAssignment.id,
+                    AssessmentSubmission.student_id == actor_id,
+                ),
+            )
+            .outerjoin(
+                AssessmentGradeDecision,
+                AssessmentGradeDecision.submission_id == AssessmentSubmission.id,
+            )
             .where(Assessment.course_id == course_id, or_(*scopes))
             .order_by(AssessmentAssignment.due_at)
         )).all()
         result: list[StudentCourseAssignmentDTO] = []
-        for assignment, version, assessment in rows:
-            question_count = await self.session.scalar(
-                select(func.count(AssessmentItem.id)).where(AssessmentItem.assessment_version_id == version.id)
-            )
-            submission = await self.session.scalar(
-                select(AssessmentSubmission).where(
-                    AssessmentSubmission.assignment_id == assignment.id,
-                    AssessmentSubmission.student_id == actor_id,
-                )
-            )
-            grade = (
-                await self.session.scalar(
-                    select(AssessmentGradeDecision).where(AssessmentGradeDecision.submission_id == submission.id)
-                )
-                if submission is not None
-                else None
-            )
+        for assignment, version, assessment, item_count, submission, grade in rows:
             learner_status, score, next_action = _learner_assignment_status(assignment, submission, grade)
             result.append(
                 StudentCourseAssignmentDTO(
@@ -392,7 +405,7 @@ class StudentCourseExperienceService:
                     title=version.title,
                     due_at=assignment.due_at,
                     allow_late=assignment.allow_late,
-                    question_count=int(question_count or 0),
+                    question_count=int(item_count or 0),
                     assignment_status=assignment.status,  # type: ignore[arg-type]
                     learner_status=learner_status,
                     published_score=score,
@@ -515,9 +528,27 @@ class StudentCourseExperienceService:
         if len(parsed_assignment) != 1 or parsed_assignment[0] not in assignment_ids:
             return None
         assignment_id = parsed_assignment[0]
-        assignment = await self.session.get(AssessmentAssignment, assignment_id)
-        if assignment is None:
+        resource_ids = _uuid_values([result.get("quiz_resource_id")])
+        if len(resource_ids) != 1:
             return None
+        candidate = (
+            await self.session.execute(
+                select(AssessmentAssignment, AssessmentSubmission, GeneratedResource)
+                .select_from(AssessmentAssignment)
+                .join(
+                    AssessmentSubmission,
+                    and_(
+                        AssessmentSubmission.assignment_id == AssessmentAssignment.id,
+                        AssessmentSubmission.student_id == user_id,
+                    ),
+                )
+                .join(GeneratedResource, GeneratedResource.id == resource_ids[0])
+                .where(AssessmentAssignment.id == assignment_id)
+            )
+        ).one_or_none()
+        if candidate is None:
+            return None
+        assignment, submission, resource = candidate
         items = list(
             (
                 await self.session.execute(
@@ -555,14 +586,6 @@ class StudentCourseExperienceService:
         if set(answers) != expected_ids:
             return None
 
-        submission = await self.session.scalar(
-            select(AssessmentSubmission).where(
-                AssessmentSubmission.assignment_id == assignment_id,
-                AssessmentSubmission.student_id == user_id,
-            )
-        )
-        if submission is None:
-            return None
         if submission.status == "open":
             # An open controlled submission must remain genuinely empty until
             # the learner explicitly submits the editable draft.
@@ -578,13 +601,8 @@ class StudentCourseExperienceService:
         else:
             return None
 
-        resource_ids = _uuid_values([result.get("quiz_resource_id")])
-        if len(resource_ids) != 1:
-            return None
-        resource = await self.session.get(GeneratedResource, resource_ids[0])
         if (
-            resource is None
-            or resource.user_id != user_id
+            resource.user_id != user_id
             or resource.course_id != course_id
             or resource.resource_type != "quiz"
             or resource.status != "active"
@@ -622,6 +640,23 @@ class StudentCourseExperienceService:
             )).scalars()
         )
         snapshot_map = {snapshot.id: snapshot for snapshot in snapshots}
+        document_ids = {
+            document_id
+            for snapshot in snapshots
+            for document_id in _uuid_values([snapshot.document_id])
+        }
+        documents = (
+            list(
+                (
+                    await self.session.execute(
+                        select(Document).where(Document.id.in_(document_ids))
+                    )
+                ).scalars()
+            )
+            if document_ids
+            else []
+        )
+        document_map = {document.id: document for document in documents}
         resolved: dict[int, list[StudentCourseEvidenceDTO]] = {}
         for index, result in enumerate(results):
             ids = _uuid_values([result.get("evidence_snapshot_id")])
@@ -630,7 +665,8 @@ class StudentCourseExperienceService:
                 snapshot = snapshot_map.get(snapshot_id)
                 if snapshot is None:
                     continue
-                document = await self._document_from_snapshot(snapshot)
+                document_values = _uuid_values([snapshot.document_id])
+                document = document_map.get(document_values[0]) if document_values else None
                 source = dict(snapshot.source or {})
                 references.append(
                     StudentCourseEvidenceDTO(
@@ -643,10 +679,6 @@ class StudentCourseExperienceService:
             if references:
                 resolved[index] = references
         return resolved
-
-    async def _document_from_snapshot(self, snapshot: WorkflowEvidenceSnapshot) -> Document | None:
-        values = _uuid_values([snapshot.document_id])
-        return await self.session.get(Document, values[0]) if values else None
 
     async def _assessment(self, user_id: UUID, course_id: UUID) -> StudentCourseAssessmentDTO:
         rows = (await self.session.execute(

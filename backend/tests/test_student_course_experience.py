@@ -6,7 +6,7 @@ from uuid import uuid4
 
 import pytest
 from fastapi import HTTPException
-from sqlalchemy import func, select
+from sqlalchemy import event, func, select
 
 from app.api.v1.endpoints.courses import get_student_course_experience
 from app.api.v1.endpoints.teaching import (
@@ -14,6 +14,7 @@ from app.api.v1.endpoints.teaching import (
     submit_assessment_assignment,
 )
 from app.db.models.identity.user import User
+from app.db.models.learning.learning_path import LearningPath
 from app.db.models.learning.quiz_attempt import QuizAttempt
 from app.db.models.teaching.teacher_production import AssessmentSubmission
 from app.db.models.workflow_runtime import WorkflowRun
@@ -28,6 +29,7 @@ from app.db.seeds.seed_showcase_course import (
     verify,
 )
 from app.schemas.teacher_production import SubmitAssessmentRequest
+from app.services.learning.student_course_experience_service import StudentCourseExperienceService
 
 
 @pytest.mark.anyio
@@ -112,6 +114,65 @@ async def test_student_experience_uses_current_student_records_and_quality_resou
     )
     assert accelerated.assessment.scored_attempt_count == own_attempt_count
     assert accelerated.assessment.metrics
+
+
+@pytest.mark.anyio
+async def test_student_experience_ignores_newer_active_path_without_tasks(sqlite_session) -> None:
+    await run(sqlite_session)
+    demo_student = await sqlite_session.get(User, DEMO_USER_ID)
+    assert demo_student is not None
+
+    # An incomplete durable root stays auditable, but it must not shadow the
+    # student-visible baseline that has real tasks and course context.
+    sqlite_session.add(
+        LearningPath(
+            id=uuid4(),
+            user_id=DEMO_USER_ID,
+            course_id=COURSE_WEBSEC_ID,
+            title="Incomplete durable path",
+            objective="",
+            status="active",
+            metadata_={"source_boundary": "test incomplete path"},
+        )
+    )
+    await sqlite_session.flush()
+
+    experience = await StudentCourseExperienceService(sqlite_session).get_experience(
+        actor=demo_student,
+        course_id=COURSE_WEBSEC_ID,
+    )
+
+    assert experience.data_status == "ready"
+    assert experience.tasks
+    assert all(task.title != "Incomplete durable path" for task in experience.tasks)
+
+
+@pytest.mark.anyio
+async def test_student_experience_uses_a_bounded_select_budget(sqlite_session) -> None:
+    await run(sqlite_session)
+    demo_student = await sqlite_session.get(User, DEMO_USER_ID)
+    assert demo_student is not None
+
+    select_count = 0
+
+    def count_selects(_connection, _cursor, statement, _parameters, _context, _executemany) -> None:
+        nonlocal select_count
+        if statement.lstrip().upper().startswith("SELECT"):
+            select_count += 1
+
+    engine = sqlite_session.sync_session.bind
+    assert engine is not None
+    event.listen(engine, "before_cursor_execute", count_selects)
+    try:
+        experience = await StudentCourseExperienceService(sqlite_session).get_experience(
+            actor=demo_student,
+            course_id=COURSE_WEBSEC_ID,
+        )
+    finally:
+        event.remove(engine, "before_cursor_execute", count_selects)
+
+    assert experience.data_status == "ready"
+    assert select_count <= 20
 
 
 @pytest.mark.anyio

@@ -118,6 +118,11 @@ from app.db.seeds.seed_education_domain import (
     run as seed_education_domain,
 )
 from app.db.session import get_sessionmaker
+from app.rag.controlled_showcase import (
+    CONTROLLED_SHOWCASE_EMBEDDING_PROFILE,
+    controlled_showcase_embedding_provider,
+    is_controlled_showcase_index_allowed,
+)
 from app.services.learning.student_course_experience_service import (
     StudentCourseExperienceService,
 )
@@ -125,7 +130,7 @@ from app.services.learning.quiz_quality_service import QuizQualityService
 
 
 PROFILE = "showcase_course"
-MANIFEST_VERSION = "websec-101-showcase-v7"
+MANIFEST_VERSION = "websec-101-showcase-v8"
 MANIFEST_ID = stable_id("showcase-course:manifest:websec-101:v1")
 SEED_AT = datetime(2026, 7, 17, 9, 0, tzinfo=UTC)
 BASELINE_START = datetime(2026, 4, 8, 9, 0, tzinfo=UTC)
@@ -438,7 +443,20 @@ async def _ensure(
         return row, True
     changed = False
     for name, value in values.items():
-        if getattr(row, name) != value:
+        existing = getattr(row, name)
+        # pgvector is represented as an array by the SQLite test adapter.
+        # Compare its stable values explicitly so rerunning the controlled
+        # seed upgrades old rows without making idempotency depend on array
+        # truthiness semantics.
+        if name == "embedding":
+            equal = (
+                existing is value
+                if existing is None or value is None
+                else list(existing) == list(value)
+            )
+        else:
+            equal = existing == value
+        if not equal:
             setattr(row, name, value)
             changed = True
     if changed:
@@ -514,12 +532,27 @@ async def _seed_showcase_lecture(session: AsyncSession, counts: dict[str, int]) 
     """Persist the curated lecture through the shared knowledge asset layer.
 
     This is a preprocessed local teaching asset, not an upload or a live PDF
-    parse.  Its parse and chunk facts are persisted so the teacher UI can show
-    them honestly and the normal embedding pipeline can later consume the
-    pending chunks.
+    parse. Its parse, chunk and controlled deterministic-index facts are
+    persisted so the teacher UI can show them honestly. It never claims to
+    have called the configured Qwen embedding provider.
     """
 
     content, sections = _read_showcase_lecture()
+    settings = get_settings()
+    if not is_controlled_showcase_index_allowed(settings, domain="course_websec"):
+        raise RuntimeError("controlled showcase index is disabled in production/release")
+    embedding_provider = controlled_showcase_embedding_provider(settings)
+    try:
+        embedding_result = await embedding_provider.embed_documents(
+            [text for _, text in sections]
+        )
+    finally:
+        await embedding_provider.aclose()
+    if (
+        embedding_result.dimension != settings.EMBEDDING_DIM
+        or len(embedding_result.vectors) != len(sections)
+    ):
+        raise RuntimeError("controlled showcase index returned an invalid vector batch")
     content_bytes = content.encode("utf-8")
     content_hash = sha256(content_bytes).hexdigest()
     chapter_count = len(sections)
@@ -550,10 +583,10 @@ async def _seed_showcase_lecture(session: AsyncSession, counts: dict[str, int]) 
             "occurred_at": processed_at.isoformat(),
         },
         {
-            "stage": "index_pending",
-            "label": "向量化/索引等待当前环境配置的既有嵌入任务；不会在前端模拟成功",
-            "state": "pending",
-            "occurred_at": None,
+            "stage": "controlled_deterministic_index",
+            "label": "已完成受控本地确定性索引；不是实时 Qwen 调用，也不作为生产索引。",
+            "state": "completed",
+            "occurred_at": (processed_at + timedelta(seconds=4)).isoformat(),
         },
     ]
     metadata = {
@@ -575,6 +608,11 @@ async def _seed_showcase_lecture(session: AsyncSession, counts: dict[str, int]) 
         "license": "demo-only curated teaching material",
         "rights_note": "课程团队整理的防御性教学讲义；来源、Evidence 和版权边界须在资产详情核验。",
         "collection_mode": "controlled_seed",
+        "embedding_profile": CONTROLLED_SHOWCASE_EMBEDDING_PROFILE,
+        "embedding_boundary": (
+            "受控本地确定性索引，仅用于本地/比赛演示/授权测试；"
+            "不是实时 Qwen 嵌入，也不是生产检索索引。"
+        ),
     }
     _, created = await _ensure(
         session,
@@ -648,8 +686,8 @@ async def _seed_showcase_lecture(session: AsyncSession, counts: dict[str, int]) 
             chunk_text=text,
             chunk_index=index,
             token_count=len(text.split()),
-            embedding=None,
-            embedding_status="pending",
+            embedding=embedding_result.vectors[index],
+            embedding_status="ready",
             metadata_={
                 "seed_profile": PROFILE,
                 "course_id": str(COURSE_WEBSEC_ID),
@@ -667,6 +705,13 @@ async def _seed_showcase_lecture(session: AsyncSession, counts: dict[str, int]) 
                 "license": metadata["license"],
                 "rights_note": metadata["rights_note"],
                 "source_boundary": metadata["source_boundary"],
+                "embedding_profile": CONTROLLED_SHOWCASE_EMBEDDING_PROFILE,
+                "embedding_provider": embedding_result.provider,
+                "embedding_model": embedding_result.model,
+                "embedding_dim": embedding_result.dimension,
+                "embedding_output_type": embedding_result.output_type,
+                "embedding_source": "controlled_showcase_seed",
+                "embedding_boundary": metadata["embedding_boundary"],
                 "quality_state": "reviewed_seed",
             },
         )
@@ -2251,7 +2296,10 @@ async def _write_manifest(session: AsyncSession, counts: dict[str, int]) -> None
             "document_id": str(SHOWCASE_LECTURE_DOCUMENT_ID),
             "asset_type": "markdown_full",
             "object_key": SHOWCASE_LECTURE_OBJECT_KEY,
-            "processing_boundary": "已持久化的受控预置处理结果；页面不会声称刚刚完成实时 PDF 解析或向量化。",
+            "processing_boundary": "已持久化的受控预置处理结果；页面不会声称刚刚完成实时 PDF 解析。",
+            "ready_chunk_count": len(_LECTURE_SECTION_KNOWLEDGE),
+            "embedding_profile": CONTROLLED_SHOWCASE_EMBEDDING_PROFILE,
+            "embedding_boundary": "受控本地确定性索引，不是实时 Qwen 嵌入或生产索引。",
         },
         "counts": counts,
     }
@@ -2534,6 +2582,16 @@ async def _verify(session: AsyncSession) -> dict[str, Any]:
     if lecture_asset is None or lecture_asset.object_key != SHOWCASE_LECTURE_OBJECT_KEY: errors.append("受控预置讲义缺少可追溯源资产")
     if len(lecture_chunks) != len(_LECTURE_SECTION_KNOWLEDGE): errors.append("受控预置讲义的教学分块数量不完整")
     if any(not row.metadata_.get("kp_ids") or not row.metadata_.get("chapter") for row in lecture_chunks): errors.append("受控预置讲义块缺少知识点或来源定位")
+    if any(
+        row.embedding_status != "ready"
+        or row.embedding is None
+        or len(row.embedding) != get_settings().EMBEDDING_DIM
+        or row.metadata_.get("embedding_profile") != CONTROLLED_SHOWCASE_EMBEDDING_PROFILE
+        or row.metadata_.get("embedding_source") != "controlled_showcase_seed"
+        or not row.metadata_.get("embedding_boundary")
+        for row in lecture_chunks
+    ):
+        errors.append("受控预置讲义缺少可追溯的本地确定性索引")
     for learner_id, label in ((DEMO_USER_ID, "默认 demo 学生"), (_student_id("qinglan"), "既有花名学生")):
         learner = await session.get(User, learner_id)
         if learner is None:
@@ -2559,7 +2617,7 @@ async def _verify(session: AsyncSession) -> dict[str, Any]:
             errors.append(f"{label}学生体验仍为 {experience.data_status}：{', '.join(experience.missing_dependencies)}")
     return {
         "profile": PROFILE, "manifest_version": MANIFEST_VERSION, "valid": not errors, "errors": errors,
-        "counts": {"students": len(user_rows), "demo_course_learners": int(demo_user is not None), "scenario_learners": len(showcase_learner_ids), "classes": len(classes), "enrollments": len(enrollment_rows), "groups": 4, "publishable_questions": len(publishable.items), "scored_students": len(scored_students), "agent_evidence_pairs": len(pair_rows), "resources": len(resource_rows), "lineage_versions": len(lineage_rows), "path_versions": len(path_version_rows), "path_candidates": len(path_candidate_rows), "resource_recommendations": len(course_resource_recommendation_rows), "assignments": len(assignment_rows), "submitted_or_late": len([row for row in submission_rows if row.status in {"submitted", "late"}]), "demo_assessment_questions": len(demo_assessment_items), "demo_assessment_drafts": int(demo_assessment_draft_event is not None), "snapshots": len(snapshot_rows), "recommendations": len(recommendation_rows), "syllabus_versions": len(syllabus_rows), "notices": len(notice_rows), "course_updates": len(update_rows), "assets": len(asset_rows), "lecture_chunks": len(lecture_chunks)},
+        "counts": {"students": len(user_rows), "demo_course_learners": int(demo_user is not None), "scenario_learners": len(showcase_learner_ids), "classes": len(classes), "enrollments": len(enrollment_rows), "groups": 4, "publishable_questions": len(publishable.items), "scored_students": len(scored_students), "agent_evidence_pairs": len(pair_rows), "resources": len(resource_rows), "lineage_versions": len(lineage_rows), "path_versions": len(path_version_rows), "path_candidates": len(path_candidate_rows), "resource_recommendations": len(course_resource_recommendation_rows), "assignments": len(assignment_rows), "submitted_or_late": len([row for row in submission_rows if row.status in {"submitted", "late"}]), "demo_assessment_questions": len(demo_assessment_items), "demo_assessment_drafts": int(demo_assessment_draft_event is not None), "snapshots": len(snapshot_rows), "recommendations": len(recommendation_rows), "syllabus_versions": len(syllabus_rows), "notices": len(notice_rows), "course_updates": len(update_rows), "assets": len(asset_rows), "lecture_chunks": len(lecture_chunks), "lecture_ready_chunks": len([row for row in lecture_chunks if row.embedding_status == "ready" and row.embedding is not None])},
     }
 
 

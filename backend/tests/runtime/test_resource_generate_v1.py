@@ -8,6 +8,7 @@ import pytest
 
 from app.agents.doc_archivist.skills.generate_course_ppt import GenerateCoursePPTOutput
 from app.agents.outcome_evaluator.skills.quality_check import QualityCheckInput
+from app.agents.topic_explorer.skills.generate_hands_on_lab import GenerateHandsOnLabOutput
 from app.llm.provider import FixtureProvider
 from app.runtime.budget import BudgetController, BudgetExceeded
 from app.runtime.contracts import ErrorCode, ExecutionMode, ProviderSelection
@@ -33,6 +34,15 @@ def test_resource_generate_producer_budget_covers_structured_ppt_payload() -> No
     assert producer.provider_max_tokens == RESOURCE_GENERATE_PRODUCER_PROVIDER_MAX_TOKENS == 2400
     assert producer.budget_tokens == RESOURCE_GENERATE_PRODUCER_BUDGET_TOKENS == 8000
     assert producer.serializable()["provider_max_tokens"] == 2400
+
+
+def test_lab_fixture_projects_nonempty_canonical_contract() -> None:
+    output = GenerateHandsOnLabOutput.model_validate(default_llm_output("GenerateHandsOnLab"))
+
+    assert output.prerequisites
+    assert output.setup
+    assert len(output.steps) >= 2
+    assert output.acceptance_criteria
 
 
 def test_provider_cap_extension_preserves_legacy_node_serialization_and_digest_inputs() -> None:

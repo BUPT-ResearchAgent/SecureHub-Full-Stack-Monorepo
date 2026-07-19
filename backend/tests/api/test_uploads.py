@@ -1,12 +1,13 @@
 # Status: real
 
-from collections.abc import Iterator
+from collections.abc import AsyncIterator, Iterator
 from hashlib import sha256
 
 import pytest
 from fastapi.testclient import TestClient
 
 from app.core.config import Settings, get_settings
+from app.db.session import get_session
 from app.main import app
 from app.services.storage.upload_gate import UploadGateService
 
@@ -34,13 +35,23 @@ def upload_client(monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClient]:
     async def fake_signed_url(self: UploadGateService, object_key: str) -> str:
         return f"https://upload.example.invalid/{object_key}"
 
+    async def isolated_get_session() -> AsyncIterator[None]:
+        yield None
+
     monkeypatch.setattr(UploadGateService, "_create_presigned_put_url", fake_signed_url)
+    had_previous_session_override = get_session in app.dependency_overrides
+    previous_session_override = app.dependency_overrides.get(get_session)
+    app.dependency_overrides[get_session] = isolated_get_session
     app.dependency_overrides[get_settings] = lambda: _settings()
     try:
         with TestClient(app) as client:
             yield client
     finally:
         app.dependency_overrides.pop(get_settings, None)
+        if had_previous_session_override:
+            app.dependency_overrides[get_session] = previous_session_override
+        else:
+            app.dependency_overrides.pop(get_session, None)
 
 
 def _payload(**overrides: object) -> dict[str, object]:

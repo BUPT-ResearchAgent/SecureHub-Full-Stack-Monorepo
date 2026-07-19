@@ -53,6 +53,7 @@ from app.runtime.versioning.checkpoint_migrations import (
     build_runtime_checkpoint_migrations,
 )
 from app.runtime.workflow_registry import WorkflowRegistry
+from app.schemas.course_plan_profile import CoursePlanProfileSnapshot
 from app.services.learning.quiz_quality_service import QuizQualityError, QuizQualityService
 from app.schemas.agent_control import (
     WorkflowNodeResponse,
@@ -166,6 +167,14 @@ class WorkflowApplicationService:
                 workflow_name=definition.name,
                 validated_input=validated_input,
             )
+            if definition.name == "course_plan_v1":
+                # Never persist browser-owned profile JSON with a durable
+                # learning-path root. This bounded projection is recomputed
+                # from the authenticated user's current durable profile.
+                profile_snapshot = await self._course_plan_profile_snapshot(session, request.user_id)
+                validated_input["profile_snapshot"] = profile_snapshot.compact_payload()
+                validated_input["profile_reason_codes"] = list(profile_snapshot.rationale_codes())
+                validated_input["persona_summary"] = profile_snapshot.prompt_summary()
             if definition.name == "tutor_routing_v3":
                 validated_input["persona_summary"] = await self._tutor_persona_summary(session, request.user_id)
             if definition.name == "assessment_update_v2":
@@ -634,7 +643,10 @@ class WorkflowApplicationService:
     @staticmethod
     def _normalise_input(workflow_name: str, request: WorkflowRunStartRequest) -> dict[str, Any]:
         payload = dict(request.input)
-        payload.setdefault("user_id", request.user_id)
+        # The durable root owner is the authenticated request user. A nested
+        # DTO must never replace it, otherwise a server-owned profile could
+        # be paired with a path action for another learner.
+        payload["user_id"] = request.user_id
         if request.course_id is not None:
             payload.setdefault("course_id", request.course_id)
         if workflow_name == "profile_build_v1":
@@ -642,6 +654,13 @@ class WorkflowApplicationService:
                 payload["dialogue_turns"] = payload.pop("history")
             payload.setdefault("message", "Build a learning persona")
         elif workflow_name == "course_plan_v1":
+            # These fields are always server-owned. Remove them before model
+            # validation so a caller cannot influence a new root or replay it
+            # with a forged learner snapshot/reason.
+            payload.pop("profile_snapshot", None)
+            payload.pop("profile_reason_codes", None)
+            payload.pop("profile_dimensions", None)
+            payload.pop("persona_summary", None)
             payload.setdefault("query", "Generate a personalised learning path")
         elif workflow_name == "resource_generate_v1":
             resource_type = payload.setdefault("resource_type", "doc")
@@ -798,6 +817,23 @@ class WorkflowApplicationService:
             if key in allowed
         }
         return json.dumps(snapshot, ensure_ascii=False, separators=(",", ":"))[:800]
+
+    @staticmethod
+    async def _course_plan_profile_snapshot(
+        session: AsyncSession,
+        user_id: str,
+    ) -> CoursePlanProfileSnapshot:
+        """Project only allowed durable profile dimensions for a path root."""
+        from app.db.models.identity.user_profile import UserProfile
+
+        try:
+            parsed = UUID(str(user_id))
+        except (TypeError, ValueError):
+            return CoursePlanProfileSnapshot()
+        profile = await session.get(UserProfile, parsed)
+        return CoursePlanProfileSnapshot.from_dimensions(
+            dict(profile.dimensions or {}) if profile is not None else {}
+        )
 
     @staticmethod
     async def _assessment_feedback_constraints(

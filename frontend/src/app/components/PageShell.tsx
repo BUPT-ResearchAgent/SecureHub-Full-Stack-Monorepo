@@ -38,7 +38,7 @@ export function PageShell({
   return (
     <div className="space-y-6">
       {/* Breadcrumb */}
-      <nav className="flex items-center gap-1.5 text-xs text-slate-400 select-none">
+      <nav aria-label="面包屑" className="flex items-center gap-1.5 text-xs text-slate-600 select-none">
         <span>{title}</span>
         <ChevronRight className="w-3 h-3 shrink-0" />
         <span className="text-[#003399] font-medium">{current.label}</span>
@@ -132,7 +132,7 @@ export function Tag({
 
 export function EmptyHint({ text }: { text: string }) {
   return (
-    <div className="py-16 text-center text-sm text-slate-400 border-2 border-dashed border-slate-200 rounded-xl">
+    <div className="py-16 text-center text-sm text-slate-600 border-2 border-dashed border-slate-200 rounded-xl">
       {text}
     </div>
   );

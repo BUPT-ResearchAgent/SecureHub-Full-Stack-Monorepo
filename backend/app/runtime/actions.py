@@ -399,25 +399,101 @@ class WorkflowActionService:
         state: dict[str, Any],
         _context: ExecutionContext,
     ) -> dict[str, Any]:
+        from sqlalchemy import select
+
+        from app.db.models.knowledge.knowledge_node import KnowledgeNode
         from app.db.models.learning.learning_path import LearningPath
+        from app.db.models.learning.learning_task import LearningTask
+        from app.schemas.course_plan_profile import CoursePlanProfileSnapshot
 
         user_id = self._required_uuid(root_input.get("user_id"))
+        course_id = self._course_id(root_input.get("course_id"))
         output = dict((state.get("generate_path") or {}).get("output") or {})
+        task_specs = self._normalise_generated_path_tasks(output.get("nodes"))
+        try:
+            profile_snapshot = CoursePlanProfileSnapshot.model_validate(
+                root_input.get("profile_snapshot") or {}
+            )
+        except (TypeError, ValueError):
+            # Legacy roots may not have this field. Do not let an invalid
+            # optional audit projection block their already-accepted path.
+            profile_snapshot = CoursePlanProfileSnapshot()
+        personalization = {
+            "profile_snapshot": profile_snapshot.compact_payload(),
+            "rationale_codes": list(profile_snapshot.rationale_codes()),
+        }
+
+        # A model may use an opaque identifier in a path node.  Only retain a
+        # typed knowledge-node relation when it belongs to this course; the
+        # original identifier remains traceable in task metadata either way.
+        requested_kp_ids = {item["kp_id"] for item in task_specs if item["kp_id"] is not None}
+        if requested_kp_ids:
+            durable_kp_ids = set(
+                (
+                    await self.session.execute(
+                        select(KnowledgeNode.id).where(
+                            KnowledgeNode.id.in_(requested_kp_ids),
+                            KnowledgeNode.course_id == course_id,
+                        )
+                    )
+                ).scalars()
+            )
+            for item in task_specs:
+                if item["kp_id"] not in durable_kp_ids:
+                    item["kp_id"] = None
+
+        # Validate and materialise the new path before retiring the existing
+        # projection.  This keeps a malformed model result from replacing the
+        # learner's last usable active path.
+        active_paths = list(
+            (
+                await self.session.execute(
+                    select(LearningPath).where(
+                        LearningPath.user_id == user_id,
+                        LearningPath.course_id == course_id,
+                        LearningPath.status == "active",
+                    )
+                )
+            ).scalars()
+        )
         path = LearningPath(
             user_id=user_id,
-            course_id=self._course_id(root_input.get("course_id")),
+            course_id=course_id,
             title=str(output.get("title") or "Personalised learning path"),
             objective=str(root_input.get("query") or ""),
             status="active",
-            metadata_={"nodes": output.get("nodes", []), "edges": output.get("edges", []), "milestones": output.get("milestones", [])},
+            metadata_={
+                "nodes": output.get("nodes", []),
+                "edges": output.get("edges", []),
+                "milestones": output.get("milestones", []),
+                "personalization": personalization,
+            },
         )
         self.session.add(path)
+        await self.session.flush()
+        for item in task_specs:
+            self.session.add(
+                LearningTask(
+                    path_id=path.id,
+                    kp_id=item["kp_id"],
+                    title=item["title"],
+                    task_type=item["task_type"],
+                    order_index=item["order_index"],
+                    status=item["status"],
+                    metadata_=item["metadata"],
+                )
+            )
+        await self.session.flush()
+        for active_path in active_paths:
+            active_path.status = "superseded"
         await self.session.flush()
         return {
             "learning_path_id": str(path.id),
             "course_id": str(path.course_id),
             "path": output.get("nodes", []),
+            "task_count": len(task_specs),
             "quality_score": self._as_float(output.get("quality_score")),
+            "personalization": personalization,
         }
 
     async def persist_capability(
@@ -854,6 +930,66 @@ class WorkflowActionService:
             return "低于加速先修路径阈值，下一次课程路径会先巩固基础主题。"
         return "下一次课程路径会按更新后的 Web 安全能力重新排序。"
 
+    @classmethod
+    def _normalise_generated_path_tasks(cls, nodes: Any) -> list[dict[str, Any]]:
+        """Turn accepted generated nodes into the durable task projection.
+
+        The model's path schema deliberately allows extension fields.  The
+        deterministic terminal action therefore keeps only the task fields the
+        database owns, preserves opaque node identifiers as metadata, and
+        rejects an empty projection before it can become active.
+        """
+        if not isinstance(nodes, list):
+            raise ValueError("generated learning path requires a node list")
+
+        tasks: list[dict[str, Any]] = []
+        allowed_statuses = {"todo", "active", "in_progress", "done", "blocked", "locked"}
+        for index, raw_node in enumerate(nodes, start=1):
+            if not isinstance(raw_node, dict):
+                raise ValueError("generated learning path contains a non-object node")
+            title = str(raw_node.get("title") or raw_node.get("label") or raw_node.get("name") or "").strip()
+            if not title:
+                raise ValueError(f"generated learning path node {index} has no task title")
+            raw_node_id = (
+                raw_node.get("kp_id")
+                or raw_node.get("knowledge_node_id")
+                or raw_node.get("node_id")
+                or raw_node.get("id")
+            )
+            raw_status = str(raw_node.get("status") or "todo").strip().lower()
+            task_metadata = dict(raw_node.get("metadata") or {}) if isinstance(raw_node.get("metadata"), dict) else {}
+            if raw_node_id is not None and str(raw_node_id).strip():
+                task_metadata["source_node_id"] = str(raw_node_id).strip()[:255]
+            description = raw_node.get("description")
+            if isinstance(description, str) and description.strip():
+                task_metadata["source_description"] = description.strip()[:1_200]
+            expected_minutes = cls._bounded_int(
+                next(
+                    (
+                        raw_node[key]
+                        for key in ("expected_minutes", "estimated_minutes", "est_minutes")
+                        if raw_node.get(key) is not None
+                    ),
+                    0,
+                ),
+                default=0,
+            )
+            task_metadata["expected_minutes"] = expected_minutes
+            task_type = str(raw_node.get("task_type") or raw_node.get("type") or "course_learning").strip()[:64]
+            tasks.append(
+                {
+                    "kp_id": cls._optional_uuid(raw_node_id),
+                    "title": title[:240],
+                    "task_type": task_type or "course_learning",
+                    "order_index": index,
+                    "status": raw_status if raw_status in allowed_statuses else "todo",
+                    "metadata": task_metadata,
+                }
+            )
+        if not tasks:
+            raise ValueError("generated learning path has no materialisable learning tasks")
+        return tasks
+
     @staticmethod
     def _required_uuid(value: Any) -> UUID:
         parsed = WorkflowActionService._optional_uuid(value)
@@ -877,6 +1013,13 @@ class WorkflowActionService:
     @staticmethod
     def _uuid_list(values: list[Any]) -> list[UUID]:
         return [parsed for item in values if (parsed := WorkflowActionService._optional_uuid(item)) is not None]
+
+    @staticmethod
+    def _bounded_int(value: Any, *, default: int) -> int:
+        try:
+            return max(0, min(600, int(value)))
+        except (TypeError, ValueError):
+            return default
 
     @staticmethod
     def _as_float(value: Any) -> float | None:

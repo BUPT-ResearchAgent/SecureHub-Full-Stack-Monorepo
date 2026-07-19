@@ -7,6 +7,14 @@
   outline-offset: 2px;
 }
 
+/* Sonner's default rich-color foregrounds narrowly miss WCAG AA at 13px. */
+[data-sonner-toaster][data-sonner-theme='light'] {
+  --success-text: #00652a;
+  --info-text: #075985;
+  --warning-text: #854d0e;
+  --error-text: #b91c1c;
+}
+
 @keyframes workflow-node-pulse {
   0% {
     box-shadow: 0 0 0 0 rgba(0, 51, 153, 0.38);

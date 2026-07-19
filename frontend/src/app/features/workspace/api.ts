@@ -10,7 +10,9 @@ type CourseApiItem = {
   code?: unknown;
   title?: unknown;
   progress?: unknown;
+  progress_percent?: unknown;
   current_kp_title?: unknown;
+  current_knowledge_point?: unknown;
   currentKnowledgePoint?: unknown;
 };
 
@@ -92,6 +94,8 @@ function adaptTodayCourseSnapshot(payload: unknown, fallbackCourse: CourseCatalo
   const kpTitle =
     typeof selected.current_kp_title === 'string'
       ? selected.current_kp_title
+      : typeof selected.current_knowledge_point === 'string'
+        ? selected.current_knowledge_point
       : typeof selected.currentKnowledgePoint === 'string'
         ? selected.currentKnowledgePoint
         : fallbackCourse.currentKnowledgePoint;
@@ -99,10 +103,10 @@ function adaptTodayCourseSnapshot(payload: unknown, fallbackCourse: CourseCatalo
   return {
     id: typeof selected.id === 'string' ? selected.id : fallbackCourse.id,
     title: selected.title,
-    progressPercent: normalizeProgress(selected.progress),
+    progressPercent: normalizeProgress(selected.progress_percent ?? selected.progress),
     currentKnowledgePoint: kpTitle,
     source: 'real',
-    message: '今日课程来自真实 / partial-real 课程列表接口。',
+    message: '今日课程来自真实课程目录接口。',
   };
 }
 
@@ -112,7 +116,7 @@ export function loadTodayCourseSnapshot(course: CourseCatalogItem): Promise<Toda
       const controller = new AbortController();
       const timeout = window.setTimeout(() => controller.abort(), 4500);
       try {
-        const payload = await apiGet<unknown>('/api/v1/courses', { signal: controller.signal });
+        const payload = await apiGet<unknown>('/api/v1/courses/catalog', { signal: controller.signal });
         return adaptTodayCourseSnapshot(payload, course);
       } finally {
         window.clearTimeout(timeout);

@@ -43,18 +43,12 @@ function normalizeGeneratedResources(payload: unknown): GeneratedResourceDTO[] {
 }
 
 export function listGeneratedResources(userId: string): Promise<GeneratedResourceDTO[]> {
-  const query = new URLSearchParams({ user_id: userId });
   return withMockFallback(
     async () => {
-      let payload: unknown;
-      try {
-        payload = await apiGet<unknown>(`/api/v1/generated-resources?${query.toString()}`);
-      } catch (error) {
-        if ((error as { status?: unknown })?.status === 404) {
-          return mockGeneratedResourcesForUser(userId);
-        }
-        throw error;
-      }
+      // The backend derives ownership from the authenticated session.  Do not
+      // send a caller-controlled user_id or silently convert a route mismatch
+      // into fixture data.
+      const payload = await apiGet<unknown>('/api/v1/resources');
       const resources = normalizeGeneratedResources(payload);
       return resources.map((resource) => adaptGeneratedResource(resource, userId));
     },

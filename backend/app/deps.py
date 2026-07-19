@@ -1,13 +1,15 @@
 # Status: real
 
+from hashlib import sha256
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings, get_settings
+from app.core.singleflight import run_request_singleflight
 from app.db.models.identity.user import User
 from app.db.seeds._constants import DEMO_USER_ID
 from app.db.session import get_session
@@ -20,6 +22,7 @@ _optional_bearer = HTTPBearer(auto_error=False)
 
 
 async def required_current_user(
+    request: Request,
     session: SessionDep,
     settings: SettingsDep,
     credentials: Annotated[
@@ -31,7 +34,13 @@ async def required_current_user(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail={"code": "AUTH_REQUIRED", "message": "请先登录"},
         )
-    return await AuthService(session, settings).get_current_user(credentials.credentials)
+    token = credentials.credentials
+    key = ("current-user", sha256(token.encode("utf-8")).digest())
+    return await run_request_singleflight(
+        request,
+        key,
+        lambda: AuthService(session, settings).get_current_user(token),
+    )
 
 
 async def required_current_user_id(
@@ -41,6 +50,7 @@ async def required_current_user_id(
 
 
 async def current_user(
+    request: Request,
     session: SessionDep,
     settings: SettingsDep,
     credentials: Annotated[
@@ -50,7 +60,13 @@ async def current_user(
     """JWT-backed user when present; None keeps demo fallback endpoints alive."""
     if credentials is None:
         return None
-    return await AuthService(session, settings).get_current_user(credentials.credentials)
+    token = credentials.credentials
+    key = ("current-user", sha256(token.encode("utf-8")).digest())
+    return await run_request_singleflight(
+        request,
+        key,
+        lambda: AuthService(session, settings).get_current_user(token),
+    )
 
 
 async def current_user_id(user: Annotated[User | None, Depends(current_user)]) -> UUID:

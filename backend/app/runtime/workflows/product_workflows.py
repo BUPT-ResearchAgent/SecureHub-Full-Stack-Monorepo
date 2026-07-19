@@ -12,6 +12,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from app.schemas.course_plan_profile import CoursePlanProfileSnapshot, CoursePlanRationaleCode
 from app.runtime.workflow_definition import EdgeDefinition, NodeDefinition, WorkflowDefinition
 
 
@@ -28,6 +29,11 @@ class CoursePlanInput(BaseModel):
     target_node_id: str | None = None
     query: str = "Generate a personalised learning path"
     domain: str = "course_websec"
+    # These values are removed from browser input, hydrated from UserProfile
+    # by WorkflowApplicationService, and retained for durable/replayed roots.
+    profile_snapshot: CoursePlanProfileSnapshot = Field(default_factory=CoursePlanProfileSnapshot)
+    profile_reason_codes: tuple[CoursePlanRationaleCode, ...] = Field(default_factory=tuple)
+    persona_summary: str = Field(default="", max_length=800)
 
 
 class TutorRoutingInput(BaseModel):
@@ -98,7 +104,12 @@ def _profile_input(root: dict[str, Any], _state: dict[str, Any]) -> dict[str, An
 
 
 def _path_input(root: dict[str, Any], _state: dict[str, Any]) -> dict[str, Any]:
-    return {**_basic_input(root, _state), "course_id": root.get("course_id")}
+    return {
+        **_basic_input(root, _state),
+        "course_id": root.get("course_id"),
+        "profile_snapshot": root.get("profile_snapshot") or {},
+        "profile_reason_codes": root.get("profile_reason_codes") or [],
+    }
 
 
 def _route_input(root: dict[str, Any], _state: dict[str, Any]) -> dict[str, Any]:

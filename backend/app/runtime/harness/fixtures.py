@@ -10,6 +10,8 @@ This module centralizes:
 - LLM completion fixtures keyed by skill name
 """
 
+from copy import deepcopy
+import json
 from typing import Any
 
 # --- Evidence fixtures ---------------------------------------------------
@@ -423,6 +425,10 @@ _DEFAULT_LLM_OUTPUTS: dict[str, dict[str, Any]] = {
         "lab": {
             "title": "DVWA SQLi 三难度通关",
             "objective": "掌握手工注入与防御代码的对照实践。",
+            "prerequisites": [
+                "SQL query fundamentals",
+                "Authorised isolated-lab safety rules",
+            ],
             "environment": ["docker", "DVWA:latest", "burpsuite-community"],
             "steps": [
                 "启动 DVWA 容器，登录后将 security level 设为 Low。",
@@ -519,12 +525,180 @@ _DEFAULT_LLM_OUTPUTS: dict[str, dict[str, Any]] = {
 }
 
 
+# These descriptions are deliberately keyed by the bounded profile enum, not
+# by any learner-supplied profile text.  They let fixture planning expose a
+# reproducible weak-point adaptation without changing the default path shape.
+_FIXTURE_WEAK_POINT_DESCRIPTIONS: dict[str, str] = {
+    "general_gap": "Revisit a general secure-development gap while following the existing SQLi sequence.",
+    "assessment_gap": "Use the existing SQLi sequence to review the latest assessment feedback.",
+    "sql_injection": "Use the existing SQLi sequence to reinforce parameterized-query boundary checks.",
+    "ssrf": "Use the existing SQLi sequence to compare input-boundary controls with SSRF defenses.",
+    "deserialization": "Use the existing SQLi sequence to reinforce trusted-data boundary checks.",
+    "xss": "Use the existing SQLi sequence to compare query boundaries with output-encoding controls.",
+    "authentication": "Use the existing SQLi sequence to reinforce identity and session-boundary checks.",
+}
+
+# Keep the paired weak-point treatment visible in the durable LearningTask
+# projection.  These fixed labels are derived solely from the bounded enum;
+# learner-supplied profile text must never become a task title.
+_FIXTURE_WEAK_POINT_TITLE_SUFFIXES: dict[str, str] = {
+    "general_gap": "general secure-development review",
+    "assessment_gap": "assessment-feedback review",
+    "sql_injection": "parameterized-query boundary review",
+    "ssrf": "request-boundary comparison review",
+    "deserialization": "trusted-data boundary review",
+    "xss": "output-encoding boundary review",
+    "authentication": "identity and session-boundary review",
+}
+
+
 def default_llm_output(skill_name: str) -> dict[str, Any]:
     """Return a deep-ish copy of the canned LLM output for a skill, or a generic stub."""
     template = _DEFAULT_LLM_OUTPUTS.get(skill_name)
     if template is not None:
-        return dict(template)
+        output = deepcopy(template)
+        # Keep deterministic fixtures aligned with the canonical Skill
+        # schemas.  Older showcase payloads used compatibility keys (for
+        # example ``items`` or a nested ``lab`` object); leaving those keys
+        # unmapped makes the strict Pydantic boundary silently persist an
+        # empty typed artifact even though the fixture contains material.
+        if skill_name == "GenerateMindmap" and not output.get("markmap_markdown"):
+            output["markmap_markdown"] = str(output.get("markmap") or "")
+        elif skill_name == "GenerateVideoStoryboard":
+            shots = output.get("shots") if isinstance(output.get("shots"), list) else []
+            output.setdefault(
+                "mermaid",
+                "graph TD\n  SQLi[SQL injection] --> DEFENSE[parameterized query defense]",
+            )
+            output.setdefault(
+                "tts_segments",
+                [
+                    str(item.get("tts_text") or item.get("narration") or "")
+                    for item in shots
+                    if isinstance(item, dict) and str(item.get("tts_text") or item.get("narration") or "").strip()
+                ],
+            )
+        elif skill_name == "GenerateQuiz" and not output.get("quiz_items"):
+            output["quiz_items"] = list(output.get("items") or [])
+        elif skill_name == "GenerateHandsOnLab":
+            lab = output.get("lab") if isinstance(output.get("lab"), dict) else {}
+            output.setdefault("prerequisites", list(lab.get("prerequisites") or []))
+            output.setdefault("setup", list(lab.get("environment") or lab.get("setup") or []))
+            raw_steps = lab.get("steps") if isinstance(lab.get("steps"), list) else []
+            output.setdefault(
+                "steps",
+                [
+                    {"instruction": str(item).strip()}
+                    for item in raw_steps
+                    if str(item).strip()
+                ],
+            )
+            output.setdefault("acceptance_criteria", list(lab.get("acceptance") or []))
+            output.setdefault("hints", ["Use the isolated local lab and record the defensive explanation."])
+        elif skill_name == "RecommendReadings" and not output.get("readings"):
+            output["readings"] = list(output.get("items") or [])
+        return output
     return {
         "content": f"[fixture] no canned output for skill {skill_name}, returning generic stub.",
         "quality_score": 0.6,
     }
+
+
+def fixture_llm_output(skill_name: str, *, prompt: str = "") -> dict[str, Any]:
+    """Return a deterministic fixture, including server-owned path variants.
+
+    Fixture mode is not a surrogate for T09. It does, however, need to model
+    the same bounded course-plan contract as the production prompt so local
+    paired tests can verify profile propagation without randomness.
+    """
+    output = default_llm_output(skill_name)
+    if skill_name != "GenerateLearningPath":
+        return output
+
+    snapshot = _course_plan_snapshot_from_prompt(prompt)
+    codes = snapshot.rationale_codes()
+    if not codes:
+        return output
+
+    nodes = output.get("nodes")
+    if not isinstance(nodes, list) or len(nodes) < 3:
+        return output
+    path_nodes = [dict(node) if isinstance(node, dict) else node for node in nodes]
+    if not all(isinstance(node, dict) for node in path_nodes):
+        return output
+
+    # Each variation is grounded in a fixed server classification, never in
+    # a raw profile string or clock/random value. Existing node IDs remain so
+    # the fixture still exercises the durable task materialisation path.
+    if "foundation_reinforcement" in codes:
+        path_nodes[0]["title"] = "Reinforce request-to-query boundaries"
+        path_nodes[0]["est_minutes"] = 40
+    elif "advanced_acceleration" in codes:
+        path_nodes[0]["title"] = "Accelerated SQLi threat-model review"
+        path_nodes[0]["est_minutes"] = 20
+
+    if "web_defense_goal" in codes:
+        path_nodes[2]["title"] = "Validate defensive web-security controls"
+    elif "application_security_goal" in codes:
+        path_nodes[2]["title"] = "Apply parameterized queries in application review"
+    elif "secure_backend_goal" in codes:
+        path_nodes[2]["title"] = "Harden backend query boundaries"
+    elif "general_security_goal" in codes:
+        path_nodes[2]["title"] = "Validate parameterized-query defenses"
+
+    if "video_preference" in codes:
+        path_nodes[1]["title"] = "Watch a defensive SQLi walkthrough"
+    elif "lab_preference" in codes:
+        path_nodes[1]["title"] = "Practice defensive SQLi validation in a lab"
+    elif "quiz_preference" in codes:
+        path_nodes[1]["title"] = "Check SQLi payload recognition with a quiz"
+    elif "presentation_preference" in codes:
+        path_nodes[1]["title"] = "Review SQLi defense concepts in a slide deck"
+    elif "mindmap_preference" in codes:
+        path_nodes[1]["title"] = "Map SQLi attack and defense relationships"
+    elif "readings_preference" in codes:
+        path_nodes[1]["title"] = "Read an evidence-backed SQLi defense guide"
+    elif "document_preference" in codes:
+        path_nodes[1]["title"] = "Read a structured SQLi defense guide"
+
+    # Weak-point adaptation belongs to an existing default node.  Adding a
+    # fourth node here changed the durable cardinality of the course-plan
+    # output, and the learning-loop replan then added a fifth task.  Keep the
+    # course-plan contract at three nodes; the replan service owns its one
+    # supplemental review task.
+    if snapshot.weak_point_focus is not None:
+        focus = snapshot.weak_point_focus
+        metadata = dict(path_nodes[0].get("metadata") or {})
+        metadata["fixture_weak_point_focus"] = focus
+        path_nodes[0]["metadata"] = metadata
+        path_nodes[0]["description"] = _FIXTURE_WEAK_POINT_DESCRIPTIONS[focus]
+        base_title = str(path_nodes[0].get("title") or "Review secure-development boundaries").strip()
+        path_nodes[0]["title"] = f"{base_title}: {_FIXTURE_WEAK_POINT_TITLE_SUFFIXES[focus]}"
+
+    output["nodes"] = path_nodes
+    output["personalization_rationale"] = list(codes)
+    output["content"] = "Fixture learning path tailored to the durable profile projection."
+    return output
+
+
+def _course_plan_snapshot_from_prompt(prompt: str):
+    """Parse only the ContextBuilder task JSON; malformed prompts use default."""
+    from app.schemas.course_plan_profile import CoursePlanProfileSnapshot
+
+    task_marker = "[Task]\n"
+    schema_marker = "\n\nReturn JSON matching:"
+    start = prompt.find(task_marker)
+    if start < 0:
+        return CoursePlanProfileSnapshot()
+    start += len(task_marker)
+    end = prompt.find(schema_marker, start)
+    if end < 0:
+        return CoursePlanProfileSnapshot()
+    try:
+        task = json.loads(prompt[start:end])
+        if not isinstance(task, dict):
+            return CoursePlanProfileSnapshot()
+        snapshot = task.get("profile_snapshot")
+        return CoursePlanProfileSnapshot.model_validate(snapshot if isinstance(snapshot, dict) else {})
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return CoursePlanProfileSnapshot()

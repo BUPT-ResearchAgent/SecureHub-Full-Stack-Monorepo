@@ -328,15 +328,15 @@ export function TeacherQuizBank() {
           </div>
         </div>
         <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-5">
-          <select value={knowledgeNodeId} onChange={(event) => setKnowledgeNodeId(event.target.value)} className="rounded-lg border border-slate-200 px-3 py-2 text-xs">
+          <select aria-label="筛选知识点" value={knowledgeNodeId} onChange={(event) => setKnowledgeNodeId(event.target.value)} className="rounded-lg border border-slate-200 px-3 py-2 text-xs">
             <option value="">全部知识点</option>
             {quizAssist.context?.knowledge_points.map((node) => <option key={node.id} value={node.id}>{node.label}</option>)}
           </select>
-          <select value={questionType} onChange={(event) => setQuestionType(event.target.value as TeacherQuizBankItem['type'] | '')} className="rounded-lg border border-slate-200 px-3 py-2 text-xs">
+          <select aria-label="筛选题型" value={questionType} onChange={(event) => setQuestionType(event.target.value as TeacherQuizBankItem['type'] | '')} className="rounded-lg border border-slate-200 px-3 py-2 text-xs">
             <option value="">全部题型</option>
             {Object.entries(typeLabel).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
           </select>
-          <select value={difficulty} onChange={(event) => setDifficulty(Number(event.target.value))} className="rounded-lg border border-slate-200 px-3 py-2 text-xs">
+          <select aria-label="筛选难度" value={difficulty} onChange={(event) => setDifficulty(Number(event.target.value))} className="rounded-lg border border-slate-200 px-3 py-2 text-xs">
             <option value={0}>全部难度</option>
             {[1, 2, 3, 4, 5].map((value) => <option key={value} value={value}>难度 {value}</option>)}
           </select>
@@ -393,7 +393,7 @@ export function TeacherQuizBank() {
               key={value}
               type="button"
               onClick={() => setFilter(value)}
-              className={`rounded-full px-3 py-1 ${filter === value ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500'}`}
+              className={`rounded-full px-3 py-1 ${filter === value ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-700'}`}
             >
               {{ all: '全部', passed: '通过', failed: '失败', pending: '待校验' }[value]}（{counts[value]}）
             </button>
@@ -458,7 +458,7 @@ function QuizItemCard({
       </div>
       <p className="mt-3 text-sm font-medium leading-6 text-slate-900">{item.question}</p>
       {item.options.length > 0 && <ul className="mt-2 grid gap-1 text-xs text-slate-600 sm:grid-cols-2">{item.options.map((option) => <li key={option} className="rounded-lg bg-slate-50 px-2 py-1">{option}</li>)}</ul>}
-      <p className="mt-3 text-xs text-slate-600"><span className="text-slate-400">答案：</span>{item.answer}</p>
+      <p className="mt-3 text-xs text-slate-600"><span className="text-slate-600">答案：</span>{item.answer}</p>
       <p className="mt-1 text-xs leading-5 text-slate-500">解析：{item.explanation}</p>
       <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3 text-[11px] text-slate-500">
         <span className="inline-flex items-center gap-1"><Database className="h-3 w-3" />{item.canonical_key} · v{item.content_version}</span>

@@ -356,7 +356,7 @@ export function WebSecurityExam({ onOpenResource, onPaperChange, initialPaperId 
       </div>
 
       <div className="grid min-w-0 gap-0 xl:grid-cols-[minmax(0,1fr)_20rem]">
-        <main className="min-w-0 p-4 sm:p-6">
+        <section aria-label="试卷作答区" className="min-w-0 p-4 sm:p-6">
           {!progress.submitted && activeQuestion && (
             <>
               <section className="border-2 border-slate-900 bg-white">
@@ -365,9 +365,9 @@ export function WebSecurityExam({ onOpenResource, onPaperChange, initialPaperId 
                     <div className="flex flex-wrap items-center gap-2 text-xs font-semibold">
                       <span className="border border-slate-900 bg-[#ffef69] px-2 py-1">第 {activeQuestionIndex + 1} / {attemptQuestions.length} 题</span>
                       <span className="text-[#003399]">{questionTypeLabel[activeQuestion.type]} · {activeQuestion.points} 分</span>
-                      <span className="text-slate-500">难度 {activeQuestion.difficulty}/5</span>
+                      <span className="text-slate-600">难度 {activeQuestion.difficulty}/5</span>
                     </div>
-                    <span className="max-w-full break-words text-xs text-slate-500">
+                    <span className="max-w-full break-words text-xs text-slate-600">
                       {webSecurityKnowledgePointById[activeQuestion.knowledgePointId]?.title ?? activeQuestion.knowledgePointId}
                     </span>
                   </div>
@@ -464,13 +464,13 @@ export function WebSecurityExam({ onOpenResource, onPaperChange, initialPaperId 
               onReset={() => restart(questionIdsForPaper(paper.id))}
             />
           )}
-        </main>
+        </section>
 
         <aside className="min-w-0 border-t-2 border-slate-900 bg-[#f7f1df] p-4 xl:border-l-2 xl:border-t-0 sm:p-5">
           <section aria-label="作答导航">
             <div className="flex items-center justify-between gap-2">
               <h3 className="flex items-center gap-2 text-sm font-bold"><ListChecks className="h-4 w-4 text-[#003399]" />作答导航</h3>
-              <span className="text-xs font-medium text-slate-500">{completionPercent}%</span>
+              <span className="text-xs font-medium text-slate-600">{completionPercent}%</span>
             </div>
             <div className="mt-3 h-2 overflow-hidden border border-slate-900 bg-white">
               <div className="h-full bg-[#003399] transition-[width]" style={{ width: `${completionPercent}%` }} />

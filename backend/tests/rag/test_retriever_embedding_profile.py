@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -11,6 +11,7 @@ from app.db.models.knowledge.document import Document
 import app.db.session as db_session
 from app.llm.embeddings.base import EmbeddingResult
 from app.llm.embeddings.errors import EmbeddingProviderError
+from app.rag.controlled_showcase import CONTROLLED_SHOWCASE_EMBEDDING_PROFILE
 from app.rag import retriever
 
 
@@ -33,6 +34,13 @@ class _QueryService:
 
     async def aclose(self) -> None:
         self.closed = True
+
+
+def test_retriever_tokenises_ascii_and_contiguous_chinese() -> None:
+    terms = retriever._tokenise("CSRF Token 与参数化查询防御")
+
+    assert {"csrf", "token", "参数", "数化", "查询", "防御"} <= set(terms)
+    assert len(terms) == len(set(terms))
 
 
 @pytest.mark.anyio
@@ -89,6 +97,116 @@ async def test_retriever_filters_ready_current_profile(monkeypatch, sqlite_sessi
 
 
 @pytest.mark.anyio
+async def test_retriever_keeps_keyword_hit_beyond_legacy_candidate_window(
+    monkeypatch, sqlite_session
+) -> None:
+    target_profile = "qwen-openai-compatible:text-embedding-v4:1024:dense:v1"
+    document_id = UUID("00000000-0000-0000-0000-000000000100")
+    document = Document(
+        id=document_id,
+        domain="course_websec",
+        source_type="manual",
+        title="参数化查询",
+        url="https://example.test/parameterized-query",
+        raw_text="parameterized query defense",
+        metadata_={"source_url": "https://example.test/parameterized-query"},
+        trust_score=0.8,
+        status="ready",
+    )
+    distractors = [
+        Chunk(
+            id=UUID(f"00000000-0000-0000-0000-{index:012d}"),
+            document_id=document_id,
+            domain="course_websec",
+            chunk_text=f"unrelated evidence {index}",
+            chunk_index=index,
+            embedding=[0.001] * 1024,
+            embedding_status="ready",
+            metadata_={"embedding_profile": target_profile},
+        )
+        for index in range(1, 9)
+    ]
+    keyword_hit = Chunk(
+        id=UUID("ffffffff-ffff-ffff-ffff-ffffffffffff"),
+        document_id=document_id,
+        domain="course_websec",
+        chunk_text="参数化查询通过绑定参数而不是拼接输入来防御 SQL 注入。",
+        chunk_index=9,
+        embedding=[0.001] * 1024,
+        embedding_status="ready",
+        metadata_={
+            "embedding_profile": target_profile,
+            "url": "https://example.test/parameterized-query",
+        },
+    )
+    sqlite_session.add_all([document, *distractors, keyword_hit])
+    await sqlite_session.commit()
+
+    monkeypatch.setattr(retriever, "EmbeddingService", lambda: _QueryService())
+    monkeypatch.setattr(db_session, "get_sessionmaker", lambda: lambda: sqlite_session)
+
+    hits = await retriever.retrieve("参数化查询的作用", top_k=1)
+
+    assert len(distractors) > 1 * 4
+    assert [str(hit.chunk_id) for hit in hits] == [str(keyword_hit.id)]
+
+
+@pytest.mark.anyio
+async def test_retriever_merges_document_provenance_before_chunk_overrides(
+    monkeypatch, sqlite_session
+) -> None:
+    target_profile = "qwen-openai-compatible:text-embedding-v4:1024:dense:v1"
+    document_id = uuid4()
+    document = Document(
+        id=document_id,
+        domain="course_websec",
+        source_type="manual_import",
+        title="Document provenance",
+        url="https://example.test/document-provenance",
+        raw_text="parameterized query defense",
+        metadata_={
+            "platform": "document-platform",
+            "rights_note": "document rights",
+            "collection_mode": "manual",
+        },
+        trust_score=0.85,
+        status="ready",
+    )
+    chunk = Chunk(
+        document_id=document_id,
+        domain="course_websec",
+        chunk_text="SQL injection parameterized query defense",
+        chunk_index=0,
+        embedding=[0.001] * 1024,
+        embedding_status="ready",
+        metadata_={
+            "embedding_profile": target_profile,
+            "platform": "chunk-platform",
+        },
+    )
+    sqlite_session.add_all([document, chunk])
+    await sqlite_session.commit()
+
+    monkeypatch.setattr(retriever, "EmbeddingService", lambda: _QueryService())
+    monkeypatch.setattr(db_session, "get_sessionmaker", lambda: lambda: sqlite_session)
+
+    hits = await retriever.retrieve("SQL injection", top_k=1)
+
+    assert len(hits) == 1
+    assert hits[0].metadata == {
+        "platform": "chunk-platform",
+        "rights_note": "document rights",
+        "collection_mode": "manual",
+        "embedding_profile": target_profile,
+        "source_url": "https://example.test/document-provenance",
+        "asset_type": "manual_import",
+        "reliability": 0.85,
+    }
+    assert hits[0].source == "https://example.test/document-provenance"
+    assert hits[0].reliability == 0.85
+
+
+@pytest.mark.anyio
 async def test_retriever_closes_embedding_service(monkeypatch, sqlite_session) -> None:
     service = _QueryService()
     monkeypatch.setattr(retriever, "EmbeddingService", lambda: service)
@@ -119,3 +237,96 @@ async def test_retriever_does_not_swallow_embedding_provider_errors(monkeypatch,
 
     with pytest.raises(EmbeddingProviderError):
         await retriever.retrieve("SQL injection", top_k=5)
+
+
+@pytest.mark.anyio
+async def test_retriever_uses_persisted_controlled_showcase_index_without_live_provider(
+    monkeypatch, sqlite_session
+) -> None:
+    document_id = uuid4()
+    document = Document(
+        id=document_id,
+        domain="course_websec",
+        source_type="curated_lecture",
+        title="WEBSEC-101 defensive foundations",
+        url="local://course_websec/curated/websec-101.md",
+        raw_text="controlled teaching lecture",
+        metadata_={
+            "source_boundary": "controlled local teaching index",
+            "source_url": "local://course_websec/curated/websec-101.md",
+        },
+        trust_score=0.9,
+        status="ready",
+    )
+    chunks = [
+        Chunk(
+            document_id=document_id,
+            domain="course_websec",
+            chunk_text=f"WEBSEC-101 defensive section {index}: input validation and verification.",
+            chunk_index=index,
+            embedding=[0.01 + index / 1000] * 1024,
+            embedding_status="ready",
+            metadata_={
+                "embedding_profile": CONTROLLED_SHOWCASE_EMBEDDING_PROFILE,
+                "embedding_source": "controlled_showcase_seed",
+                "chapter": f"Chapter {index}",
+                "kp_ids": [str(uuid4())],
+                "source_boundary": "controlled local teaching index",
+            },
+        )
+        for index in range(3)
+    ]
+    sqlite_session.add_all([document, *chunks])
+    await sqlite_session.commit()
+
+    monkeypatch.setattr(
+        retriever,
+        "EmbeddingService",
+        lambda: (_ for _ in ()).throw(AssertionError("live embedding must not run")),
+    )
+    monkeypatch.setattr(db_session, "get_sessionmaker", lambda: lambda: sqlite_session)
+
+    hits = await retriever.retrieve("Generate a personalised WEBSEC-101 path", top_k=3)
+
+    assert len(hits) == 3
+    assert all(hit.metadata["retrieval_mode"] == "controlled_showcase_fixture" for hit in hits)
+    assert all(hit.metadata["chapter"] and hit.metadata["kp_ids"] for hit in hits)
+
+
+@pytest.mark.anyio
+async def test_retriever_never_uses_controlled_showcase_index_in_production(
+    monkeypatch, sqlite_session
+) -> None:
+    document_id = uuid4()
+    document = Document(
+        id=document_id,
+        domain="course_websec",
+        source_type="curated_lecture",
+        title="WEBSEC-101 defensive foundations",
+        url="local://course_websec/curated/websec-101.md",
+        raw_text="controlled teaching lecture",
+        metadata_={},
+        trust_score=0.9,
+        status="ready",
+    )
+    chunk = Chunk(
+        document_id=document_id,
+        domain="course_websec",
+        chunk_text="Controlled local course evidence",
+        chunk_index=0,
+        embedding=[0.01] * 1024,
+        embedding_status="ready",
+        metadata_={"embedding_profile": CONTROLLED_SHOWCASE_EMBEDDING_PROFILE},
+    )
+    sqlite_session.add_all([document, chunk])
+    await sqlite_session.commit()
+
+    monkeypatch.setenv("APP_ENV", "production")
+    retriever.get_settings.cache_clear()
+    monkeypatch.setattr(retriever, "EmbeddingService", lambda: _QueryService())
+    monkeypatch.setattr(db_session, "get_sessionmaker", lambda: lambda: sqlite_session)
+    try:
+        assert await retriever.retrieve("WEBSEC-101", top_k=3) == []
+    finally:
+        monkeypatch.undo()
+        retriever.get_settings.cache_clear()

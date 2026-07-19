@@ -21,6 +21,7 @@ from app.api.v1.endpoints.workflow_adapter import (
     start_product_workflow,
     workflow_service,
 )
+from app.core.singleflight import run_request_singleflight
 from app.deps import CurrentUserDep, SessionDep
 from app.repositories.identity.capabilities import UserCapabilityRepository
 from app.repositories.identity.profiles import UserProfileRepository
@@ -115,12 +116,28 @@ async def build_profile_from_chat(
 async def get_current_profile(
     session: SessionDep,
     current_user_id: CurrentUserDep,
+    request: Request = None,  # type: ignore[assignment]
 ) -> UserProfileResponse:
     """Return the authenticated profile without treating ``me`` as a UUID."""
-    profile = await UserProfileRepository(session).get_by_user_id(current_user_id)
-    if profile is None:
-        return await _profile_response(session, current_user_id, {}, None)
-    return await _profile_response(session, current_user_id, profile.dimensions or {}, profile.updated_at)
+
+    async def load() -> UserProfileResponse:
+        profile = await UserProfileRepository(session).get_by_user_id(current_user_id)
+        if profile is None:
+            return await _profile_response(session, current_user_id, {}, None)
+        return await _profile_response(
+            session,
+            current_user_id,
+            profile.dimensions or {},
+            profile.updated_at,
+        )
+
+    if request is None:
+        return await load()
+    return await run_request_singleflight(
+        request,
+        ("profile-me", current_user_id),
+        load,
+    )
 
 
 @router.get("/profile/{user_id}", response_model=UserProfileResponse)

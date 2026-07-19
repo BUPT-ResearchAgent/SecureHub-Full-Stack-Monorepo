@@ -17,7 +17,10 @@ DATA = ROOT / "data"
 
 
 def sha256_file(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    # Manifests freeze the UTF-8 JSON/JSONL content with LF line endings so a
+    # Git CRLF checkout cannot create a false reproducibility mismatch.
+    canonical_bytes = path.read_bytes().replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+    return hashlib.sha256(canonical_bytes).hexdigest()
 
 
 def run_manifest(path: Path) -> dict[str, Any]:
