@@ -22,7 +22,7 @@ OTHER_ID = UUID("00000000-0000-0000-0000-000000000002")
 COURSE_ID = UUID("00000000-0000-0000-0000-000000000101")
 
 
-def _row(*, user_id: UUID = OWNER_ID) -> SimpleNamespace:
+def _row(*, user_id: UUID | None = OWNER_ID) -> SimpleNamespace:
     now = datetime.now(timezone.utc)
     return SimpleNamespace(
         id=uuid4(),
@@ -80,6 +80,29 @@ async def test_resource_reads_are_scoped_to_current_user(monkeypatch: pytest.Mon
     resource = await resources.get_resource(_Repo.row.id, session=object(), current_user_id=OWNER_ID)
     assert resource.id == _Repo.row.id
 
+    with pytest.raises(HTTPException) as error:
+        await resources.get_resource(_Repo.row.id, session=object(), current_user_id=OTHER_ID)
+    assert error.value.status_code == 404
+
+
+@pytest.mark.anyio
+async def test_shared_course_resource_read_requires_active_enrollment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(resources, "GeneratedResourceRepository", _Repo)
+    _Repo.row = _row(user_id=None)
+
+    async def enrolled(*_args: object, **_kwargs: object) -> bool:
+        return True
+
+    monkeypatch.setattr(resources, "_has_active_course_enrollment", enrolled)
+    shared = await resources.get_resource(_Repo.row.id, session=object(), current_user_id=OTHER_ID)
+    assert shared.id == _Repo.row.id
+
+    async def not_enrolled(*_args: object, **_kwargs: object) -> bool:
+        return False
+
+    monkeypatch.setattr(resources, "_has_active_course_enrollment", not_enrolled)
     with pytest.raises(HTTPException) as error:
         await resources.get_resource(_Repo.row.id, session=object(), current_user_id=OTHER_ID)
     assert error.value.status_code == 404
