@@ -389,9 +389,11 @@ pnpm dev
 
 ### 受控 WEBSEC-101 课程场景数据
 
-`websec-101-showcase-v7` 是仅供本地开发、比赛演示和明确授权测试数据库使用的显式 seed profile。它写入真实的课程、教学班、选课、作答、学习路径、可恢复辅导记录、资源、作业、AgentRun/Evidence 和治理关系，现有 API、权限和审计会照常消费这些实体。
+`websec-101-showcase-v8` 是仅供本地开发、比赛演示和明确授权测试数据库使用的显式 seed profile。它写入真实的课程、教学班、选课、作答、学习路径、可恢复辅导记录、资源、作业、AgentRun/Evidence 和治理关系，现有 API、权限和审计会照常消费这些实体。
 
 该 profile 包含 32 个虚构课程花名学生，以及复用本地登录账号的 1 名 demo 课程学习者。固定课程资料属于 `curated-demo`，外部链接保持 `external-preview` 来源边界；它们不是实时模型输出、平台自有视频或真实在校学生数据。seed 不会在应用启动时执行，并且当 `APP_ENV` 为 `production`、`prod` 或 `release` 时会拒绝运行。
+
+v8 保留 v7 的受控 36 题综合评估场景，并为 WEBSEC-101 讲义的 7 个受控 chunk 写入持久化、确定性的 demo 索引，`embedding_profile` 为 `controlled-showcase-fixture:websec-101:1024:dense:v1`。课程检索可返回 7 条带章节和来源定位的 `controlled_showcase_fixture` Evidence。该索引仅用于本地、比赛演示或明确授权测试环境；它不是实时 Qwen embedding、live Provider 或生产索引。
 
 运行前必须确认：当前目录是 `backend/`、依赖已用 `uv` 同步、`DATABASE_URL` 指向明确授权的本地/比赛/测试 PostgreSQL、目标库已通过 `uv run alembic upgrade head` 到当前 head。不要将生产连接串或凭据写入文档、脚本或 Git。
 
@@ -416,7 +418,7 @@ SECUREHUB_ALLOW_SHOWCASE_SEED=1 uv run python -m app.db.seeds.seed_showcase_cour
 SECUREHUB_ALLOW_SHOWCASE_SEED=1 uv run python -m app.db.seeds.seed_showcase_course verify
 ```
 
-#### 从已有 v5/v6 展示数据升级到 v7
+#### 从已有 v5/v6/v7 展示数据升级到 v8
 
 在同一类授权数据库中，普通升级只需重新执行上面的 `seed`、再执行 `verify`；**不要为升级执行 `reset`**。`seed` 会按该 profile 的稳定标识幂等协调受控对象，不以清理无关工作区数据的方式升级。Windows PowerShell 与 macOS/Linux 均从 `backend/` 目录按下列顺序运行：
 
@@ -432,9 +434,9 @@ uv run python -m app.db.seeds.seed_showcase_course seed
 uv run python -m app.db.seeds.seed_showcase_course verify
 ```
 
-v7 会为 `demo-student@securehub.local` 补齐持久化的 36 道冻结综合评估题、开放 submission、个人资源/Evidence 和 `assessment_demo_draft`。课程页的“一键填充 36 道题”只会预填可编辑草稿；仍须由学习者显式提交，且评估反馈与 `outcome_evaluator` 能力画像回流继续受真实 API、Evidence、Provider 和 QualityCheck 约束，不会用默认成绩或固定雷达图替代。
+v8 保留为 `demo-student@securehub.local` 提供的持久化 36 道冻结综合评估题、开放 submission、个人资源/Evidence 和 `assessment_demo_draft`。课程页的“一键填充 36 道题”只会预填可编辑草稿；仍须由学习者显式提交，且评估反馈与 `outcome_evaluator` 能力画像回流继续受真实 API、Evidence、Provider 和 QualityCheck 约束，不会用默认成绩或固定雷达图替代。
 
-在已实际执行的 Windows 本地受控库中，`verify` 返回 `manifest: websec-101-showcase-v7`、`valid: True`、`demo_assessment_questions: 36` 与 `demo_assessment_drafts: 1`。这只证明该受控 seed 数据已写入并通过其关系检查；不代表 Provider、浏览器 E2E 或生产环境已经验收。其他平台必须在自身授权环境重新执行 `seed` 与 `verify` 后才可记录为已验证。
+在已实际执行的 Windows 本地受控库中，`verify` 返回 `manifest: websec-101-showcase-v8`、`valid: True`、`demo_assessment_questions: 36`、`demo_assessment_drafts: 1` 与 `lecture_ready_chunks: 7`。课程检索可返回 7 条带章节和来源定位的 `controlled_showcase_fixture` Evidence。这只证明受控 seed 数据、关系检查和受控 fixture 检索已写入；不代表 live Provider、实时 Qwen embedding、浏览器 E2E 或生产环境已经验收。其他平台必须在自身授权环境重新执行 `seed` 与 `verify` 后才可记录为已验证。
 
 需要清理时，仅能在同一类受控环境中显式执行 profile-scoped reset；它只删除该 profile 所有的稳定 ID，不会替代备份、迁移验证或浏览器验收：
 

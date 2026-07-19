@@ -231,6 +231,11 @@ class StudentCourseExperienceService:
                 LearningPath.user_id == user_id,
                 LearningPath.course_id == course_id,
                 LearningPath.status == "active",
+                # A path row without a durable task cannot drive a student
+                # learning surface. Keep it auditable, but fall back to the
+                # latest usable active path instead of reporting a false
+                # empty-path state when an incomplete root exists.
+                LearningPath.id.in_(select(LearningTask.path_id)),
             )
             .order_by(LearningPath.updated_at.desc())
             .limit(1)

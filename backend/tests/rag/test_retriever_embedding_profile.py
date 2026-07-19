@@ -11,6 +11,7 @@ from app.db.models.knowledge.document import Document
 import app.db.session as db_session
 from app.llm.embeddings.base import EmbeddingResult
 from app.llm.embeddings.errors import EmbeddingProviderError
+from app.rag.controlled_showcase import CONTROLLED_SHOWCASE_EMBEDDING_PROFILE
 from app.rag import retriever
 
 
@@ -236,3 +237,96 @@ async def test_retriever_does_not_swallow_embedding_provider_errors(monkeypatch,
 
     with pytest.raises(EmbeddingProviderError):
         await retriever.retrieve("SQL injection", top_k=5)
+
+
+@pytest.mark.anyio
+async def test_retriever_uses_persisted_controlled_showcase_index_without_live_provider(
+    monkeypatch, sqlite_session
+) -> None:
+    document_id = uuid4()
+    document = Document(
+        id=document_id,
+        domain="course_websec",
+        source_type="curated_lecture",
+        title="WEBSEC-101 defensive foundations",
+        url="local://course_websec/curated/websec-101.md",
+        raw_text="controlled teaching lecture",
+        metadata_={
+            "source_boundary": "controlled local teaching index",
+            "source_url": "local://course_websec/curated/websec-101.md",
+        },
+        trust_score=0.9,
+        status="ready",
+    )
+    chunks = [
+        Chunk(
+            document_id=document_id,
+            domain="course_websec",
+            chunk_text=f"WEBSEC-101 defensive section {index}: input validation and verification.",
+            chunk_index=index,
+            embedding=[0.01 + index / 1000] * 1024,
+            embedding_status="ready",
+            metadata_={
+                "embedding_profile": CONTROLLED_SHOWCASE_EMBEDDING_PROFILE,
+                "embedding_source": "controlled_showcase_seed",
+                "chapter": f"Chapter {index}",
+                "kp_ids": [str(uuid4())],
+                "source_boundary": "controlled local teaching index",
+            },
+        )
+        for index in range(3)
+    ]
+    sqlite_session.add_all([document, *chunks])
+    await sqlite_session.commit()
+
+    monkeypatch.setattr(
+        retriever,
+        "EmbeddingService",
+        lambda: (_ for _ in ()).throw(AssertionError("live embedding must not run")),
+    )
+    monkeypatch.setattr(db_session, "get_sessionmaker", lambda: lambda: sqlite_session)
+
+    hits = await retriever.retrieve("Generate a personalised WEBSEC-101 path", top_k=3)
+
+    assert len(hits) == 3
+    assert all(hit.metadata["retrieval_mode"] == "controlled_showcase_fixture" for hit in hits)
+    assert all(hit.metadata["chapter"] and hit.metadata["kp_ids"] for hit in hits)
+
+
+@pytest.mark.anyio
+async def test_retriever_never_uses_controlled_showcase_index_in_production(
+    monkeypatch, sqlite_session
+) -> None:
+    document_id = uuid4()
+    document = Document(
+        id=document_id,
+        domain="course_websec",
+        source_type="curated_lecture",
+        title="WEBSEC-101 defensive foundations",
+        url="local://course_websec/curated/websec-101.md",
+        raw_text="controlled teaching lecture",
+        metadata_={},
+        trust_score=0.9,
+        status="ready",
+    )
+    chunk = Chunk(
+        document_id=document_id,
+        domain="course_websec",
+        chunk_text="Controlled local course evidence",
+        chunk_index=0,
+        embedding=[0.01] * 1024,
+        embedding_status="ready",
+        metadata_={"embedding_profile": CONTROLLED_SHOWCASE_EMBEDDING_PROFILE},
+    )
+    sqlite_session.add_all([document, chunk])
+    await sqlite_session.commit()
+
+    monkeypatch.setenv("APP_ENV", "production")
+    retriever.get_settings.cache_clear()
+    monkeypatch.setattr(retriever, "EmbeddingService", lambda: _QueryService())
+    monkeypatch.setattr(db_session, "get_sessionmaker", lambda: lambda: sqlite_session)
+    try:
+        assert await retriever.retrieve("WEBSEC-101", top_k=3) == []
+    finally:
+        monkeypatch.undo()
+        retriever.get_settings.cache_clear()

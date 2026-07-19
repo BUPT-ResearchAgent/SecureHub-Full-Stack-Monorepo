@@ -23,12 +23,18 @@ from sqlalchemy.exc import SQLAlchemyError
 from app.core.config import get_settings
 from app.llm.embeddings.errors import EmbeddingError
 from app.llm.embeddings.service import EmbeddingService
+from app.rag.controlled_showcase import (
+    CONTROLLED_SHOWCASE_EMBEDDING_PROFILE,
+    controlled_showcase_embedding_provider,
+    is_controlled_showcase_index_allowed,
+)
 
 logger = logging.getLogger(__name__)
 
 _MIN_CANDIDATE_POOL = 128
 _CANDIDATE_MULTIPLIER = 16
 _MAX_CANDIDATE_POOL = 2048
+_CONTROLLED_SHOWCASE_SCORE_FLOOR = 0.001
 
 
 class EvidenceHit(BaseModel):
@@ -57,6 +63,11 @@ async def retrieve(
     """返回针对 ``query`` 召回的 chunk hits。
 
     没有数据库 / 没有目标 profile 的 ready embedding 时返回空列表。
+
+    When the explicitly seeded WEBSEC-101 course is running outside production,
+    an equally explicit deterministic controlled index may be used only after
+    the configured provider profile has no candidates. It retains the same
+    persisted chunks and provenance; it never masquerades as Qwen retrieval.
     Embedding provider 故障会显式传播，避免被误报为“没有证据”。
     """
     try:
@@ -69,18 +80,6 @@ async def retrieve(
 
     try:
         settings = get_settings()
-        service = EmbeddingService()
-        try:
-            query_result = await service.embed_query(query)
-        finally:
-            await service.aclose()
-        if query_result.dimension != settings.EMBEDDING_DIM:
-            raise ValueError(
-                f"query embedding dimension {query_result.dimension} does not match "
-                f"settings.EMBEDDING_DIM={settings.EMBEDDING_DIM}"
-            )
-        embedding = query_result.vectors[0]
-
         sessionmaker = get_sessionmaker()
         async with sessionmaker() as session:
             candidate_limit = min(
@@ -99,6 +98,42 @@ async def retrieve(
             )
             result = await session.execute(stmt)
             rows = result.all()
+            controlled_index = False
+            if not rows and is_controlled_showcase_index_allowed(settings, domain=domain):
+                controlled_stmt = (
+                    select(Chunk, Document)
+                    .join(Document, Document.id == Chunk.document_id)
+                    .where(Chunk.domain == domain)
+                    .where(Chunk.embedding_status == "ready")
+                    .where(Chunk.embedding.is_not(None))
+                    .where(
+                        Chunk.metadata_["embedding_profile"].as_string()
+                        == CONTROLLED_SHOWCASE_EMBEDDING_PROFILE
+                    )
+                    .order_by(Chunk.id.asc())
+                    .limit(candidate_limit)
+                )
+                rows = (await session.execute(controlled_stmt)).all()
+                controlled_index = bool(rows)
+
+            if controlled_index:
+                provider = controlled_showcase_embedding_provider(settings)
+                try:
+                    query_result = await provider.embed_query(query)
+                finally:
+                    await provider.aclose()
+            else:
+                service = EmbeddingService()
+                try:
+                    query_result = await service.embed_query(query)
+                finally:
+                    await service.aclose()
+            if query_result.dimension != settings.EMBEDDING_DIM:
+                raise ValueError(
+                    f"query embedding dimension {query_result.dimension} does not match "
+                    f"settings.EMBEDDING_DIM={settings.EMBEDDING_DIM}"
+                )
+            embedding = query_result.vectors[0]
             if not rows:
                 return []
 
@@ -125,6 +160,12 @@ async def retrieve(
                     except Exception:  # noqa: BLE001
                         vec_score = 0.0
                 combined = 0.6 * vec_score + 0.4 * min(keyword_score, 1.0)
+                # Fixture hashes are intentionally deterministic rather than a
+                # semantic model. The course-scoped fallback still only returns
+                # persisted lecture chunks, but must not discard them solely
+                # because a hash-vector cosine happened to be negative.
+                if controlled_index:
+                    combined = max(combined, _CONTROLLED_SHOWCASE_SCORE_FLOOR)
                 if combined <= 0:
                     continue
                 metadata = dict(document.metadata_ or {})
@@ -135,6 +176,8 @@ async def retrieve(
                     metadata["asset_type"] = document.source_type
                 if metadata.get("reliability") is None:
                     metadata["reliability"] = document.trust_score
+                if controlled_index:
+                    metadata["retrieval_mode"] = "controlled_showcase_fixture"
                 # Imported PDFs may remain in the unified knowledge tables for
                 # later domains, while only course-eligible evidence may serve
                 # the Web Security Basics product path.

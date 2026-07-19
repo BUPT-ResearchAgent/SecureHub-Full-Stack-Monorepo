@@ -46,6 +46,7 @@ from app.db.seeds.seed_showcase_course import (
     run,
     verify,
 )
+from app.rag.controlled_showcase import CONTROLLED_SHOWCASE_EMBEDDING_PROFILE
 from app.db.models.identity.user import User
 from app.services.teaching.teacher_production_service import (
     TeacherProductionError,
@@ -133,6 +134,7 @@ async def test_showcase_seed_is_idempotent_consumable_and_profile_scoped(sqlite_
         "course_updates": 2,
         "assets": 3,
         "lecture_chunks": 7,
+        "lecture_ready_chunks": 7,
     }
 
     lecture_document = await sqlite_session.get(Document, SHOWCASE_LECTURE_DOCUMENT_ID)
@@ -146,6 +148,9 @@ async def test_showcase_seed_is_idempotent_consumable_and_profile_scoped(sqlite_
     assert lecture_asset is not None and lecture_asset.size_bytes and lecture_asset.size_bytes > 900
     assert len(lecture_chunks) == 7
     assert all(chunk.metadata_["kp_ids"] and chunk.metadata_["chapter"] for chunk in lecture_chunks)
+    assert all(chunk.embedding_status == "ready" and chunk.embedding is not None and len(chunk.embedding) == 1024 for chunk in lecture_chunks)
+    assert all(chunk.metadata_["embedding_profile"] == CONTROLLED_SHOWCASE_EMBEDDING_PROFILE for chunk in lecture_chunks)
+    assert all(chunk.metadata_["embedding_source"] == "controlled_showcase_seed" for chunk in lecture_chunks)
 
     publishable = list(
         (
@@ -306,9 +311,9 @@ async def test_showcase_lecture_detail_reads_persisted_assets_chunks_and_scope(s
     assert detail.asset.id == lecture.id
     assert detail.processing_mode == "preprocessed_seed"
     assert detail.chunk_count == 7
-    assert detail.pending_index_chunk_count == 7
+    assert detail.pending_index_chunk_count == 0
     assert detail.chapter_count == 7
-    assert detail.processing_timeline[-1].state == "pending"
+    assert detail.processing_timeline[-1].state == "completed"
     assert detail.chunks[0].knowledge_points
     assert "实时" in detail.source_boundary
 

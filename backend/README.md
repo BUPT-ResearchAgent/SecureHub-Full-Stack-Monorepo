@@ -77,11 +77,20 @@ APIs and permissions consume them normally. It is not a startup seed, is
 disabled when `APP_ENV` is `production`, `prod`, or `release`, and must never
 be run against production by default.
 
-The `websec-101-showcase-v7` profile includes 32 fictional course aliases and
+The `websec-101-showcase-v8` profile includes 32 fictional course aliases and
 one existing demo-course learner. Its fixed teaching material and external
 references remain labelled as `curated-demo` / `external-preview`; they are
 not a claim of live model generation, platform-owned video content, or real
 student records.
+
+v8 retains the controlled 36-question assessment scenario from v7 and writes
+a persistent deterministic demo index for seven controlled WEBSEC-101 lecture
+chunks. Its `embedding_profile` is
+`controlled-showcase-fixture:websec-101:1024:dense:v1`; course retrieval can
+return seven `controlled_showcase_fixture` Evidence records with chapter and
+source locations. This index is only for local, competition-demo, or
+explicitly authorised test environments. It is not real-time Qwen embedding,
+a live Provider call, or a production index.
 
 Before using it, work from this `backend/` directory, run `uv sync --frozen`,
 and set `DATABASE_URL` through an approved local/test environment mechanism.
@@ -131,7 +140,7 @@ SECUREHUB_ALLOW_SHOWCASE_SEED=1 uv run python -m app.db.seeds.seed_showcase_cour
 quality-gated items, relationship chains, and coverage states; it does not
 substitute for PostgreSQL migration or browser end-to-end checks.
 
-### Upgrade an existing v5/v6 showcase database to v7
+### Upgrade an existing v5/v6/v7 showcase database to v8
 
 For an ordinary upgrade of an already authorised local, competition-demo, or
 test PostgreSQL database, run `seed` and then `verify` again from this
@@ -151,8 +160,8 @@ uv run python -m app.db.seeds.seed_showcase_course seed
 uv run python -m app.db.seeds.seed_showcase_course verify
 ```
 
-v7 adds persistent, frozen 36-question comprehensive-assessment items, an
-open submission, personal resources/Evidence, and an `assessment_demo_draft`
+v8 retains the persistent, frozen 36-question comprehensive-assessment items,
+an open submission, personal resources/Evidence, and an `assessment_demo_draft`
 for `demo-student@securehub.local`. The course-page “fill all 36 questions”
 control only pre-fills that editable draft. A learner must still submit it
 explicitly; assessment feedback and the `outcome_evaluator` capability update
@@ -160,10 +169,13 @@ remain subject to the real API, Evidence, Provider, and QualityCheck path.
 No default score or fixed radar chart is used as a substitute.
 
 The executed Windows local controlled-database run returned
-`manifest: websec-101-showcase-v7`, `valid: True`,
-`demo_assessment_questions: 36`, and `demo_assessment_drafts: 1`. This is
-seed/relationship evidence only; it is not Provider, browser E2E, or
-production acceptance. On macOS/Linux, execute the same `seed` and `verify`
+`manifest: websec-101-showcase-v8`, `valid: True`,
+`demo_assessment_questions: 36`, `demo_assessment_drafts: 1`, and
+`lecture_ready_chunks: 7`. Course retrieval can return seven
+`controlled_showcase_fixture` Evidence records with chapter and source
+locations. This is controlled seed, relationship, and fixture-retrieval
+evidence only; it is not live Provider, real-time Qwen embedding, browser E2E,
+or production acceptance. On macOS/Linux, execute the same `seed` and `verify`
 commands in the authorised target environment before recording that platform
 as validated.
 

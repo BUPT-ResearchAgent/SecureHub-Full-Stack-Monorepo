@@ -1,4 +1,4 @@
-import { createContext, createElement, useContext, type Dispatch, type ReactNode } from 'react';
+import { createContext, createElement, useCallback, useContext, useMemo, useState, type Dispatch, type ReactNode } from 'react';
 import { usePersistedReducer } from '@/lib/persist';
 import type {
   AssessmentReport,
@@ -20,7 +20,7 @@ export const DEFAULT_COURSE_TASK_CONTEXT: CourseTaskContext = {
 };
 
 export type CourseState = {
-  stateVersion: 4;
+  stateVersion: 5;
   currentKpId: string;
   taskContext: CourseTaskContext;
   persona: LearningPersona | null;
@@ -49,7 +49,7 @@ export type CourseAction =
   | { type: 'setCompanionSession'; courseId: string; messages: CompanionMessage[] };
 
 export const initialCourseState: CourseState = {
-  stateVersion: 4,
+  stateVersion: 5,
   currentKpId: DEFAULT_COURSE_TASK_CONTEXT.kpId,
   taskContext: DEFAULT_COURSE_TASK_CONTEXT,
   persona: null,
@@ -126,14 +126,18 @@ export function useCourseStore() {
 function normalizeCourseState(state: CourseState | Record<string, unknown>): CourseState {
   // v1 persisted a complete mock course as its initial value. Do not carry
   // those fixture persona/path/resource values into a real course session.
-  if ((state.stateVersion !== 2 && state.stateVersion !== 3 && state.stateVersion !== 4) || !state.taskContext || !state.workflowRoots) {
+  if ((state.stateVersion !== 2 && state.stateVersion !== 3 && state.stateVersion !== 4 && state.stateVersion !== 5) || !state.taskContext || !state.workflowRoots) {
     return initialCourseState;
   }
   const tutorSessions = state.tutorSessions;
   const companionSessions = state.companionSessions;
+  const { path: _stalePersistedPath, ...persisted } = state as CourseState;
   return {
-    ...(state as Omit<CourseState, 'stateVersion' | 'tutorSessions' | 'companionSessions'>),
-    stateVersion: 4,
+    ...persisted,
+    // A browser-wide localStorage entry cannot prove that a path belongs to
+    // the current authenticated learner or a current successful root.
+    path: null,
+    stateVersion: 5,
     tutorSessions: tutorSessions && typeof tutorSessions === 'object' && !Array.isArray(tutorSessions)
       ? tutorSessions as Record<string, ChatSession>
       : {},
@@ -147,8 +151,19 @@ const CourseStateContext = createContext<CourseState | null>(null);
 const CourseDispatchContext = createContext<Dispatch<CourseAction> | null>(null);
 
 export function CourseProvider({ children }: { children: ReactNode }) {
-  const [persistedState, dispatch] = useCourseStore();
-  const state = normalizeCourseState(persistedState);
+  const [persistedState, persistedDispatch] = useCourseStore();
+  const [transientPath, setTransientPath] = useState<LearningPath | null>(null);
+  const dispatch = useCallback<Dispatch<CourseAction>>((action) => {
+    if (action.type === 'setPath') {
+      setTransientPath(action.path);
+      return;
+    }
+    persistedDispatch(action);
+  }, [persistedDispatch]);
+  const state = useMemo(
+    () => ({ ...normalizeCourseState(persistedState), path: transientPath }),
+    [persistedState, transientPath],
+  );
   return createElement(
     CourseStateContext.Provider,
     { value: state },
