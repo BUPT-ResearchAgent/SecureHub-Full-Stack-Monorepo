@@ -62,6 +62,15 @@ class Settings(BaseSettings):
     XFYUN_THINKING_MODE: str = ""
     DEEPSEEK_API_KEY: str = ""
     DEEPSEEK_MODEL: str = "deepseek-chat"
+    VOLCENGINE_IMAGE_API_KEY: str = ""
+    VOLCENGINE_IMAGE_MODEL: str = "doubao-seedream-4-0-250828"
+    VOLCENGINE_IMAGE_BASE_URL: str = "https://ark.cn-beijing.volces.com/api/v3"
+    VOLCENGINE_IMAGE_TIMEOUT_SECONDS: float = Field(default=120.0, ge=5.0, le=300.0)
+    VOLCENGINE_IMAGE_MAX_BYTES: int = Field(
+        default=20 * 1024 * 1024,
+        ge=1024,
+        le=100 * 1024 * 1024,
+    )
     # Deliberately omitted from .env.example. This is a 32-byte urlsafe-base64
     # server master key used only for authenticated encryption of user-owned
     # LLM credentials; an empty value fail-closes credential operations.
@@ -134,6 +143,14 @@ class Settings(BaseSettings):
         normalized = str(value or "").strip().lower()
         if normalized not in {"", "enabled", "disabled", "auto"}:
             raise ValueError("XFYUN_THINKING_MODE must be enabled, disabled, auto, or empty")
+        return normalized
+
+    @field_validator("VOLCENGINE_IMAGE_BASE_URL")
+    @classmethod
+    def validate_volcengine_image_base_url(cls, value: object) -> str:
+        normalized = str(value or "").strip().rstrip("/")
+        if not normalized.startswith("https://"):
+            raise ValueError("VOLCENGINE_IMAGE_BASE_URL must use https")
         return normalized
 
     @model_validator(mode="after")

@@ -15,6 +15,7 @@ from app.api.v1.endpoints import (
     fund_recommendations,
     health,
     llm,
+    media,
     messages,
     placeholder,
     policy,
@@ -77,4 +78,5 @@ api_router.include_router(rag.router, tags=["rag"])
 api_router.include_router(tutor.router, tags=["tutor"])
 api_router.include_router(assessment.router, tags=["assessment"])
 api_router.include_router(llm.router, tags=["llm"])
+api_router.include_router(media.router, tags=["media"])
 api_router.include_router(uploads.router, tags=["uploads"])
