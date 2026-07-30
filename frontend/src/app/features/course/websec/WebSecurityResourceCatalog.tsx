@@ -1,5 +1,5 @@
-// Course-organized catalog. Bilibili entries use locally cached public-page covers;
-// it never embeds a player, downloads video content, or rehosts external media.
+// Course-organized catalog. Bilibili entries use only the allowlisted original
+// player host; SecureHub never downloads, transcodes, or rehosts video content.
 
 import {
   ArrowRight,
@@ -57,6 +57,7 @@ import type {
   WebSecurityResourceType,
   WebSecurityVideo,
 } from './types';
+import { BilibiliEmbedPlayer, getBilibiliEmbedUrl } from './BilibiliEmbedPlayer';
 
 export type WebSecurityResourceCatalogProps = {
   /** Lets the integration shell focus a course resource from a route or exam result. */
@@ -102,7 +103,7 @@ const resourceTypeMeta: Record<WebSecurityResourceType, { label: string; descrip
   mindmap: { label: '知识图', description: '关系与记忆骨架' },
   quiz: { label: '微测验', description: '进入试卷前自检' },
   lab: { label: '代码实验', description: '防御式审查任务' },
-  video: { label: '视频入口', description: 'Bilibili 公开目录' },
+  video: { label: '视频学习', description: 'Bilibili 公开播放器' },
   readings: { label: '延伸阅读', description: '权威公开资料' },
 };
 
@@ -143,7 +144,7 @@ const tagMeta: Record<WebSecurityResourceTag, { label: string; description: stri
   'hands-on': { label: '动手审查', description: '以代码与边界检查为核心' },
   'knowledge-check': { label: '知识自检', description: '先检查控制选择' },
   'external-reading': { label: '外部阅读', description: '保留公开原始链接' },
-  'video-index': { label: '公开视频索引', description: '只跳转原平台' },
+  'video-index': { label: '公开视频索引', description: '嵌入播放与原站链接' },
 };
 
 function unique<T>(items: readonly T[]): T[] {
@@ -1213,6 +1214,7 @@ function VideoWorkbench({
   const externalUrl = safeVideoUrl(selectedVideo);
   const selectedTitle = displayVideoTitle(selectedVideo);
   const selectedAuthor = displayVideoAuthor(selectedVideo);
+  const embedUrl = selectedVideo.bvid ? getBilibiliEmbedUrl(selectedVideo.bvid) : undefined;
   const knowledgePoints = selectedVideo.knowledgePointIds
     .map((knowledgePointId) => webSecurityKnowledgePointById[knowledgePointId])
     .filter((knowledgePoint): knowledgePoint is WebSecurityKnowledgePoint => Boolean(knowledgePoint));
@@ -1241,6 +1243,12 @@ function VideoWorkbench({
                   >
                     <VideoCover video={video} compact />
                     <span className="min-w-0 flex-1">
+                      {selected && (
+                        <span className="mb-1.5 inline-flex items-center gap-1 border border-[#003399] bg-white px-1.5 py-0.5 text-[10px] font-bold leading-4 text-[#003399]">
+                          <PlayCircle className="h-3 w-3" />
+                          播放中
+                        </span>
+                      )}
                       <span className="block break-words text-sm font-bold leading-5 text-slate-950">{title}</span>
                       {video.bvid && <span className="mt-1 inline-block border border-slate-300 bg-slate-50 px-1.5 py-0.5 text-[10px] font-semibold leading-4 text-slate-600">BVID · {video.bvid}</span>}
                       {author && <span className="mt-1 block text-xs leading-5 text-slate-600">UP 主：{author}</span>}
@@ -1283,7 +1291,15 @@ function VideoWorkbench({
           </header>
 
           <div className="space-y-5 p-4 sm:p-5">
-            <VideoCover video={selectedVideo} />
+            {embedUrl && selectedVideo.bvid ? (
+              <BilibiliEmbedPlayer
+                key={selectedVideo.bvid}
+                bvid={selectedVideo.bvid}
+                title={`${selectedTitle} Bilibili 嵌入播放器`}
+              />
+            ) : (
+              <VideoCover video={selectedVideo} />
+            )}
             <section>
               <p className="flex items-center gap-1.5 text-[11px] font-bold text-slate-600"><Link2 className="h-3.5 w-3.5 text-[#003399]" />知识点</p>
               <div className="mt-2 flex flex-wrap gap-1.5">
