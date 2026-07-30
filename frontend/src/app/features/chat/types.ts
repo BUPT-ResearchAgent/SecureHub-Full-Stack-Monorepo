@@ -1,3 +1,5 @@
+import type { EvidenceChunkDTO } from '@/lib/sse.types';
+
 export const CHAT_AGENT_IDS = ['topic', 'research', 'contest', 'policy', 'hot', 'writing', 'path'] as const;
 
 export type ChatAgentId = (typeof CHAT_AGENT_IDS)[number];
@@ -35,6 +37,8 @@ export type ChatCitation = {
   type: 'paper' | 'policy' | 'competition' | 'news' | 'project' | 'internal';
   reliability: number;
   excerpt: string;
+  /** Preserve the real RAG payload so citation panels do not lose provenance fields. */
+  evidence?: EvidenceChunkDTO;
 };
 
 export type ChatAction = {

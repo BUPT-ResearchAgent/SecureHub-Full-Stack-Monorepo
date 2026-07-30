@@ -7,6 +7,21 @@ import type {
 } from './types';
 import type { SSEHandlers } from '@/lib/sse';
 import { apiStream } from '@/lib/api';
+import { DEFAULT_COURSE_TASK_CONTEXT } from '@/app/features/course/store';
+import { tutorAnswerFromWorkflowStatus } from '@/app/features/course/api';
+import {
+  createWorkflowRunStateFromStart,
+  WorkflowRunClient,
+  WorkflowRunClientError,
+  type WorkflowSubscription,
+} from '@/lib/workflow-run-client';
+import {
+  isTerminalWorkflowStatus,
+  type WorkflowEvent,
+  type WorkflowRunStartResponse,
+  type WorkflowRunStatusResponse,
+} from '@/lib/workflow-run.types';
+import { getChatAgent } from './mockData';
 import { assistantActions, createDemoId } from './utils';
 
 function delay(ms: number): Promise<void> {
@@ -355,6 +370,329 @@ export async function generateMockAnswer(
   return {
     ...payload,
     actions: assistantActions,
+  };
+}
+
+type StreamToken = Parameters<NonNullable<SSEHandlers['onToken']>>[0] & {
+  replace?: boolean;
+};
+
+type StreamDone = Parameters<NonNullable<SSEHandlers['onDone']>>[0];
+
+export type StreamChatRealHandlers = Omit<SSEHandlers, 'onToken' | 'onDone'> & {
+  userId: string;
+  onToken?: (event: StreamToken) => void;
+  onDone?: (event: StreamDone) => void;
+  onRunStart?: (start: WorkflowRunStartResponse) => void;
+  onWorkflowEvent?: (event: WorkflowEvent) => void;
+};
+
+const chatWorkflowRunClient = new WorkflowRunClient();
+
+const CHAT_ROUTE_HINTS: Record<ChatAgentId, string> = {
+  topic: 'topic_explorer',
+  research: 'topic_explorer',
+  contest: 'competition_advisor',
+  policy: 'policy_interpreter',
+  hot: 'hot_analyst',
+  writing: 'doc_archivist',
+  path: 'career_planner',
+};
+
+function conversationHistory(messages: ChatMessage[], question: string) {
+  const lastMessage = messages[messages.length - 1];
+  const withoutCurrentQuestion =
+    lastMessage?.role === 'user' && lastMessage.content.trim() === question.trim()
+      ? messages.slice(0, -1)
+      : messages;
+  return withoutCurrentQuestion
+    .filter((message) => message.role === 'user' || message.role === 'assistant')
+    .filter((message) => message.content.trim().length > 0)
+    .slice(-4)
+    .map((message) => ({
+      role: message.role,
+      content: message.content.trim().slice(0, 600),
+    }));
+}
+
+function routedQuestion(agentId: ChatAgentId, question: string, messages: ChatMessage[]): string {
+  const agent = getChatAgent(agentId);
+  const history = conversationHistory(messages, question);
+  return [
+    `请按“${agent.name}”问答场景作答。${agent.systemPrompt}`,
+    history.length
+      ? `对话上下文：\n${history.map((message) => `${message.role === 'user' ? '用户' : '助手'}：${message.content}`).join('\n')}`
+      : '',
+    `本轮问题：${question}`,
+  ].filter(Boolean).join('\n\n');
+}
+
+class LearnerContentDecoder {
+  private raw = '';
+  private decoded = '';
+  private stepAttemptId?: string;
+  private replacePending = false;
+
+  push(event: Extract<WorkflowEvent, { event_type: 'token' }>): StreamToken | undefined {
+    if (event.payload.node_id && event.payload.node_id !== 'answer') return undefined;
+
+    const nextStepAttemptId = event.payload.step_attempt_id;
+    const shouldReplace = Boolean(
+      event.payload.replace_draft
+      || event.payload.replaces_stream_attempt != null
+      || (this.stepAttemptId && nextStepAttemptId && this.stepAttemptId !== nextStepAttemptId),
+    );
+    if (shouldReplace) {
+      this.raw = '';
+      this.decoded = '';
+      this.replacePending = true;
+    }
+    if (nextStepAttemptId) this.stepAttemptId = nextStepAttemptId;
+
+    this.raw += event.payload.content;
+    const extracted = extractLearnerContent(this.raw);
+    if (extracted == null || extracted === this.decoded) return undefined;
+
+    const replace = this.replacePending || !extracted.startsWith(this.decoded);
+    const content = replace ? extracted : extracted.slice(this.decoded.length);
+    this.decoded = extracted;
+    this.replacePending = false;
+    return { content, index: event.payload.index, replace };
+  }
+}
+
+function extractLearnerContent(raw: string): string | undefined {
+  const match = /"content"\s*:\s*"/.exec(raw);
+  if (!match) {
+    return raw.trimStart().startsWith('{') ? undefined : raw;
+  }
+
+  let output = '';
+  for (let index = match.index + match[0].length; index < raw.length; index += 1) {
+    const character = raw[index];
+    if (character === '"') return output;
+    if (character !== '\\') {
+      output += character;
+      continue;
+    }
+
+    const escaped = raw[index + 1];
+    if (escaped == null) break;
+    if (escaped === 'u') {
+      const codePoint = raw.slice(index + 2, index + 6);
+      if (codePoint.length < 4 || !/^[0-9a-f]{4}$/i.test(codePoint)) break;
+      output += String.fromCharCode(Number.parseInt(codePoint, 16));
+      index += 5;
+      continue;
+    }
+    const simpleEscapes: Record<string, string> = {
+      '"': '"',
+      '\\': '\\',
+      '/': '/',
+      b: '\b',
+      f: '\f',
+      n: '\n',
+      r: '\r',
+      t: '\t',
+    };
+    output += simpleEscapes[escaped] ?? escaped;
+    index += 1;
+  }
+  return output;
+}
+
+function streamErrorMessage(status: WorkflowRunStatusResponse) {
+  return {
+    code: status.error?.code ?? status.status,
+    message: status.error?.message ?? `智能问答任务终态为 ${status.status}`,
+    recoverable: false,
+  };
+}
+
+export function streamChatReal(
+  agentId: ChatAgentId,
+  question: string,
+  messages: ChatMessage[],
+  handlers: StreamChatRealHandlers,
+): () => void {
+  let disposed = false;
+  let subscription: WorkflowSubscription | undefined;
+  let terminalReported = false;
+  let lastDone: StreamDone | undefined;
+  const decoder = new LearnerContentDecoder();
+
+  const finalize = async (runId: string) => {
+    if (disposed || terminalReported) return;
+    terminalReported = true;
+    try {
+      const status = await chatWorkflowRunClient.status(runId);
+      if (disposed) return;
+      if (status.status === 'succeeded') {
+        handlers.onToken?.({ content: tutorAnswerFromWorkflowStatus(status), replace: true });
+        handlers.onDone?.(lastDone ?? {
+          run_id: runId,
+          final_output_ref: '',
+          quality_score: 0,
+          status: 'succeeded',
+        });
+        return;
+      }
+      if (status.status === 'cancelled') {
+        handlers.onDone?.(lastDone ?? {
+          run_id: runId,
+          final_output_ref: '',
+          quality_score: 0,
+          status: 'cancelled',
+        });
+        return;
+      }
+      handlers.onError?.(streamErrorMessage(status));
+    } catch (error) {
+      const clientError = error instanceof WorkflowRunClientError
+        ? error
+        : new WorkflowRunClientError(
+          error instanceof Error ? error.message : '无法读取智能问答最终结果',
+        );
+      handlers.onError?.({
+        code: clientError.code ?? 'WORKFLOW_TERMINAL_STATUS_UNAVAILABLE',
+        message: clientError.message,
+        recoverable: false,
+      });
+    }
+  };
+
+  void chatWorkflowRunClient.start({
+    workflow: 'tutor_routing_v3',
+    user_id: handlers.userId,
+    course_id: DEFAULT_COURSE_TASK_CONTEXT.courseId,
+    input: {
+      question: routedQuestion(agentId, question, messages),
+      context: {
+        kp_id: DEFAULT_COURSE_TASK_CONTEXT.kpId,
+        current_path_node_ids: [],
+        route_hint: {
+          scene_id: agentId,
+          preferred_agent_id: CHAT_ROUTE_HINTS[agentId],
+        },
+        conversation_history: conversationHistory(messages, question),
+      },
+    },
+    mode: 'real',
+    stream: true,
+  }).then((start) => {
+    if (disposed) return;
+    handlers.onRunStart?.(start);
+    const initialState = createWorkflowRunStateFromStart(start);
+    if (isTerminalWorkflowStatus(initialState.status)) {
+      void finalize(start.run_id);
+      return;
+    }
+
+    subscription = chatWorkflowRunClient.subscribe(start.run_id, {
+      eventsUrl: start.events_url,
+      initialState,
+      onEvent(event) {
+        handlers.onWorkflowEvent?.(event);
+        switch (event.event_type) {
+          case 'progress': {
+            const status = event.payload.node_status ?? event.payload.status;
+            handlers.onProgress?.({
+              node_name: event.payload.node_name ?? event.payload.node_id ?? 'workflow',
+              agent_id: event.payload.agent_id ?? event.payload.agent_name,
+              skill_id: event.payload.skill_id ?? event.payload.skill_name,
+              percentage: event.payload.percentage,
+              status: status === 'failed' || status === 'blocked'
+                ? 'failed'
+                : status === 'succeeded' || status === 'done'
+                  ? 'done'
+                  : 'running',
+            });
+            return;
+          }
+          case 'evidence':
+            event.payload.items.forEach((item) => handlers.onEvidence?.(item));
+            return;
+          case 'token': {
+            const token = decoder.push(event);
+            if (token?.content) handlers.onToken?.(token);
+            return;
+          }
+          case 'artifact':
+            handlers.onArtifact?.({
+              resource_id: event.payload.resource_id,
+              resource_type: event.payload.resource_type,
+              object_key: event.payload.object_key ?? undefined,
+              title: event.payload.title,
+              quality_score: event.payload.quality_score,
+            });
+            return;
+          case 'trace':
+            handlers.onTrace?.({
+              id: event.payload.agent_run_id ?? event.payload.id,
+              run_id: event.payload.run_id ?? event.workflow_run_id,
+              agent_name: event.payload.agent_name ?? event.payload.agent_id ?? 'task_orchestrator',
+              skill_name: event.payload.skill_name ?? event.payload.skill_id ?? 'WorkflowNode',
+              status: event.payload.status ?? 'running',
+              duration_ms: event.payload.duration_ms,
+              quality_score: event.payload.quality_score,
+              provider: event.actual_provider ?? event.provider ?? event.payload.provider,
+              model: event.actual_model ?? event.model ?? event.payload.model,
+            });
+            return;
+          case 'done':
+            lastDone = {
+              run_id: event.workflow_run_id,
+              final_output_ref: event.payload.final_output_ref ?? '',
+              quality_score: event.payload.quality_score ?? 0,
+              status: event.payload.status,
+            };
+            return;
+          case 'error':
+            handlers.onError?.({
+              code: event.payload.code,
+              message: event.payload.message,
+              recoverable: event.payload.recoverable,
+            });
+            return;
+        }
+      },
+      onState(state) {
+        if (isTerminalWorkflowStatus(state.status)) void finalize(start.run_id);
+      },
+      onConnection(state) {
+        if (state === 'reconnecting') {
+          handlers.onError?.({
+            code: 'sse_reconnecting',
+            message: '连接中断，正在恢复真实回答流。',
+            recoverable: true,
+          });
+        }
+      },
+      onError(error) {
+        handlers.onError?.({
+          code: error.code ?? 'sse_error',
+          message: error.message,
+          recoverable: error.code !== 'SSE_SEQUENCE_GAP',
+        });
+      },
+    });
+  }).catch((error: unknown) => {
+    if (disposed) return;
+    const clientError = error instanceof WorkflowRunClientError
+      ? error
+      : new WorkflowRunClientError(
+        error instanceof Error ? error.message : '真实智能问答启动失败',
+      );
+    handlers.onError?.({
+      code: clientError.code ?? 'WORKFLOW_START_FAILED',
+      message: clientError.message,
+      recoverable: false,
+    });
+  });
+
+  return () => {
+    disposed = true;
+    subscription?.unsubscribe();
   };
 }
 
