@@ -10,11 +10,16 @@ import {
   resolveWebSecurityRouteNodeId,
   WEB_SECURITY_COURSE_CODE,
 } from '../websec/webSecurityCourseUrl';
+import { webSecurityRouteNodeById } from '../websec/data';
 import { LearningPathDAG } from './LearningPathDAG';
 
 const LazyWebSecurityKnowledgeGraph = lazy(() => (
   import('../websec/WebSecurityKnowledgeGraph')
     .then((module) => ({ default: module.WebSecurityKnowledgeGraph }))
+));
+const LazyEducationalMediaGallery = lazy(() => (
+  import('../resources/multimodal/EducationalMediaGallery')
+    .then((module) => ({ default: module.EducationalMediaGallery }))
 ));
 
 /** Keeps the real path isolated from WEBSEC-101's curated route and graph views. */
@@ -28,6 +33,9 @@ export function LearningPathWorkspace() {
   const pathMode = resolveWebSecurityPathMode(rawPathMode);
   const routeId = resolveWebSecurityRouteId(rawRouteId);
   const nodeId = resolveWebSecurityRouteNodeId(routeId, rawNodeId);
+  const selectedKnowledgePointId = nodeId
+    ? webSecurityRouteNodeById[nodeId]?.knowledgePointId
+    : undefined;
   const isWebSecurityFoundation = course?.code === WEB_SECURITY_COURSE_CODE;
 
   useEffect(() => {
@@ -135,28 +143,43 @@ export function LearningPathWorkspace() {
           </Suspense>
         </ErrorBoundary>
       ) : pathMode === 'course' ? (
-        <WebSecurityRouteMap
-          initialRouteId={routeId}
-          initialNodeId={nodeId}
-          onRouteSelectionChange={({ routeId: nextRouteId, nodeId: nextNodeId }) => {
-            navigate(buildWebSecurityCourseUrl({
-              tab: 'path',
-              pathMode: 'course',
-              routeId: nextRouteId,
-              nodeId: nextNodeId,
-            }));
-          }}
-          onOpenResource={(resourceId) => {
-            navigate(buildWebSecurityCourseUrl({
-              tab: 'workbench',
-              catalog: 'course',
-              resourceId,
-            }));
-          }}
-          onOpenExam={(paperId) => {
-            navigate(buildWebSecurityCourseUrl({ tab: 'exam', paperId }));
-          }}
-        />
+        <>
+          <WebSecurityRouteMap
+            initialRouteId={routeId}
+            initialNodeId={nodeId}
+            onRouteSelectionChange={({ routeId: nextRouteId, nodeId: nextNodeId }) => {
+              navigate(buildWebSecurityCourseUrl({
+                tab: 'path',
+                pathMode: 'course',
+                routeId: nextRouteId,
+                nodeId: nextNodeId,
+              }));
+            }}
+            onOpenResource={(resourceId) => {
+              navigate(buildWebSecurityCourseUrl({
+                tab: 'workbench',
+                catalog: 'course',
+                resourceId,
+              }));
+            }}
+            onOpenExam={(paperId) => {
+              navigate(buildWebSecurityCourseUrl({ tab: 'exam', paperId }));
+            }}
+          />
+          {selectedKnowledgePointId && (
+            <ErrorBoundary resetKey={`websec-media-${selectedKnowledgePointId}`}>
+              <Suspense
+                fallback={(
+                  <div className="flex min-h-52 items-center justify-center border border-slate-200 bg-white text-sm text-slate-500 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-400" role="status">
+                    正在加载视觉讲解…
+                  </div>
+                )}
+              >
+                <LazyEducationalMediaGallery knowledgePointId={selectedKnowledgePointId} />
+              </Suspense>
+            </ErrorBoundary>
+          )}
+        </>
       ) : (
         <LearningPathDAG />
       )}

@@ -134,6 +134,20 @@ export async function apiGet<T>(path: string, init?: RequestInit): Promise<T> {
   });
 }
 
+export async function apiGetBlob(path: string, init?: RequestInit): Promise<Blob> {
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    ...init,
+    method: 'GET',
+    headers: authHeaders(init),
+  });
+  if (!response.ok) {
+    const error = await readError(response);
+    if (error.status === 401) unauthorizedHandler?.();
+    throw error;
+  }
+  return response.blob();
+}
+
 export async function apiPost<T, B = unknown>(
   path: string,
   body: B,
