@@ -10,8 +10,10 @@ module is the read-only retrieval side a frontend page would call after the
 from uuid import UUID
 
 from fastapi import APIRouter, Header, HTTPException, Query, Request, status
+from sqlalchemy import select
 
 from app.api.v1.endpoints.workflow_adapter import accepted_root_response, start_product_workflow, workflow_service
+from app.db.models.education.education_domain import CourseEnrollment
 from app.db.seeds._constants import resolve_course_product
 from app.deps import CurrentUserDep, SessionDep
 from app.repositories.resource.generated_resources import GeneratedResourceRepository
@@ -50,6 +52,44 @@ def _to_out(row) -> GeneratedResourceOut:
     )
 
 
+async def _has_active_course_enrollment(
+    session: SessionDep,
+    *,
+    user_id: UUID,
+    course_id: UUID,
+) -> bool:
+    enrollment = await session.scalar(
+        select(CourseEnrollment.id)
+        .where(
+            CourseEnrollment.student_id == user_id,
+            CourseEnrollment.course_id == course_id,
+            CourseEnrollment.status.in_(("enrolled", "completed")),
+        )
+        .limit(1)
+    )
+    return enrollment is not None
+
+
+async def _can_read_resource(
+    row,
+    *,
+    session: SessionDep,
+    current_user_id: UUID,
+) -> bool:
+    if row.user_id == current_user_id:
+        return True
+    # Curated course resources are intentionally shared (`user_id is None`),
+    # but only with students who hold a durable active enrollment in that
+    # resource's course. A random UUID alone grants no read access.
+    if row.user_id is not None or row.course_id is None:
+        return False
+    return await _has_active_course_enrollment(
+        session,
+        user_id=current_user_id,
+        course_id=row.course_id,
+    )
+
+
 @router.get("/resources", response_model=GeneratedResourceListOut)
 async def list_resources(
     session: SessionDep,
@@ -81,7 +121,11 @@ async def get_resource(
 ) -> GeneratedResourceOut:
     repo = GeneratedResourceRepository(session)
     row = await repo.get_by_id(resource_id)
-    if row is None or row.user_id != current_user_id:
+    if row is None or not await _can_read_resource(
+        row,
+        session=session,
+        current_user_id=current_user_id,
+    ):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="resource not found"
         )

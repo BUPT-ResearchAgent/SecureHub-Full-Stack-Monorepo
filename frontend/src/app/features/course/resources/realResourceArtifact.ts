@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
 import { apiGet } from '@/lib/api';
+import { useAuth } from '@/app/features/auth/store';
 import type { PptDeckLayoutId, PptDeckSlide, PptDeckSpec, ResourceItem, ResourceType } from '../types';
+import { useSelectedCourse } from '../catalog/useSelectedCourse';
+import { isCurrentCourseResourceScope, useCourseState } from '../store';
 
 type PersistedResourceArtifact = {
   id: string;
@@ -237,15 +240,24 @@ export function projectArtifactContent(
  * remains visible to the learner instead of being replaced with canned content.
  */
 export function useRealResourceArtifact(resource: ResourceItem): ResourceArtifactProjection {
+  const { user } = useAuth();
+  const { course } = useSelectedCourse();
+  const { taskContext, resourceScope } = useCourseState();
   const [persisted, setPersisted] = useState<PersistedResourceArtifact | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [requestVersion, setRequestVersion] = useState(0);
 
   const refresh = useCallback(() => setRequestVersion((version) => version + 1), []);
+  const isCurrentResourceScope = isCurrentCourseResourceScope(
+    resourceScope,
+    taskContext,
+    user?.id,
+    course?.id,
+  );
 
   useEffect(() => {
-    if (resource.status !== 'ready' || !UUID_PATTERN.test(resource.id)) {
+    if (!isCurrentResourceScope || resource.status !== 'ready' || !UUID_PATTERN.test(resource.id)) {
       setPersisted(null);
       setError(null);
       setIsLoading(false);
@@ -271,7 +283,7 @@ export function useRealResourceArtifact(resource: ResourceItem): ResourceArtifac
     return () => {
       disposed = true;
     };
-  }, [resource.id, resource.status, requestVersion]);
+  }, [isCurrentResourceScope, requestVersion, resource.id, resource.status]);
 
   const output = extractOutput(persisted?.content);
   const pptProjection = resource.type === 'ppt' ? asPptProjection(output) : {};

@@ -346,6 +346,7 @@ function CourseStudyShell() {
 function CourseStudyInner() {
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
+  const { user } = useAuth();
   const dispatch = useCourseDispatch();
   const courseState = useCourseState();
   const {
@@ -373,7 +374,7 @@ function CourseStudyInner() {
   }, [presenterMode]);
 
   useEffect(() => {
-    if (!course) return;
+    if (!course || !user?.id) return;
     const currentPathNodeIds = courseState.path?.nodes
       .filter((node) => node.status === 'active' || node.status === 'done')
       .map((node) => node.id) ?? [];
@@ -381,12 +382,13 @@ function CourseStudyInner() {
       type: 'setTaskContext',
       context: {
         ...DEFAULT_COURSE_TASK_CONTEXT,
+        userId: user.id,
         courseId: course.id,
         kpId: courseState.currentKpId || DEFAULT_COURSE_TASK_CONTEXT.kpId,
         currentPathNodeIds,
       },
     });
-  }, [course, courseState.currentKpId, courseState.path, dispatch]);
+  }, [course, courseState.currentKpId, courseState.path, dispatch, user?.id]);
 
   useEffect(() => {
     persistCourseView(activeView);

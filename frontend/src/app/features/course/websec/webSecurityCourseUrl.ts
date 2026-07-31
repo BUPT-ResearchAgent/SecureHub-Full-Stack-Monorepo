@@ -7,7 +7,7 @@ import { webSecurityRouteTemplateById, webSecurityResourceById, webSecurityVideo
 
 export { WEB_SECURITY_COURSE_CODE, WEB_SECURITY_COURSE_ID };
 export const WEB_SECURITY_EXAM_TAB = 'exam' as const;
-export const WEB_SECURITY_PATH_MODES = ['personal', 'course'] as const;
+export const WEB_SECURITY_PATH_MODES = ['personal', 'course', 'graph'] as const;
 export const WEB_SECURITY_DEFAULT_PATH_MODE = 'personal' as const;
 export const WEB_SECURITY_RESOURCE_CATALOGS = ['generated', 'course'] as const;
 export const WEB_SECURITY_DEFAULT_RESOURCE_CATALOG = 'generated' as const;

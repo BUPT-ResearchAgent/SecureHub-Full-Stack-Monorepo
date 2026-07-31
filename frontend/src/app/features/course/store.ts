@@ -19,10 +19,20 @@ export const DEFAULT_COURSE_TASK_CONTEXT: CourseTaskContext = {
   currentPathNodeIds: [],
 };
 
+export type CourseResourceScope = {
+  userId: string;
+  courseId: string;
+};
+
 export type CourseState = {
-  stateVersion: 5;
+  stateVersion: 6;
   currentKpId: string;
   taskContext: CourseTaskContext;
+  /**
+   * `resources` are only a recovery projection of artifacts already observed
+   * by this browser. They are never a cross-user or cross-course cache.
+   */
+  resourceScope: CourseResourceScope | null;
   persona: LearningPersona | null;
   path: LearningPath | null;
   resources: ResourceItem[];
@@ -49,9 +59,10 @@ export type CourseAction =
   | { type: 'setCompanionSession'; courseId: string; messages: CompanionMessage[] };
 
 export const initialCourseState: CourseState = {
-  stateVersion: 5,
+  stateVersion: 6,
   currentKpId: DEFAULT_COURSE_TASK_CONTEXT.kpId,
   taskContext: DEFAULT_COURSE_TASK_CONTEXT,
+  resourceScope: null,
   persona: null,
   path: null,
   resources: [],
@@ -91,8 +102,20 @@ export function courseReducer(state: CourseState, action: CourseAction): CourseS
         currentKpId: action.kpId,
         taskContext: { ...state.taskContext, kpId: action.kpId },
       };
-    case 'setTaskContext':
-      return { ...state, taskContext: action.context, currentKpId: action.context.kpId };
+    case 'setTaskContext': {
+      const nextResourceScope = resourceScopeFor(action.context);
+      const resourceScopeChanged = !sameResourceScope(state.resourceScope, nextResourceScope);
+      return {
+        ...state,
+        taskContext: action.context,
+        currentKpId: action.context.kpId,
+        resourceScope: nextResourceScope,
+        // A browser-wide persistence key cannot prove that a previously
+        // observed artifact belongs to this user/course. Drop only that
+        // stale projection on scope changes; durable server records remain.
+        resources: resourceScopeChanged ? [] : state.resources,
+      };
+    }
     case 'upsertWorkflowRoot':
       return {
         ...state,
@@ -124,20 +147,24 @@ export function useCourseStore() {
 }
 
 function normalizeCourseState(state: CourseState | Record<string, unknown>): CourseState {
-  // v1 persisted a complete mock course as its initial value. Do not carry
-  // those fixture persona/path/resource values into a real course session.
-  if ((state.stateVersion !== 2 && state.stateVersion !== 3 && state.stateVersion !== 4 && state.stateVersion !== 5) || !state.taskContext || !state.workflowRoots) {
+  // v1-v5 persisted resources without an authenticated user/course scope.
+  // Those IDs can outlive a local seed upgrade or a different user's session,
+  // so they must not be replayed into a current real API request.
+  if (state.stateVersion !== 6 || !state.taskContext || !state.workflowRoots) {
     return initialCourseState;
   }
   const tutorSessions = state.tutorSessions;
   const companionSessions = state.companionSessions;
+  const resourceScope = isResourceScope(state.resourceScope) ? state.resourceScope : null;
   const { path: _stalePersistedPath, ...persisted } = state as CourseState;
   return {
     ...persisted,
     // A browser-wide localStorage entry cannot prove that a path belongs to
     // the current authenticated learner or a current successful root.
     path: null,
-    stateVersion: 5,
+    stateVersion: 6,
+    resourceScope,
+    resources: resourceScope && Array.isArray(state.resources) ? state.resources : [],
     tutorSessions: tutorSessions && typeof tutorSessions === 'object' && !Array.isArray(tutorSessions)
       ? tutorSessions as Record<string, ChatSession>
       : {},
@@ -145,6 +172,43 @@ function normalizeCourseState(state: CourseState | Record<string, unknown>): Cou
       ? companionSessions as Record<string, CompanionMessage[]>
       : {},
   };
+}
+
+function resourceScopeFor(context: CourseTaskContext): CourseState['resourceScope'] {
+  if (!context.userId || !context.courseId) return null;
+  return { userId: context.userId, courseId: context.courseId };
+}
+
+function isResourceScope(value: unknown): value is CourseResourceScope {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const candidate = value as Record<string, unknown>;
+  return typeof candidate.userId === 'string' && Boolean(candidate.userId)
+    && typeof candidate.courseId === 'string' && Boolean(candidate.courseId);
+}
+
+function sameResourceScope(
+  left: CourseState['resourceScope'],
+  right: CourseState['resourceScope'],
+): boolean {
+  return left?.userId === right?.userId && left?.courseId === right?.courseId;
+}
+
+/** Reject a persisted artifact before it can issue a detail request outside its owner/course scope. */
+export function isCurrentCourseResourceScope(
+  resourceScope: CourseResourceScope | null,
+  taskContext: Pick<CourseTaskContext, 'userId' | 'courseId'>,
+  currentUserId: string | null | undefined,
+  selectedCourseId: string | null | undefined,
+): boolean {
+  return Boolean(
+    resourceScope
+      && currentUserId
+      && selectedCourseId
+      && resourceScope.userId === currentUserId
+      && resourceScope.courseId === selectedCourseId
+      && taskContext.userId === currentUserId
+      && taskContext.courseId === selectedCourseId,
+  );
 }
 
 const CourseStateContext = createContext<CourseState | null>(null);

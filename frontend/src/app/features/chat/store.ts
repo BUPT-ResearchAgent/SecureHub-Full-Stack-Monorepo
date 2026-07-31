@@ -205,15 +205,39 @@ function normalizeWorkspace(parsed: Partial<ChatWorkspace>, defaults: ChatWorksp
     sessions: sessions.map((session) => ({
       ...session,
       pinned: pinnedSessionIds.includes(session.id) || session.pinned,
-      messages: session.messages.map((message) => ({
-        ...message,
-        favorited: favoriteMessageIds.includes(message.id) || message.favorited,
-        status: message.status === 'generating' ? 'stopped' : message.status,
-        content:
-          message.status === 'generating' && !message.content
-            ? '刷新时检测到上次生成未完成，已停止生成，可重新生成。'
-            : message.content,
-      })),
+      messages: session.messages.map((message) => {
+        const interrupted = message.status === 'generating';
+        const interruptedMedia = message.mediaGenerationStatus === 'pending'
+          || message.mediaGenerationStatus === 'generating';
+        return {
+          ...message,
+          favorited: favoriteMessageIds.includes(message.id) || message.favorited,
+          status: interrupted ? 'stopped' as const : message.status,
+          content:
+            interrupted && !message.content
+              ? interruptedMedia
+                ? '页面刷新时媒体生成仍未完成，已停止前端等待，可点击重试。'
+                : '刷新时检测到上次生成未完成，已停止生成，可重新发送问题。'
+              : message.content,
+          mediaGenerationStatus: interruptedMedia
+            ? 'failed' as const
+            : message.mediaGenerationStatus,
+          activities: interrupted
+            ? message.activities?.map((activity) => (
+              activity.status === 'running' || activity.status === 'pending'
+                ? {
+                  ...activity,
+                  status: 'error' as const,
+                  detail: '页面刷新后未继续该步骤，已保留此前执行记录',
+                }
+                : activity
+            ))
+            : message.activities,
+          runtime: interrupted && message.runtime
+            ? { ...message.runtime, finishedAt: new Date().toISOString() }
+            : message.runtime,
+        };
+      }),
     })),
     drafts: parsed.drafts ?? defaults.drafts,
     favoriteMessageIds,
