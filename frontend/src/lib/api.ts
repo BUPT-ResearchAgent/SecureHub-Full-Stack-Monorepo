@@ -86,6 +86,31 @@ function parseErrorPayload(payload: unknown): { message: string; code?: string }
     if (typeof detail === 'string') {
       return { message: detail };
     }
+    if (Array.isArray(detail)) {
+      const validationMessages = detail
+        .map((item) => {
+          if (!item || typeof item !== 'object') return undefined;
+          const message = (item as { msg?: unknown }).msg;
+          if (typeof message !== 'string') return undefined;
+          const location = (item as { loc?: unknown }).loc;
+          const path = Array.isArray(location)
+            ? location
+                .filter((part): part is string | number => (
+                  typeof part === 'string' || typeof part === 'number'
+                ))
+                .filter((part) => part !== 'body')
+                .join('.')
+            : '';
+          return path ? `${path}：${message}` : message;
+        })
+        .filter((message): message is string => Boolean(message));
+      return {
+        message: validationMessages.length > 0
+          ? `请求参数校验失败：${validationMessages.join('；')}`
+          : '请求参数校验失败',
+        code: 'VALIDATION_ERROR',
+      };
+    }
     if (detail && typeof detail === 'object') {
       const message = (detail as { message?: unknown }).message;
       const code = (detail as { code?: unknown }).code;

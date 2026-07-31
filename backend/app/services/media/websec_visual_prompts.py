@@ -24,7 +24,7 @@ class WebSecurityVisualPrompt:
     visualization_type: str
     scene_brief: str
     required_labels: tuple[str, ...]
-    recommended_size: str = "1024x1024"
+    recommended_size: str = "2K"
 
     def render(
         self,
@@ -43,6 +43,13 @@ class WebSecurityVisualPrompt:
             "绿色表示防御与校验；清晰箭头、等宽代码占位符、充足留白、16:9 横向构图。"
             "不出现人物、品牌标志、水印、伪造界面截图或无关装饰，中文必须清楚可读。"
         )
+
+
+@dataclass(frozen=True)
+class WebSecurityVideoPrompt:
+    kp_id: str
+    title: str
+    prompt: str
 
 
 _PROMPTS = (
@@ -171,6 +178,73 @@ WEBSEC_VISUAL_PROMPTS: dict[str, WebSecurityVisualPrompt] = {
     prompt.kp_id: prompt for prompt in _PROMPTS
 }
 
+_VIDEO_PROMPTS = (
+    WebSecurityVideoPrompt(
+        "http-basics",
+        "HTTP 请求与响应",
+        "A smooth 10-second educational animation showing an HTTP request traveling "
+        "from a browser through DNS resolution and a TCP/TLS handshake to a web "
+        "server, then returning as a response. Request and response headers appear "
+        "as concise floating labels. Clean ivory background, navy technical lines, "
+        "blue request path, green response path, precise diagram style, gentle "
+        "left-to-right camera motion, no logos, no watermark, no people.",
+    ),
+    WebSecurityVideoPrompt(
+        "sql-injection",
+        "SQL 注入与参数化查询",
+        "A 10-second cybersecurity teaching animation demonstrating SQL injection. "
+        "A login form sends untrusted input into a visibly concatenated SQL query, "
+        "which bends into an unsafe database path. Split screen transitions to a "
+        "parameterized query where code and data remain separated. Ivory background, "
+        "red unsafe flow, green defended flow, navy labels, crisp editorial diagram "
+        "style, smooth morph transitions, no reusable attack payload.",
+    ),
+    WebSecurityVideoPrompt(
+        "xss-reflected",
+        "反射型 XSS",
+        "A 10-second educational animation showing reflected XSS: a crafted URL moves "
+        "from an attacker to a victim browser, reaches a server, is reflected into "
+        "HTML, and attempts to execute in the browser. The scene then rewinds and "
+        "shows contextual output encoding plus Content Security Policy blocking the "
+        "path. Clean ivory canvas, red attack arrows, green defense shields, navy "
+        "technical labels, smooth node-to-node transitions, no executable script text.",
+    ),
+    WebSecurityVideoPrompt(
+        "csrf",
+        "CSRF 与请求真实性",
+        "A 10-second educational animation visualizing CSRF with two browser tabs: a "
+        "legitimate banking site has an active session while a malicious site sends "
+        "a forged state-changing request using automatically attached cookies. The "
+        "defense sequence introduces a CSRF token, SameSite cookie, and origin check. "
+        "Ivory background, red forged request, green verification gates, restrained "
+        "navy typography, smooth split-screen transitions, no brand names.",
+    ),
+    WebSecurityVideoPrompt(
+        "ssrf",
+        "SSRF 与出站访问控制",
+        "A 10-second educational animation showing an SSRF attack: an external request "
+        "enters a web application, which attempts to reach an internal service and a "
+        "cloud metadata endpoint behind a firewall. The defense scene adds URL parsing, "
+        "DNS and IP-range validation, redirect checks, and egress filtering. Ivory "
+        "background, red attack path, amber internal zone, green security gates, navy "
+        "labels, smooth zoom from public network to internal boundary.",
+    ),
+    WebSecurityVideoPrompt(
+        "owasp-top10",
+        "OWASP Top 10 风险地图",
+        "A polished 10-second educational overview of the OWASP Top 10 (2021) as a "
+        "rapid but readable countdown. Each risk appears as a consistent geometric "
+        "icon and a short category label, then converges into five shared defense "
+        "domains: identity, input, data, configuration, and supply chain. Ivory "
+        "editorial background, navy grid, controlled red risk accents and green "
+        "defense accents, smooth carousel transitions, no logos or watermark.",
+    ),
+)
+
+WEBSEC_VIDEO_PROMPTS: dict[str, WebSecurityVideoPrompt] = {
+    prompt.kp_id: prompt for prompt in _VIDEO_PROMPTS
+}
+
 
 def get_websec_visual_prompt(kp_id: str) -> WebSecurityVisualPrompt:
     normalized = kp_id.strip().lower()
@@ -180,9 +254,20 @@ def get_websec_visual_prompt(kp_id: str) -> WebSecurityVisualPrompt:
         raise KeyError(f"unknown WEBSEC-101 knowledge point: {kp_id}") from exc
 
 
+def get_websec_video_prompt(kp_id: str) -> WebSecurityVideoPrompt:
+    normalized = kp_id.strip().lower()
+    try:
+        return WEBSEC_VIDEO_PROMPTS[normalized]
+    except KeyError as exc:
+        raise KeyError(f"no curated WEBSEC-101 video prompt: {kp_id}") from exc
+
+
 __all__ = [
     "VISUALIZATION_TYPES",
+    "WEBSEC_VIDEO_PROMPTS",
     "WEBSEC_VISUAL_PROMPTS",
+    "WebSecurityVideoPrompt",
     "WebSecurityVisualPrompt",
+    "get_websec_video_prompt",
     "get_websec_visual_prompt",
 ]

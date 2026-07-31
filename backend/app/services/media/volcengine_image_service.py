@@ -78,7 +78,7 @@ class VolcengineImageService:
         kp_id: str,
         custom_prompt: str | None = None,
         visualization_type: str | None = None,
-        size: str = "1024x1024",
+        size: str = "2K",
     ) -> GeneratedImageAsset:
         api_key = self.settings.VOLCENGINE_IMAGE_API_KEY.strip()
         model = self.settings.VOLCENGINE_IMAGE_MODEL.strip()
@@ -92,6 +92,10 @@ class VolcengineImageService:
             custom_prompt=custom_prompt,
             visualization_type=visualization_type,
         )
+        provider_size = _provider_image_size(
+            base_url=self.settings.VOLCENGINE_IMAGE_BASE_URL,
+            requested_size=size,
+        )
         client = self._client or httpx.AsyncClient(
             timeout=httpx.Timeout(self.settings.VOLCENGINE_IMAGE_TIMEOUT_SECONDS),
             follow_redirects=False,
@@ -103,7 +107,7 @@ class VolcengineImageService:
                 api_key=api_key,
                 model=model,
                 prompt=prompt_used,
-                size=size,
+                size=provider_size,
             )
         finally:
             if owns_client:
@@ -163,6 +167,7 @@ class VolcengineImageService:
                     "prompt": prompt,
                     "size": size,
                     "sequential_image_generation": "disabled",
+                    "output_format": "png",
                     "response_format": "url",
                     "watermark": False,
                 },
@@ -253,6 +258,14 @@ def _safe_provider_error(response: httpx.Response) -> str:
     if isinstance(code, str) and code:
         return f"图像生成服务暂不可用（{code}）。"
     return f"图像生成服务暂不可用（HTTP {response.status_code}）。"
+
+
+def _provider_image_size(*, base_url: str, requested_size: str) -> str:
+    """Keep persisted legacy requests compatible with the Agent Plan contract."""
+    normalized_base_url = f"{base_url.rstrip('/')}/"
+    if "/api/plan/" in normalized_base_url:
+        return "2K"
+    return requested_size
 
 
 def _assert_public_https_url(value: str) -> None:

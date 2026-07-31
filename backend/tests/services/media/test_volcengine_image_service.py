@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from uuid import UUID
 
 import httpx
@@ -39,8 +40,8 @@ def _settings(**overrides: object) -> Settings:
     values: dict[str, object] = {
         "_env_file": None,
         "VOLCENGINE_IMAGE_API_KEY": "ark-unit-test-key",
-        "VOLCENGINE_IMAGE_MODEL": "doubao-seedream-unit-test",
-        "VOLCENGINE_IMAGE_BASE_URL": "https://ark.cn-beijing.volces.com/api/v3",
+        "VOLCENGINE_IMAGE_MODEL": "doubao-seedream-5.0-lite",
+        "VOLCENGINE_IMAGE_BASE_URL": "https://ark.cn-beijing.volces.com/api/plan/v3",
         "VOLCENGINE_IMAGE_MAX_BYTES": 1024 * 1024,
     }
     values.update(overrides)
@@ -96,9 +97,24 @@ async def test_generate_downloads_and_persists_provider_image() -> None:
             settings=_settings(),
             storage=storage,
             client=client,
-        ).generate(user_id=_USER_ID, kp_id="sql-injection")
+        ).generate(
+            user_id=_USER_ID,
+            kp_id="sql-injection",
+            size="1024x1024",
+        )
 
     assert [request.method for request in requests] == ["POST", "GET"]
+    provider_request = requests[0]
+    assert str(provider_request.url) == (
+        "https://ark.cn-beijing.volces.com/api/plan/v3/images/generations"
+    )
+    provider_payload = json.loads(provider_request.content)
+    assert provider_payload["model"] == "doubao-seedream-5.0-lite"
+    assert provider_payload["size"] == "2K"
+    assert provider_payload["sequential_image_generation"] == "disabled"
+    assert provider_payload["output_format"] == "png"
+    assert provider_payload["response_format"] == "url"
+    assert provider_payload["watermark"] is False
     assert asset.provider == "volcengine-ark"
     assert asset.media_type == "image/png"
     assert asset.object_key.startswith(

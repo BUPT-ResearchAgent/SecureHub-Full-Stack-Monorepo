@@ -98,10 +98,10 @@ export function EducationalMediaGallery({
     try {
       const result = await apiPost<
         EducationalImageGenerateResponse,
-        { kp_id: string; size: '1024x1024' }
+        { kp_id: string; size: '2K' }
       >('/api/v1/media/generate-image', {
         kp_id: knowledgePointId,
-        size: '1024x1024',
+        size: '2K',
       });
       const blob = await apiGetBlob(result.image_url);
       const objectUrl = URL.createObjectURL(blob);
